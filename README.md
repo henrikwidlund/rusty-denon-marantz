@@ -13,8 +13,6 @@ Async Rust library to monitor and control Denon and Marantz AV receivers.
 - Audyssey, Dirac and receiver settings.
 - Discovery with SSDP and mDNS.
 
-See [docs/PLAN.md](docs/PLAN.md).
-
 ## Crates
 
 | Crate | Role |
