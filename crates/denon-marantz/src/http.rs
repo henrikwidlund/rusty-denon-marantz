@@ -1,0 +1,242 @@
+//! HTTP client for the web interface of a receiver.
+//!
+//! Receivers speak plain HTTP on the local network. One client keeps a small
+//! pool of connections to one receiver and port.
+
+use std::error::Error as StdError;
+use std::io;
+use std::time::Duration;
+
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
+use hyper::{Method, Request, StatusCode, Uri};
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::{Client, Error as ClientError};
+use hyper_util::rt::TokioExecutor;
+use tokio::time::Instant;
+
+use crate::error::Error;
+use crate::pacer::{Adaptive, Pacer, Pacing};
+
+/// Settings of an [`HttpClient`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HttpConfig {
+    /// Time allowed to open a connection.
+    pub connect_timeout: Duration,
+    /// Time allowed for a whole request, from sending it until the answer is read.
+    /// It includes the connect time and the wait for the pacer is not counted.
+    pub request_timeout: Duration,
+    /// Largest answer that is accepted, in bytes.
+    pub max_response_bytes: usize,
+    /// Time that an unused connection stays open.
+    pub idle_timeout: Duration,
+    /// Spacing between requests.
+    pub pacing: Pacing,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(2),
+            request_timeout: Duration::from_secs(15),
+            max_response_bytes: 4 * 1024 * 1024,
+            idle_timeout: Duration::from_secs(30),
+            pacing: Pacing::Adaptive(Adaptive::default()),
+        }
+    }
+}
+
+/// Connections to the web interface of one receiver on one port.
+#[derive(Debug)]
+pub struct HttpClient {
+    client: Client<HttpConnector, Full<Bytes>>,
+    authority: hyper::http::uri::Authority,
+    config: HttpConfig,
+    pacer: Pacer,
+}
+
+impl HttpClient {
+    /// Creates a client. It does not connect yet.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host is not valid or a setting is out of range.
+    pub fn new(host: &str, port: u16, config: HttpConfig) -> Result<Self, Error> {
+        let authority = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        };
+        let authority = authority
+            .parse()
+            .map_err(|e| Error::InvalidRequest(format!("host {host:?}: {e}")))?;
+        let mut connector = HttpConnector::new();
+        connector.set_connect_timeout(Some(config.connect_timeout));
+        connector.set_nodelay(true);
+        let client = Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(config.idle_timeout)
+            .pool_max_idle_per_host(3)
+            .build(connector);
+        Ok(Self {
+            client,
+            authority,
+            config,
+            pacer: Pacer::new(config.pacing)?,
+        })
+    }
+
+    /// Host and port of the receiver.
+    #[must_use]
+    pub fn authority(&self) -> &str {
+        self.authority.as_str()
+    }
+
+    /// Sends a GET request and returns the body of the answer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, times out, or the receiver
+    /// answers with an error status or a body above the limit.
+    pub async fn get(&self, path: &str) -> Result<Bytes, Error> {
+        self.send(Method::GET, path, Bytes::new()).await
+    }
+
+    /// Sends a POST request and returns the body of the answer.
+    ///
+    /// # Errors
+    ///
+    /// See [`HttpClient::get`].
+    pub async fn post(&self, path: &str, body: Bytes) -> Result<Bytes, Error> {
+        self.send(Method::POST, path, body).await
+    }
+
+    async fn send(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+        self.pacer.wait().await;
+        let started = Instant::now();
+        tracing::trace!(host = self.authority(), %method, path, "request");
+        let result = tokio::time::timeout(
+            self.config.request_timeout,
+            self.exchange(&method, path, body),
+        )
+        .await;
+        match result {
+            Ok(Ok(answer)) => {
+                self.pacer.record_latency(started);
+                Ok(answer)
+            }
+            Ok(Err(error)) => {
+                tracing::debug!(host = self.authority(), %method, path, %error, "request failed");
+                Err(error)
+            }
+            Err(_) => {
+                let error = Error::Timeout {
+                    request: self.describe(&method, path),
+                    limit: self.config.request_timeout,
+                };
+                tracing::debug!(host = self.authority(), %method, path, %error, "request failed");
+                Err(error)
+            }
+        }
+    }
+
+    async fn exchange(&self, method: &Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+        let uri = Uri::builder()
+            .scheme("http")
+            .authority(self.authority.clone())
+            .path_and_query(path)
+            .build()
+            .map_err(|e| Error::InvalidRequest(format!("path {path:?}: {e}")))?;
+        let request = Request::builder()
+            .method(method.clone())
+            .uri(uri)
+            .body(Full::new(body))
+            .map_err(|e| Error::InvalidRequest(format!("path {path:?}: {e}")))?;
+
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| self.classify(e, method, path))?;
+        let status = response.status();
+        if !status.is_success() {
+            let request = self.describe(method, path);
+            return Err(if status == StatusCode::FORBIDDEN {
+                Error::Forbidden { request }
+            } else {
+                Error::Status {
+                    request,
+                    status: status.as_u16(),
+                }
+            });
+        }
+        let limit = self.config.max_response_bytes;
+        let collected = Limited::new(response.into_body(), limit)
+            .collect()
+            .await
+            .map_err(|e| self.classify_body(e, method, path))?;
+        Ok(collected.to_bytes())
+    }
+
+    fn describe(&self, method: &Method, path: &str) -> String {
+        format!("{method} http://{}{path}", self.authority)
+    }
+
+    fn classify(&self, error: ClientError, method: &Method, path: &str) -> Error {
+        let request = self.describe(method, path);
+        let mut source: Option<&(dyn StdError + 'static)> = Some(&error);
+        while let Some(cause) = source {
+            if let Some(io) = cause.downcast_ref::<io::Error>()
+                && io.kind() == io::ErrorKind::TimedOut
+            {
+                return Error::Timeout {
+                    request,
+                    limit: self.config.connect_timeout,
+                };
+            }
+            if let Some(hyper) = cause.downcast_ref::<hyper::Error>()
+                && (hyper.is_parse() || hyper.is_parse_status() || hyper.is_incomplete_message())
+            {
+                return Error::InvalidResponse {
+                    request,
+                    source: Box::new(error),
+                };
+            }
+            source = cause.source();
+        }
+        Error::Network {
+            request,
+            source: Box::new(error),
+        }
+    }
+
+    fn classify_body(
+        &self,
+        error: Box<dyn StdError + Send + Sync>,
+        method: &Method,
+        path: &str,
+    ) -> Error {
+        let request = self.describe(method, path);
+        if error.downcast_ref::<LengthLimitError>().is_some() {
+            return Error::ResponseTooLarge {
+                request,
+                limit: self.config.max_response_bytes,
+            };
+        }
+        match error.downcast::<hyper::Error>() {
+            Ok(hyper) if hyper.is_incomplete_message() || hyper.is_parse() => {
+                Error::InvalidResponse {
+                    request,
+                    source: hyper,
+                }
+            }
+            Ok(hyper) => Error::Network {
+                request,
+                source: hyper,
+            },
+            Err(other) => Error::Network {
+                request,
+                source: other,
+            },
+        }
+    }
+}

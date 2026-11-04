@@ -12,15 +12,25 @@ default = ["telnet", "http", "discovery"]
 # Live events and commands on telnet port 23.
 telnet = []
 # AppCommand XML over HTTP.
-http = []
+http = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util"]
 # Find receivers with SSDP and mDNS.
 discovery = ["dep:denon-marantz-discovery"]
 # Full message dumps in trace logs. Can contain personal data.
 sensitive-logs = []
 
 [dependencies]
+bytes = { workspace = true, optional = true }
 denon-marantz-proto.workspace = true
 denon-marantz-discovery = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "test-util"] }
 
 [lints]
 workspace = true

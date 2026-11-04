@@ -17,6 +17,12 @@ thiserror = "2"
 quick-xml = "0.42"
 proptest = "1"
 allocation-counter = "0.8"
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+tokio = { version = "1", default-features = false }
+tracing = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

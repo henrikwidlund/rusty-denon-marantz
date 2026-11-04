@@ -5,6 +5,9 @@ use std::borrow::Cow;
 use crate::error::Error;
 use crate::xml::{Node, check_well_formed};
 
+/// URL path of `Deviceinfo.xml`.
+pub const DEVICE_INFO_PATH: &str = "/goform/Deviceinfo.xml";
+
 /// Values of `Deviceinfo.xml` that the library uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceInfo<'a> {
@@ -56,6 +59,17 @@ impl<'a> DeviceInfo<'a> {
         })
     }
 
+    /// Copies the borrowed text, so the value can outlive the response body.
+    #[must_use]
+    pub fn into_owned(self) -> DeviceInfo<'static> {
+        DeviceInfo {
+            comm_api_version: self.comm_api_version.map(|v| Cow::Owned(v.into_owned())),
+            model_name: self.model_name.map(|v| Cow::Owned(v.into_owned())),
+            device_zones: self.device_zones,
+            dirac_live: self.dirac_live,
+        }
+    }
+
     /// Returns true if the receiver is an AVR-X receiver.
     ///
     /// AVR-X receivers support `AppCommand.xml`. The API version is checked
@@ -93,6 +107,15 @@ mod tests {
         assert_eq!(info.device_zones, Some(2));
         assert!(info.dirac_live);
         assert!(info.is_avr_x());
+    }
+
+    #[test]
+    fn into_owned_keeps_the_values() {
+        let body = b"<D><ModelName>AVR-X1</ModelName><DeviceZones>2</DeviceZones></D>".to_vec();
+        let owned = DeviceInfo::parse(&body).unwrap().into_owned();
+        drop(body);
+        assert_eq!(owned.model_name.as_deref(), Some("AVR-X1"));
+        assert_eq!(owned.device_zones, Some(2));
     }
 
     #[test]
