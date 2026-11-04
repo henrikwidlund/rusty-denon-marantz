@@ -13,6 +13,8 @@ repository = "https://github.com/henrikwidlund/denon-marantz"
 [workspace.dependencies]
 denon-marantz-proto = { path = "crates/denon-marantz-proto", version = "0.1.0" }
 denon-marantz-discovery = { path = "crates/denon-marantz-discovery", version = "0.1.0" }
+thiserror = "2"
+proptest = "1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

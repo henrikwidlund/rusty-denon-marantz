@@ -30,7 +30,7 @@ code_enum! {
 }
 
 /// Raw sound modes in upper case with single spaces.
-static RAW_MODES: [(&str, SoundModeGroup); 206] = [
+static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("AAC+NEO:X M", SoundModeGroup::Music),
     ("AAC+PL2X M", SoundModeGroup::Music),
     ("DOLBY D +NEO:X M", SoundModeGroup::Music),
@@ -116,8 +116,10 @@ static RAW_MODES: [(&str, SoundModeGroup); 206] = [
     ("CLASSIC CONCERT", SoundModeGroup::ClassicConcert),
     ("WIDE SCREEN", SoundModeGroup::WideScreen),
     ("DIRECT", SoundModeGroup::Direct),
+    ("DSD DIRECT", SoundModeGroup::Direct),
     ("PURE_DIRECT", SoundModeGroup::PureDirect),
     ("PURE DIRECT", SoundModeGroup::PureDirect),
+    ("DSD PURE DIRECT", SoundModeGroup::PureDirect),
     ("AAC+DOLBY EX", SoundModeGroup::DolbyDigital),
     ("AAC+DSUR", SoundModeGroup::DolbyDigital),
     ("AAC+PL2Z H", SoundModeGroup::DolbyDigital),
@@ -231,6 +233,7 @@ static RAW_MODES: [(&str, SoundModeGroup); 206] = [
     ("MAX DTS+VIRTUAL:X", SoundModeGroup::DtsSurround),
     ("MULTI CH IN", SoundModeGroup::DtsSurround),
     ("MULTI CH IN 7.1", SoundModeGroup::DtsSurround),
+    ("7.1IN", SoundModeGroup::DtsSurround),
     ("NEURAL:X", SoundModeGroup::DtsSurround),
     ("STANDARD(DTS)", SoundModeGroup::DtsSurround),
     ("VIRTUAL:X", SoundModeGroup::DtsSurround),
@@ -331,6 +334,9 @@ mod tests {
         assert_eq!(G::from_raw("STEREO"), Some(G::Stereo));
         assert_eq!(G::from_raw("AAC+NEURAL:X"), Some(G::DtsSurround));
         assert_eq!(G::from_raw("MULTI CH IN"), Some(G::DtsSurround));
+        assert_eq!(G::from_raw("DSD DIRECT"), Some(G::Direct));
+        assert_eq!(G::from_raw("DSD PURE DIRECT"), Some(G::PureDirect));
+        assert_eq!(G::from_raw("7.1IN"), Some(G::DtsSurround));
     }
 
     #[test]
