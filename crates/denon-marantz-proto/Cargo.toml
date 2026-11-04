@@ -1,0 +1,11 @@
+[package]
+name = "denon-marantz-proto"
+description = "Sans-IO protocol for Denon and Marantz AV receivers: telnet, AppCommand XML and state"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true

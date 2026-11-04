@@ -1,0 +1,26 @@
+[package]
+name = "denon-marantz"
+description = "Async client to monitor and control Denon and Marantz AV receivers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["telnet", "http", "discovery"]
+# Live events and commands on telnet port 23.
+telnet = []
+# AppCommand XML over HTTP.
+http = []
+# Find receivers with SSDP and mDNS.
+discovery = ["dep:denon-marantz-discovery"]
+# Full message dumps in trace logs. Can contain personal data.
+sensitive-logs = []
+
+[dependencies]
+denon-marantz-proto.workspace = true
+denon-marantz-discovery = { workspace = true, optional = true }
+
+[lints]
+workspace = true
