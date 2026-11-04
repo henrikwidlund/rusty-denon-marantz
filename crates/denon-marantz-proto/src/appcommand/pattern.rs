@@ -163,7 +163,7 @@ impl Definition {
 
 /// Follows `steps` from `node`. Calls `on_value` for the first match.
 /// Returns false if there is no match.
-fn find(
+pub(crate) fn find(
     node: Node<'_>,
     steps: &[Step],
     zone: Zone,

@@ -16,6 +16,7 @@ mod xml;
 
 pub mod appcommand;
 pub mod source;
+pub mod status_page;
 pub mod telnet;
 pub mod zone;
 

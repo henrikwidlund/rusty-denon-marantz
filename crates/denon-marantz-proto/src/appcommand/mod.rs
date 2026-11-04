@@ -11,6 +11,7 @@ mod request;
 mod response;
 
 pub use commands::*;
+pub(crate) use pattern::find;
 pub use pattern::{Definition, Field, Leaf, Pattern, Step};
 pub use request::{Cmd, Endpoint, Param, write_body};
 pub use response::{Item, Response};

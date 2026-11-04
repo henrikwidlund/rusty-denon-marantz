@@ -7,21 +7,28 @@ Dimmer	1	Dark
 Dimmer	2	Dim
 Dimmer	3	Bright
 EcoMode	2	Auto
+InputFunc	<none>	<none>
 InputFunc	AUX1	AUX1
 InputFunc	AUXB	AUXB
 InputFunc	AUXD	AUXD
 InputFunc	BD	BD
+InputFunc	CD	CD
+InputFunc	DVD	DVD
+InputFunc	GAME	GAME
+InputFunc	GAME2	GAME2
 InputFunc	Internet Radio	Internet Radio
 InputFunc	MPLAY	MPLAY
 InputFunc	NET	NET
 InputFunc	PHONO	PHONO
 InputFunc	SAT/CBL	SAT/CBL
 InputFunc	SOURCE	SOURCE
+InputFunc	TUNER	TUNER
 InputFunc	TV	TV
 MaxVolume	  0.0	0.0
 MaxVolume	-10.0	-10.0
 MaxVolume	-20.0	-20.0
 MaxVolume	OFF	<none>
+Muted	<none>	<none>
 Muted	MainZone	False
 Muted	OFF	False
 Muted	ON	True
@@ -31,36 +38,55 @@ Muted	off	False
 Power	MainZone	MainZone
 Power	OFF	OFF
 Power	ON	ON
+Power	STANDBY	STANDBY
 Power	\n	\n
 Power	\n            	\n            
 Power	off	off
 SoundModeRaw	<none>	<none>
 SoundModeRaw	DTS Neo:X Cinema               	DTS Neo:X Cinema
+SoundModeRaw	Dolby Digital +                	Dolby Digital +
 SoundModeRaw	Dolby Digital +   + Neural:X                                   	Dolby Digital + + Neural:X
+SoundModeRaw	MULTI CH IN                    	MULTI CH IN
 SoundModeRaw	PLII Cinema                    	PLII Cinema
 SoundModeRaw	PLII Game                      	PLII Game
+SoundModeRaw	STEREO                         	STEREO
+SoundModeRaw	Stereo	Stereo
 SoundModeRaw	Stereo                         	Stereo
 SoundModeRaw	Stereo                                                         	Stereo
+Volume	  0	0.0
 Volume	 -4	-4.0
+Volume	 10	10.0
 Volume	--	-80.0
+Volume	-10	-10.0
 Volume	-21	-21.0
 Volume	-23.0	-23.0
 Volume	-24.0	-24.0
 Volume	-25.0	-25.0
+Volume	-26	-26.0
+Volume	-28.0	-28.0
 Volume	-30.0	-30.0
+Volume	-31	-31.0
 Volume	-36	-36.0
+Volume	-36.0	-36.0
 Volume	-38.0	-38.0
 Volume	-40	-40.0
 Volume	-40.0	-40.0
 Volume	-42.5	-42.5
 Volume	-45.0	-45.0
+Volume	-46.5	-46.5
 Volume	-50	-50.0
 Volume	-50.0	-50.0
+Volume	-55.0	-55.0
 Volume	-56	-56.0
+Volume	-56.5	-56.5
 Volume	-57.5	-57.5
 Volume	-58	-58.0
+Volume	-60.0	-60.0
+Volume	-64.0	-64.0
 Volume	-67.0	-67.0
 Volume	-70	-70.0
 Volume	-70.0	-70.0
+Volume	-72.0	-72.0
 Volume	-75.0	-75.0
+Volume	-76.0	-76.0
 Volume	-77.0	-77.0

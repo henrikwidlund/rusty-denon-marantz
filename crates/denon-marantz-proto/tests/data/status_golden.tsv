@@ -1,0 +1,274 @@
+P	AVR-1713	Main	SS
+R	AVR-1713	Main	Power	ON
+R	AVR-1713	Main	InputFunc	NET
+R	AVR-1713	Main	Volume	-67.0
+R	AVR-1713	Main	Muted	off
+R	AVR-1713	Main	SoundModeRaw	PLII Game                      
+P	AVR-1713	Zone2	SS
+R	AVR-1713	Zone2	Power	OFF
+R	AVR-1713	Zone2	InputFunc	SOURCE
+R	AVR-1713	Zone2	Volume	--
+R	AVR-1713	Zone2	Muted	off
+P	AVR-1713	Zone3	SS
+R	AVR-1713	Zone3	Power	ON
+R	AVR-1713	Zone3	InputFunc	<none>
+R	AVR-1713	Zone3	Volume	  0
+R	AVR-1713	Zone3	Muted	<none>
+P	AVR-1912	Main	SS
+R	AVR-1912	Main	Power	ON
+R	AVR-1912	Main	InputFunc	BD
+R	AVR-1912	Main	Volume	-60.0
+R	AVR-1912	Main	Muted	off
+R	AVR-1912	Main	SoundModeRaw	STEREO                         
+P	AVR-1912	Zone2	-S
+R	AVR-1912	Zone2	Power	ON
+P	AVR-1912	Zone3	-S
+R	AVR-1912	Zone3	Power	ON
+P	AVR-2312CI	Main	SS
+R	AVR-2312CI	Main	Power	OFF
+R	AVR-2312CI	Main	InputFunc	BD
+R	AVR-2312CI	Main	Volume	-36.0
+R	AVR-2312CI	Main	Muted	off
+R	AVR-2312CI	Main	SoundModeRaw	MULTI CH IN                    
+P	AVR-2312CI	Zone2	-S
+R	AVR-2312CI	Zone2	Power	OFF
+P	AVR-2312CI	Zone3	-S
+R	AVR-2312CI	Zone3	Power	OFF
+P	AVR-3311CI	Main	SS
+R	AVR-3311CI	Main	Power	OFF
+R	AVR-3311CI	Main	InputFunc	SAT/CBL
+R	AVR-3311CI	Main	Volume	-46.5
+R	AVR-3311CI	Main	Muted	off
+R	AVR-3311CI	Main	SoundModeRaw	Stereo
+P	AVR-3311CI	Zone2	-S
+R	AVR-3311CI	Zone2	Power	OFF
+P	AVR-3311CI	Zone3	-S
+R	AVR-3311CI	Zone3	Power	OFF
+P	AVR-3312	Main	SS
+R	AVR-3312	Main	Power	ON
+R	AVR-3312	Main	InputFunc	Internet Radio
+R	AVR-3312	Main	Volume	-64.0
+R	AVR-3312	Main	Muted	off
+R	AVR-3312	Main	SoundModeRaw	STEREO                         
+P	AVR-3312	Zone2	SS
+R	AVR-3312	Zone2	Power	OFF
+R	AVR-3312	Zone2	InputFunc	GAME2
+R	AVR-3312	Zone2	Volume	-10
+R	AVR-3312	Zone2	Muted	off
+P	AVR-3312	Zone3	SS
+R	AVR-3312	Zone3	Power	OFF
+R	AVR-3312	Zone3	InputFunc	GAME
+R	AVR-3312	Zone3	Volume	-31
+R	AVR-3312	Zone3	Muted	off
+P	AVR-3313	Main	SS
+R	AVR-3313	Main	Power	ON
+R	AVR-3313	Main	InputFunc	SAT/CBL
+R	AVR-3313	Main	Volume	-70.0
+R	AVR-3313	Main	Muted	off
+R	AVR-3313	Main	SoundModeRaw	PLII Cinema                    
+P	AVR-3313	Zone2	SS
+R	AVR-3313	Zone2	Power	OFF
+R	AVR-3313	Zone2	InputFunc	SAT/CBL
+R	AVR-3313	Zone2	Volume	-58
+R	AVR-3313	Zone2	Muted	off
+P	AVR-3313	Zone3	SS
+R	AVR-3313	Zone3	Power	OFF
+R	AVR-3313	Zone3	InputFunc	SAT/CBL
+R	AVR-3313	Zone3	Volume	-56
+R	AVR-3313	Zone3	Muted	off
+P	AVR-4810	Main	-S
+R	AVR-4810	Main	Power	ON
+R	AVR-4810	Main	InputFunc	DVD
+R	AVR-4810	Main	Volume	-25.0
+R	AVR-4810	Main	Muted	off
+P	AVR-4810	Zone2	-S
+R	AVR-4810	Zone2	Power	ON
+P	AVR-4810	Zone3	-S
+R	AVR-4810	Zone3	Power	ON
+P	AVR-X1100W	Main	SS
+R	AVR-X1100W	Main	Power	ON
+R	AVR-X1100W	Main	InputFunc	BD
+R	AVR-X1100W	Main	Volume	-38.0
+R	AVR-X1100W	Main	Muted	off
+R	AVR-X1100W	Main	SoundModeRaw	Dolby Digital +                
+P	AVR-X1100W	Zone2	SS
+R	AVR-X1100W	Zone2	Power	OFF
+R	AVR-X1100W	Zone2	InputFunc	SOURCE
+R	AVR-X1100W	Zone2	Volume	-40
+R	AVR-X1100W	Zone2	Muted	off
+P	AVR-X1100W	Zone3	SS
+R	AVR-X1100W	Zone3	Power	ON
+R	AVR-X1100W	Zone3	InputFunc	<none>
+R	AVR-X1100W	Zone3	Volume	  0
+R	AVR-X1100W	Zone3	Muted	<none>
+P	AVR-X2000	Main	SS
+R	AVR-X2000	Main	Power	ON
+R	AVR-X2000	Main	InputFunc	SAT/CBL
+R	AVR-X2000	Main	Volume	-55.0
+R	AVR-X2000	Main	Muted	off
+R	AVR-X2000	Main	SoundModeRaw	MULTI CH IN                    
+P	AVR-X2000	Zone2	SS
+R	AVR-X2000	Zone2	Power	ON
+R	AVR-X2000	Zone2	InputFunc	CD
+R	AVR-X2000	Zone2	Volume	-26
+R	AVR-X2000	Zone2	Muted	off
+P	AVR-X2000	Zone3	SS
+R	AVR-X2000	Zone3	Power	ON
+R	AVR-X2000	Zone3	InputFunc	<none>
+R	AVR-X2000	Zone3	Volume	  0
+R	AVR-X2000	Zone3	Muted	<none>
+P	AVR-X2000-2	Main	SS
+R	AVR-X2000-2	Main	Power	ON
+R	AVR-X2000-2	Main	InputFunc	SAT/CBL
+R	AVR-X2000-2	Main	Volume	-64.0
+R	AVR-X2000-2	Main	Muted	off
+R	AVR-X2000-2	Main	SoundModeRaw	MULTI CH IN                    
+P	AVR-X2000-2	Zone2	-S
+R	AVR-X2000-2	Zone2	Power	ON
+P	AVR-X2000-2	Zone3	-S
+R	AVR-X2000-2	Zone3	Power	ON
+P	AVR-X2100W	Main	SS
+R	AVR-X2100W	Main	Power	ON
+R	AVR-X2100W	Main	InputFunc	Internet Radio
+R	AVR-X2100W	Main	Volume	--
+R	AVR-X2100W	Main	Muted	off
+R	AVR-X2100W	Main	SoundModeRaw	Stereo                         
+P	AVR-X2100W	Zone2	-S
+R	AVR-X2100W	Zone2	Power	ON
+P	AVR-X2100W	Zone3	-S
+R	AVR-X2100W	Zone3	Power	ON
+P	AVR-X2100W-2	Main	SS
+R	AVR-X2100W-2	Main	Power	ON
+R	AVR-X2100W-2	Main	InputFunc	SAT/CBL
+R	AVR-X2100W-2	Main	Volume	-28.0
+R	AVR-X2100W-2	Main	Muted	off
+R	AVR-X2100W-2	Main	SoundModeRaw	PLII Cinema                    
+P	AVR-X2100W-2	Zone2	-S
+R	AVR-X2100W-2	Zone2	Power	ON
+P	AVR-X2100W-2	Zone3	-S
+R	AVR-X2100W-2	Zone3	Power	ON
+P	AVR-X4000	Main	SS
+R	AVR-X4000	Main	Power	ON
+R	AVR-X4000	Main	InputFunc	MPLAY
+R	AVR-X4000	Main	Volume	-30.0
+R	AVR-X4000	Main	Muted	off
+R	AVR-X4000	Main	SoundModeRaw	PLII Cinema                    
+P	AVR-X4000	Zone2	SS
+R	AVR-X4000	Zone2	Power	OFF
+R	AVR-X4000	Zone2	InputFunc	MPLAY
+R	AVR-X4000	Zone2	Volume	--
+R	AVR-X4000	Zone2	Muted	off
+P	AVR-X4000	Zone3	SS
+R	AVR-X4000	Zone3	Power	OFF
+R	AVR-X4000	Zone3	InputFunc	SOURCE
+R	AVR-X4000	Zone3	Volume	--
+R	AVR-X4000	Zone3	Muted	off
+P	AVR-X4100W	Main	SS
+R	AVR-X4100W	Main	Power	ON
+R	AVR-X4100W	Main	InputFunc	SAT/CBL
+R	AVR-X4100W	Main	Volume	-23.0
+R	AVR-X4100W	Main	Muted	off
+R	AVR-X4100W	Main	SoundModeRaw	DTS Neo:X Cinema               
+P	AVR-X4100W	Zone2	-S
+R	AVR-X4100W	Zone2	Power	ON
+P	AVR-X4100W	Zone3	-S
+R	AVR-X4100W	Zone3	Power	ON
+P	DRA-N4	Main	SS
+R	DRA-N4	Main	Power	ON
+R	DRA-N4	Main	InputFunc	NET
+R	DRA-N4	Main	Volume	-76.0
+R	DRA-N4	Main	Muted	off
+P	DRA-N4	Zone2	SS
+R	DRA-N4	Zone2	Power	ON
+R	DRA-N4	Zone2	InputFunc	<none>
+R	DRA-N4	Zone2	Volume	  0
+R	DRA-N4	Zone2	Muted	<none>
+P	DRA-N4	Zone3	SS
+R	DRA-N4	Zone3	Power	ON
+R	DRA-N4	Zone3	InputFunc	<none>
+R	DRA-N4	Zone3	Volume	  0
+R	DRA-N4	Zone3	Muted	<none>
+P	M-CR510	Main	SS
+R	M-CR510	Main	Power	ON
+R	M-CR510	Main	InputFunc	AUXB
+R	M-CR510	Main	Volume	-75.0
+R	M-CR510	Main	Muted	off
+P	M-CR510	Zone2	-S
+R	M-CR510	Zone2	Power	ON
+P	M-CR510	Zone3	-S
+R	M-CR510	Zone3	Power	ON
+P	M-CR510-2	Main	SS
+R	M-CR510-2	Main	Power	ON
+R	M-CR510-2	Main	InputFunc	AUXD
+R	M-CR510-2	Main	Volume	-50.0
+R	M-CR510-2	Main	Muted	off
+P	M-CR510-2	Zone2	-S
+R	M-CR510-2	Zone2	Power	ON
+P	M-CR510-2	Zone3	-S
+R	M-CR510-2	Zone3	Power	ON
+P	M-CR603	Main	SS
+R	M-CR603	Main	Power	ON
+R	M-CR603	Main	InputFunc	TUNER
+R	M-CR603	Main	Volume	-72.0
+R	M-CR603	Main	Muted	off
+P	M-CR603	Zone2	SS
+R	M-CR603	Zone2	Power	ON
+R	M-CR603	Zone2	InputFunc	<none>
+R	M-CR603	Zone2	Volume	  0
+R	M-CR603	Zone2	Muted	<none>
+P	M-CR603	Zone3	SS
+R	M-CR603	Zone3	Power	ON
+R	M-CR603	Zone3	InputFunc	<none>
+R	M-CR603	Zone3	Volume	  0
+R	M-CR603	Zone3	Muted	<none>
+P	M-RC610	Main	SS
+R	M-RC610	Main	Power	STANDBY
+R	M-RC610	Main	InputFunc	TUNER
+R	M-RC610	Main	Volume	-72.0
+R	M-RC610	Main	Muted	off
+P	M-RC610	Zone2	-S
+R	M-RC610	Zone2	Power	STANDBY
+P	M-RC610	Zone3	-S
+R	M-RC610	Zone3	Power	STANDBY
+P	NR1604	Main	SS
+R	NR1604	Main	Power	ON
+R	NR1604	Main	InputFunc	Internet Radio
+R	NR1604	Main	Volume	-56.5
+R	NR1604	Main	Muted	off
+R	NR1604	Main	SoundModeRaw	STEREO                         
+P	NR1604	Zone2	SS
+R	NR1604	Zone2	Power	ON
+R	NR1604	Zone2	InputFunc	CD
+R	NR1604	Zone2	Volume	 10
+R	NR1604	Zone2	Muted	off
+P	NR1604	Zone3	SS
+R	NR1604	Zone3	Power	ON
+R	NR1604	Zone3	InputFunc	<none>
+R	NR1604	Zone3	Volume	  0
+R	NR1604	Zone3	Muted	<none>
+P	SR5008	Main	SS
+R	SR5008	Main	Power	ON
+R	SR5008	Main	InputFunc	NET
+R	SR5008	Main	Volume	-45.0
+R	SR5008	Main	Muted	off
+R	SR5008	Main	SoundModeRaw	STEREO                         
+P	SR5008	Zone2	-S
+R	SR5008	Zone2	Power	ON
+P	SR5008	Zone3	-S
+R	SR5008	Zone3	Power	ON
+P	SR6011	Main	SS
+R	SR6011	Main	Power	ON
+R	SR6011	Main	InputFunc	AUX1
+R	SR6011	Main	Volume	-25.0
+R	SR6011	Main	Muted	off
+R	SR6011	Main	SoundModeRaw	Stereo                         
+P	SR6011	Zone2	SS
+R	SR6011	Zone2	Power	OFF
+R	SR6011	Zone2	InputFunc	SOURCE
+R	SR6011	Zone2	Volume	-40
+R	SR6011	Zone2	Muted	off
+P	SR6011	Zone3	SS
+R	SR6011	Zone3	Power	ON
+R	SR6011	Zone3	InputFunc	<none>
+R	SR6011	Zone3	Volume	  0
+R	SR6011	Zone3	Muted	<none>
