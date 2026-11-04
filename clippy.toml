@@ -1,1 +1,1 @@
-doc-valid-idents = ["Denon", "Marantz", "AppCommand", "SSDP", "mDNS", "Audyssey", "Dirac", "HDMI", "AVR", "AVRs", ".."]
+doc-valid-idents = ["Denon", "Marantz", "AppCommand", "SSDP", "mDNS", "Audyssey", "Dirac", "HDMI", "AVR", "AVRs", "MultEQ", "UPnP", ".."]
