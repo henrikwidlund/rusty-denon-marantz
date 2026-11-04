@@ -14,7 +14,9 @@ repository = "https://github.com/henrikwidlund/denon-marantz"
 denon-marantz-proto = { path = "crates/denon-marantz-proto", version = "0.1.0" }
 denon-marantz-discovery = { path = "crates/denon-marantz-discovery", version = "0.1.0" }
 thiserror = "2"
+quick-xml = "0.42"
 proptest = "1"
+allocation-counter = "0.8"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

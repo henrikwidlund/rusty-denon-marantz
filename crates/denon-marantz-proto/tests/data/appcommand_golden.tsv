@@ -1,0 +1,1133 @@
+F	AV7703-AppCommand-setup-8080.xml	ok	1
+F	AV7703-AppCommand-update-8080.xml	ok	11
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AV7703-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AV7703-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AV7703-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AV7703-AppCommand-update-8080.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AV7703-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	3
+R	AV7703-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AV7703-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AV7703-AppCommand-update-8080.xml	3	GetECO	Main	EcoMode	2
+R	AV7703-AppCommand-update-8080.xml	3	GetECO	Zone2	EcoMode	2
+R	AV7703-AppCommand-update-8080.xml	3	GetECO	Zone3	EcoMode	2
+R	AV7703-AppCommand-update-8080.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AV7703-AppCommand-update-8080.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AV7703-AppCommand-update-8080.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	MPLAY
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	MPLAY
+R	AV7703-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone3	InputFunc	NET
+R	AV7703-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+R	AV7703-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+R	AV7703-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AV7703-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-40.0
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	-10.0
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	 -4
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	  0.0
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	Volume	-50
+R	AV7703-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	MaxVolume	-10.0
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AV7703-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AV7703-AppCommand-update-soundmode-8080.xml	ok	1
+R	AV7703-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+R	AV7703-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+R	AV7703-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	Dolby Digital +   + Neural:X                                   
+F	AV7703-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AV7703-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	AVC-8500H-AppCommand-setup-8080.xml	ok	1
+F	AVC-8500H-AppCommand-update-8080.xml	ok	11
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVC-8500H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVC-8500H-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVC-8500H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVC-8500H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVC-8500H-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	2
+R	AVC-8500H-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	2
+R	AVC-8500H-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	2
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetECO	Main	EcoMode	2
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetECO	Zone2	EcoMode	2
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetECO	Zone3	EcoMode	2
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVC-8500H-AppCommand-update-8080.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	NET
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	NET
+R	AVC-8500H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone3	InputFunc	NET
+R	AVC-8500H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-8500H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-8500H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-40.0
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	OFF
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-21
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	Volume	-40
+R	AVC-8500H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	MaxVolume	-10.0
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVC-8500H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVC-8500H-AppCommand-update-soundmode-8080.xml	ok	1
+R	AVC-8500H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-8500H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-8500H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-8500H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	AVC-A10H-AppCommand-setup-8080.xml	ok	1
+F	AVC-A10H-AppCommand-update-8080.xml	ok	11
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVC-A10H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVC-A10H-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVC-A10H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVC-A10H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVC-A10H-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	1
+R	AVC-A10H-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	1
+R	AVC-A10H-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	1
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetECO	Main	EcoMode	2
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetECO	Zone2	EcoMode	2
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetECO	Zone3	EcoMode	2
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVC-A10H-AppCommand-update-8080.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	MPLAY
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	SOURCE
+R	AVC-A10H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone3	InputFunc	SOURCE
+R	AVC-A10H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                                                         
+R	AVC-A10H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                                                         
+R	AVC-A10H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                                                         
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-45.0
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	-20.0
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	Volume	-40
+R	AVC-A10H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	MaxVolume	-10.0
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVC-A10H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVC-A10H-AppCommand-update-soundmode-8080.xml	ok	1
+R	AVC-A10H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-A10H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVC-A10H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-A10H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	AVC-A10H-AppCommand0300-8080.xml	ok	5
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	MultEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	MultEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	DynamicEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	DynamicEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	RefLevOffset	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	RefLevOffsetControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	DynamicVol	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Main	DynamicVolControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	MultEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	MultEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	DynamicEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	DynamicEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	RefLevOffset	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	RefLevOffsetControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	DynamicVol	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone2	DynamicVolControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	MultEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	MultEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	DynamicEq	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	DynamicEqControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	RefLevOffset	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	RefLevOffsetControl	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	DynamicVol	<none>
+R	AVC-A10H-AppCommand0300-8080.xml	4	GetAudyssey	Zone3	DynamicVolControl	<none>
+F	AVC-X3700H-AppCommand-setup-8080.xml	ok	1
+F	AVC-X3700H-AppCommand-update-8080.xml	ok	11
+R	AVC-X3700H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	OFF
+R	AVC-X3700H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVC-X3700H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	OFF
+R	AVC-X3700H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVC-X3700H-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVC-X3700H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVC-X3700H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVC-X3700H-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	0
+R	AVC-X3700H-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	0
+R	AVC-X3700H-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	0
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetECO	Main	EcoMode	2
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetECO	Zone2	EcoMode	2
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetECO	Zone3	EcoMode	2
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVC-X3700H-AppCommand-update-8080.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	MPLAY
+R	AVC-X3700H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	SOURCE
+R	AVC-X3700H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                                                         
+R	AVC-X3700H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                                                         
+R	AVC-X3700H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                                                         
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-42.5
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	OFF
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	AVC-X3700H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	AVC-X3700H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVC-X3700H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVC-X3700H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVC-X3700H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+F	AVC-X3700H-AppCommand-update-soundmode-8080.xml	ok	1
+R	AVC-X3700H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                                                         
+R	AVC-X3700H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                                                         
+R	AVC-X3700H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                                                         
+F	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVC-X3700H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	AVR-1713-AppCommand-setup.xml	ok	1
+F	AVR-1713-AppCommand-update-soundmode.xml	ok	1
+R	AVR-1713-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	PLII Game                      
+R	AVR-1713-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Game                      
+R	AVR-1713-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Game                      
+F	AVR-1713-AppCommand-update-tonecontrol.xml	ok	1
+F	AVR-1713-AppCommand-update.xml	ok	11
+R	AVR-1713-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-1713-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-1713-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	90
+R	AVR-1713-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-1713-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-1713-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	NET
+R	AVR-1713-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	PLII Game                      
+R	AVR-1713-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Game                      
+R	AVR-1713-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Game                      
+R	AVR-1713-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-1713-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-1713-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-67.0
+R	AVR-1713-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-1713-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+F	AVR-1912-AppCommand-setup.xml	html
+F	AVR-1912-AppCommand-update-soundmode.xml	html
+F	AVR-1912-AppCommand-update-tonecontrol.xml	html
+F	AVR-1912-AppCommand-update.xml	html
+F	AVR-2312CI-AppCommand-setup.xml	html
+F	AVR-2312CI-AppCommand-update-soundmode.xml	html
+F	AVR-2312CI-AppCommand-update-tonecontrol.xml	html
+F	AVR-2312CI-AppCommand-update.xml	html
+F	AVR-3311CI-AppCommand-setup.xml	html
+F	AVR-3311CI-AppCommand-update-soundmode.xml	html
+F	AVR-3311CI-AppCommand-update-tonecontrol.xml	html
+F	AVR-3311CI-AppCommand-update.xml	html
+F	AVR-3312-AppCommand-setup.xml	html
+F	AVR-3312-AppCommand-update-soundmode.xml	html
+F	AVR-3312-AppCommand-update-tonecontrol.xml	html
+F	AVR-3312-AppCommand-update.xml	html
+F	AVR-3313-AppCommand-setup.xml	ok	1
+F	AVR-3313-AppCommand-update-soundmode.xml	ok	1
+R	AVR-3313-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	PLII Cinema                    
+R	AVR-3313-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Cinema                    
+R	AVR-3313-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Cinema                    
+F	AVR-3313-AppCommand-update-tonecontrol.xml	ok	1
+F	AVR-3313-AppCommand-update.xml	ok	11
+R	AVR-3313-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-3313-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVR-3313-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVR-3313-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-3313-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVR-3313-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVR-3313-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVR-3313-AppCommand-update.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVR-3313-AppCommand-update.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVR-3313-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	AVR-3313-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AVR-3313-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	SAT/CBL
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneSource	Zone2	InputFunc	SAT/CBL
+R	AVR-3313-AppCommand-update.xml	4	GetAllZoneSource	Zone3	InputFunc	SAT/CBL
+R	AVR-3313-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	PLII Cinema                    
+R	AVR-3313-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Cinema                    
+R	AVR-3313-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Cinema                    
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-70.0
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	Volume	-58
+R	AVR-3313-AppCommand-update.xml	9	GetAllZoneVolume	Zone3	Volume	-56
+R	AVR-3313-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-3313-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVR-3313-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVR-3313-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVR-3313-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVR-3313-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVR-4810-AppCommand-setup.xml	html
+F	AVR-4810-AppCommand-update-soundmode.xml	html
+F	AVR-4810-AppCommand-update-tonecontrol.xml	html
+F	AVR-4810-AppCommand-update.xml	html
+F	AVR-X1100W-AppCommand-setup.xml	ok	1
+F	AVR-X1100W-AppCommand-update-soundmode.xml	ok	1
+R	AVR-X1100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X1100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X1100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	AVR-X1100W-AppCommand-update-tonecontrol.xml	ok	1
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Bass	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Treble	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Treble	<none>
+F	AVR-X1100W-AppCommand-update.xml	ok	11
+R	AVR-X1100W-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-X1100W-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVR-X1100W-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-X1100W-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVR-X1100W-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVR-X1100W-AppCommand-update.xml	1	GetAutoStandby	Zone2	AutoStandby	10
+R	AVR-X1100W-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	AVR-X1100W-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AVR-X1100W-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	BD
+R	AVR-X1100W-AppCommand-update.xml	4	GetAllZoneSource	Zone2	InputFunc	SOURCE
+R	AVR-X1100W-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X1100W-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X1100W-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	Bass	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Main	Treble	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVR-X1100W-AppCommand-update.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-38.0
+R	AVR-X1100W-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	AVR-X1100W-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-X1100W-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVR-X1100W-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVR-X1100W-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+F	AVR-X2000-2-AppCommand-setup.xml	html
+F	AVR-X2000-2-AppCommand-update-soundmode.xml	html
+F	AVR-X2000-2-AppCommand-update-tonecontrol.xml	html
+F	AVR-X2000-2-AppCommand-update.xml	html
+F	AVR-X2000-AppCommand-setup.xml	ok	1
+F	AVR-X2000-AppCommand-update-soundmode.xml	ok	0
+F	AVR-X2000-AppCommand-update-tonecontrol.xml	ok	0
+F	AVR-X2000-AppCommand-update.xml	ok	2
+F	AVR-X2100W-2-AppCommand-setup.xml	ok	1
+F	AVR-X2100W-2-AppCommand-update-soundmode.xml	ok	0
+F	AVR-X2100W-2-AppCommand-update-tonecontrol.xml	ok	0
+F	AVR-X2100W-2-AppCommand-update.xml	ok	2
+F	AVR-X2100W-AppCommand-setup.xml	html
+F	AVR-X2100W-AppCommand-update-soundmode.xml	html
+F	AVR-X2100W-AppCommand-update-tonecontrol.xml	html
+F	AVR-X2100W-AppCommand-update.xml	html
+F	AVR-X4000-AppCommand-setup.xml	ok	1
+F	AVR-X4000-AppCommand-update-soundmode.xml	ok	1
+R	AVR-X4000-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	PLII Cinema                    
+R	AVR-X4000-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Cinema                    
+R	AVR-X4000-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Cinema                    
+F	AVR-X4000-AppCommand-update-tonecontrol.xml	ok	1
+F	AVR-X4000-AppCommand-update.xml	ok	11
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVR-X4000-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVR-X4000-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVR-X4000-AppCommand-update.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVR-X4000-AppCommand-update.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVR-X4000-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	AVR-X4000-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AVR-X4000-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AVR-X4000-AppCommand-update.xml	3	GetECO	Main	EcoMode	2
+R	AVR-X4000-AppCommand-update.xml	3	GetECO	Zone2	EcoMode	2
+R	AVR-X4000-AppCommand-update.xml	3	GetECO	Zone3	EcoMode	2
+R	AVR-X4000-AppCommand-update.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVR-X4000-AppCommand-update.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVR-X4000-AppCommand-update.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	MPLAY
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneSource	Zone2	InputFunc	MPLAY
+R	AVR-X4000-AppCommand-update.xml	4	GetAllZoneSource	Zone3	InputFunc	SOURCE
+R	AVR-X4000-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	PLII Cinema                    
+R	AVR-X4000-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	PLII Cinema                    
+R	AVR-X4000-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	PLII Cinema                    
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-30.0
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	Volume	--
+R	AVR-X4000-AppCommand-update.xml	9	GetAllZoneVolume	Zone3	Volume	--
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVR-X4000-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVR-X4100W-AppCommand-setup.xml	ok	1
+F	AVR-X4100W-AppCommand-update-soundmode.xml	ok	1
+R	AVR-X4100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4100W-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	AVR-X4100W-AppCommand-update-tonecontrol.xml	ok	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Bass	6
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Treble	6
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Bass	6
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Treble	6
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Bass	6
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Treble	6
+F	AVR-X4100W-AppCommand-update.xml	ok	11
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVR-X4100W-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVR-X4100W-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVR-X4100W-AppCommand-update.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVR-X4100W-AppCommand-update.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVR-X4100W-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	AVR-X4100W-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AVR-X4100W-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AVR-X4100W-AppCommand-update.xml	3	GetECO	Main	EcoMode	2
+R	AVR-X4100W-AppCommand-update.xml	3	GetECO	Zone2	EcoMode	2
+R	AVR-X4100W-AppCommand-update.xml	3	GetECO	Zone3	EcoMode	2
+R	AVR-X4100W-AppCommand-update.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone2	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone3	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	SAT/CBL
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneSource	Zone2	InputFunc	SOURCE
+R	AVR-X4100W-AppCommand-update.xml	4	GetAllZoneSource	Zone3	InputFunc	SOURCE
+R	AVR-X4100W-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4100W-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4100W-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	Bass	6
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Main	Treble	6
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	Bass	6
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone2	Treble	6
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlStatus	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlAdjust	1
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	BassLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	Bass	6
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	TrebleLevel	0dB
+R	AVR-X4100W-AppCommand-update.xml	8	GetToneControl	Zone3	Treble	6
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone2	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone3	Power	\n            
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-23.0
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	AVR-X4100W-AppCommand-update.xml	9	GetAllZoneVolume	Zone3	Volume	-40
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVR-X4100W-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVR-X4300H-AppCommand-setup-8080.xml	ok	1
+F	AVR-X4300H-AppCommand-update-8080.xml	ok	11
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone3	Muted	OFF
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	AVR-X4300H-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone3	Power	OFF
+R	AVR-X4300H-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	AVR-X4300H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	AVR-X4300H-AppCommand-update-8080.xml	1	GetAutoStandby	Zone3	AutoStandby	0
+R	AVR-X4300H-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	3
+R	AVR-X4300H-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	3
+R	AVR-X4300H-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	3
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetECO	Main	EcoMode	2
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetECO	Zone2	EcoMode	2
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetECO	Zone3	EcoMode	2
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	AVR-X4300H-AppCommand-update-8080.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	BD
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	TV
+R	AVR-X4300H-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone3	InputFunc	SOURCE
+R	AVR-X4300H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4300H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4300H-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone3	Muted	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone3	Power	\n
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-57.5
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	OFF
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	Volume	-40
+R	AVR-X4300H-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone3	MaxVolume	-10.0
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone3	Muted	off
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+R	AVR-X4300H-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone3	Power	off
+F	AVR-X4300H-AppCommand-update-soundmode-8080.xml	ok	1
+R	AVR-X4300H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4300H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	AVR-X4300H-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	AVR-X4300H-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	DRA-N4-AppCommand-setup.xml	ok	1
+F	DRA-N4-AppCommand-update-soundmode.xml	ok	1
+R	DRA-N4-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	DRA-N4-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	DRA-N4-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+F	DRA-N4-AppCommand-update-tonecontrol.xml	ok	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlStatus	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	BassLevel	0dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Bass	5
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Treble	8
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlStatus	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	BassLevel	0dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Bass	5
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Treble	8
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlStatus	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	BassLevel	0dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Bass	5
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Treble	8
+F	DRA-N4-AppCommand-update.xml	ok	11
+R	DRA-N4-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	DRA-N4-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	DRA-N4-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	DRA-N4-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	DRA-N4-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	DRA-N4-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	DRA-N4-AppCommand-update.xml	3	GetECO	Main	EcoMode	2
+R	DRA-N4-AppCommand-update.xml	3	GetECO	Zone2	EcoMode	2
+R	DRA-N4-AppCommand-update.xml	3	GetECO	Zone3	EcoMode	2
+R	DRA-N4-AppCommand-update.xml	3	GetToneControl	Main	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	3	GetToneControl	Zone2	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	3	GetToneControl	Zone3	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	DRA-N4-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	DRA-N4-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	Internet Radio
+R	DRA-N4-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	DRA-N4-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	DRA-N4-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	BassLevel	0dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	Bass	5
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Main	Treble	8
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	BassLevel	0dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	Bass	5
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone2	Treble	8
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlStatus	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlAdjust	1
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	BassLevel	0dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	Bass	5
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	TrebleLevel	+6dB
+R	DRA-N4-AppCommand-update.xml	8	GetToneControl	Zone3	Treble	8
+R	DRA-N4-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	DRA-N4-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	DRA-N4-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-77.0
+R	DRA-N4-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	DRA-N4-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+F	M-CR510-2-AppCommand-setup.xml	ok	1
+F	M-CR510-2-AppCommand-update-soundmode.xml	ok	1
+R	M-CR510-2-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	M-CR510-2-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	M-CR510-2-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+F	M-CR510-2-AppCommand-update-tonecontrol.xml	ok	1
+F	M-CR510-2-AppCommand-update.xml	ok	11
+R	M-CR510-2-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	M-CR510-2-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	M-CR510-2-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	M-CR510-2-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	M-CR510-2-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	AUXD
+R	M-CR510-2-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	M-CR510-2-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	M-CR510-2-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+R	M-CR510-2-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	M-CR510-2-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	M-CR510-2-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-50.0
+R	M-CR510-2-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	M-CR510-2-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+F	M-CR510-AppCommand-setup.xml	ok	1
+F	M-CR510-AppCommand-update-soundmode.xml	ok	1
+R	M-CR510-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	M-CR510-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	M-CR510-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+F	M-CR510-AppCommand-update-tonecontrol.xml	ok	1
+F	M-CR510-AppCommand-update.xml	ok	10
+R	M-CR510-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	M-CR510-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	M-CR510-AppCommand-update.xml	1	GetDimmer	Main	Dimmer	3
+R	M-CR510-AppCommand-update.xml	1	GetDimmer	Zone2	Dimmer	3
+R	M-CR510-AppCommand-update.xml	1	GetDimmer	Zone3	Dimmer	3
+R	M-CR510-AppCommand-update.xml	3	GetAllZoneMuteStatus	Main	Muted	\n
+R	M-CR510-AppCommand-update.xml	3	GetAllZonePowerStatus	Main	Power	\n
+R	M-CR510-AppCommand-update.xml	3	GetAllZoneSource	Main	InputFunc	AUXB
+R	M-CR510-AppCommand-update.xml	6	GetSurroundModeStatus	Main	SoundModeRaw	<none>
+R	M-CR510-AppCommand-update.xml	6	GetSurroundModeStatus	Zone2	SoundModeRaw	<none>
+R	M-CR510-AppCommand-update.xml	6	GetSurroundModeStatus	Zone3	SoundModeRaw	<none>
+R	M-CR510-AppCommand-update.xml	8	GetAllZoneMuteStatus	Main	Muted	\n
+R	M-CR510-AppCommand-update.xml	8	GetAllZonePowerStatus	Main	Power	\n
+R	M-CR510-AppCommand-update.xml	8	GetAllZoneVolume	Main	Volume	-75.0
+R	M-CR510-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	off
+R	M-CR510-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	off
+F	M-CR603-AppCommand-setup.xml	html
+F	M-CR603-AppCommand-update-soundmode.xml	html
+F	M-CR603-AppCommand-update-tonecontrol.xml	html
+F	M-CR603-AppCommand-update.xml	html
+F	M-RC610-AppCommand-setup.xml	ok	1
+F	M-RC610-AppCommand-update-soundmode.xml	ok	0
+F	M-RC610-AppCommand-update-tonecontrol.xml	ok	0
+F	M-RC610-AppCommand-update.xml	ok	6
+R	M-RC610-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	MainZone
+R	M-RC610-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	MainZone
+R	M-RC610-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	M-RC610-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	M-RC610-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	M-RC610-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+F	NR1604-AppCommand-setup.xml	ok	1
+F	NR1604-AppCommand-update-soundmode.xml	ok	0
+F	NR1604-AppCommand-update-tonecontrol.xml	ok	0
+F	NR1604-AppCommand-update.xml	ok	2
+F	NR1609-AppCommand-setup-8080.xml	ok	1
+F	NR1609-AppCommand-update-8080.xml	ok	11
+R	NR1609-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	NR1609-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	NR1609-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	NR1609-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	NR1609-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	NR1609-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	NR1609-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	3
+R	NR1609-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	3
+R	NR1609-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	3
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	NET
+R	NR1609-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	NET
+R	NR1609-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	NR1609-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	NR1609-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	NR1609-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-70.0
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	OFF
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-70
+R	NR1609-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-20.0
+R	NR1609-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	NR1609-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	NR1609-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	NR1609-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+F	NR1609-AppCommand-update-soundmode-8080.xml	ok	1
+R	NR1609-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	DTS Neo:X Cinema               
+R	NR1609-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	DTS Neo:X Cinema               
+R	NR1609-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	DTS Neo:X Cinema               
+F	NR1609-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	NR1609-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>
+F	SR5008-AppCommand-setup.xml	ok	0
+F	SR5008-AppCommand-update-soundmode.xml	ok	0
+F	SR5008-AppCommand-update-tonecontrol.xml	ok	0
+F	SR5008-AppCommand-update.xml	ok	0
+F	SR6011-AppCommand-setup.xml	ok	1
+F	SR6011-AppCommand-update-soundmode.xml	ok	1
+R	SR6011-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                         
+R	SR6011-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                         
+R	SR6011-AppCommand-update-soundmode.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                         
+F	SR6011-AppCommand-update-tonecontrol.xml	ok	1
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	BassLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Bass	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Main	Treble	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Bass	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone2	Treble	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Bass	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	SR6011-AppCommand-update-tonecontrol.xml	0	GetToneControl	Zone3	Treble	<none>
+F	SR6011-AppCommand-update.xml	ok	11
+R	SR6011-AppCommand-update.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	SR6011-AppCommand-update.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	SR6011-AppCommand-update.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	SR6011-AppCommand-update.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	SR6011-AppCommand-update.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	SR6011-AppCommand-update.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	SR6011-AppCommand-update.xml	2	GetDimmer	Main	Dimmer	3
+R	SR6011-AppCommand-update.xml	2	GetDimmer	Zone2	Dimmer	3
+R	SR6011-AppCommand-update.xml	2	GetDimmer	Zone3	Dimmer	3
+R	SR6011-AppCommand-update.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	SR6011-AppCommand-update.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	SR6011-AppCommand-update.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	SR6011-AppCommand-update.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	SR6011-AppCommand-update.xml	4	GetAllZoneSource	Main	InputFunc	AUX1
+R	SR6011-AppCommand-update.xml	4	GetAllZoneSource	Zone2	InputFunc	SOURCE
+R	SR6011-AppCommand-update.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                         
+R	SR6011-AppCommand-update.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                         
+R	SR6011-AppCommand-update.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                         
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	BassLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	Bass	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Main	Treble	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	Bass	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone2	Treble	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	Bass	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	SR6011-AppCommand-update.xml	8	GetToneControl	Zone3	Treble	<none>
+R	SR6011-AppCommand-update.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	SR6011-AppCommand-update.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	SR6011-AppCommand-update.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	SR6011-AppCommand-update.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	SR6011-AppCommand-update.xml	9	GetAllZoneVolume	Main	Volume	-25.0
+R	SR6011-AppCommand-update.xml	9	GetAllZoneVolume	Main	MaxVolume	OFF
+R	SR6011-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	Volume	-40
+R	SR6011-AppCommand-update.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	SR6011-AppCommand-update.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	SR6011-AppCommand-update.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	SR6011-AppCommand-update.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	SR6011-AppCommand-update.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+F	SR6012-AppCommand-setup-8080.xml	ok	1
+F	SR6012-AppCommand-update-8080.xml	ok	11
+R	SR6012-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Main	Muted	ON
+R	SR6012-AppCommand-update-8080.xml	0	GetAllZoneMuteStatus	Zone2	Muted	OFF
+R	SR6012-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Main	Power	ON
+R	SR6012-AppCommand-update-8080.xml	0	GetAllZonePowerStatus	Zone2	Power	OFF
+R	SR6012-AppCommand-update-8080.xml	1	GetAutoStandby	Main	AutoStandby	60
+R	SR6012-AppCommand-update-8080.xml	1	GetAutoStandby	Zone2	AutoStandby	0
+R	SR6012-AppCommand-update-8080.xml	2	GetDimmer	Main	Dimmer	3
+R	SR6012-AppCommand-update-8080.xml	2	GetDimmer	Zone2	Dimmer	3
+R	SR6012-AppCommand-update-8080.xml	2	GetDimmer	Zone3	Dimmer	3
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Main	Muted	\n
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Main	Power	\n
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZonePowerStatus	Zone2	Power	\n
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZoneSource	Main	InputFunc	PHONO
+R	SR6012-AppCommand-update-8080.xml	4	GetAllZoneSource	Zone2	InputFunc	NET
+R	SR6012-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                                                         
+R	SR6012-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                                                         
+R	SR6012-AppCommand-update-8080.xml	7	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                                                         
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlStatus	0
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	BassLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	Bass	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	TrebleLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Main	Treble	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlStatus	0
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	BassLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Bass	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	TrebleLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone2	Treble	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlStatus	0
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	BassLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Bass	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	TrebleLevel	<none>
+R	SR6012-AppCommand-update-8080.xml	8	GetToneControl	Zone3	Treble	<none>
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Main	Muted	\n
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneMuteStatus	Zone2	Muted	\n
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Main	Power	\n
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZonePowerStatus	Zone2	Power	\n
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	Volume	-24.0
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneVolume	Main	MaxVolume	  0.0
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	Volume	-36
+R	SR6012-AppCommand-update-8080.xml	9	GetAllZoneVolume	Zone2	MaxVolume	-10.0
+R	SR6012-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Main	Muted	off
+R	SR6012-AppCommand-update-8080.xml	10	GetAllZoneMuteStatus	Zone2	Muted	off
+R	SR6012-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Main	Power	off
+R	SR6012-AppCommand-update-8080.xml	10	GetAllZonePowerStatus	Zone2	Power	off
+F	SR6012-AppCommand-update-soundmode-8080.xml	ok	1
+R	SR6012-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Main	SoundModeRaw	Stereo                                                         
+R	SR6012-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone2	SoundModeRaw	Stereo                                                         
+R	SR6012-AppCommand-update-soundmode-8080.xml	0	GetSurroundModeStatus	Zone3	SoundModeRaw	Stereo                                                         
+F	SR6012-AppCommand-update-tonecontrol-8080.xml	ok	1
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlStatus	0
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	BassLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Bass	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	TrebleLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Main	Treble	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlStatus	0
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	BassLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Bass	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	TrebleLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone2	Treble	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlStatus	0
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	ToneControlAdjust	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	BassLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Bass	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	TrebleLevel	<none>
+R	SR6012-AppCommand-update-tonecontrol-8080.xml	0	GetToneControl	Zone3	Treble	<none>

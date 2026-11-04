@@ -5,17 +5,21 @@ mod macros;
 
 mod brand;
 mod channel;
+mod device_info;
 mod error;
 mod sound_mode;
 mod values;
 mod volume;
+mod xml;
 
+pub mod appcommand;
 pub mod source;
 pub mod telnet;
 pub mod zone;
 
 pub use brand::Brand;
 pub use channel::{Channel, ChannelLevel, Subwoofer};
+pub use device_info::{DeviceInfo, is_avr_x_model};
 pub use error::Error;
 pub use sound_mode::SoundModeGroup;
 pub use values::{

@@ -8,12 +8,42 @@ pub enum Error {
     /// return would end the command and start a new one.
     #[error("command text is empty or contains a control character")]
     InvalidCommandText,
+    /// The name of an XML element is not valid.
+    #[error("XML element name is not valid")]
+    InvalidName,
+    /// A document is not valid XML or has a DTD.
+    #[error("invalid XML ({what}) at byte {position}, document starts with {start}")]
+    InvalidXml {
+        /// What is wrong.
+        what: &'static str,
+        /// Byte position of the problem.
+        position: usize,
+        /// First bytes of the document as hex.
+        start: String,
+    },
+    /// The receiver returned an HTML page instead of XML.
+    #[error("response is an HTML page")]
+    HtmlResponse,
+    /// The response has a different number of items than the request.
+    #[error("response has {actual} items, request has {expected}")]
+    UnexpectedItemCount {
+        /// Number of commands in the request.
+        expected: usize,
+        /// Number of items in the response.
+        actual: usize,
+    },
+    /// The response has an element other than `cmd` or `error`.
+    #[error("response has an unexpected element at item {index}")]
+    UnexpectedElement {
+        /// Index of the item.
+        index: usize,
+    },
 }
 
 impl Error {
     /// Returns true if the error comes from text that the caller gave.
     #[must_use]
     pub const fn is_invalid_input(&self) -> bool {
-        matches!(self, Self::InvalidCommandText)
+        matches!(self, Self::InvalidCommandText | Self::InvalidName)
     }
 }

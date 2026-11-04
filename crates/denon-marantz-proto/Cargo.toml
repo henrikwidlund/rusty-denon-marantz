@@ -8,9 +8,11 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+quick-xml.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+allocation-counter.workspace = true
 proptest.workspace = true
 
 [lints]
