@@ -238,6 +238,15 @@ dual_code_enum! {
     }
 }
 
+code_enum! {
+    /// Power state of a zone.
+    pub enum Power {
+        On = "ON", "On";
+        Standby = "STANDBY", "Standby";
+        Off = "OFF", "Off";
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +292,7 @@ mod tests {
             Illumination,
             Mdax,
             PictureMode,
+            Power,
             RoomSize,
             VideoProcessingMode,
         );

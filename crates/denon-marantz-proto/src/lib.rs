@@ -7,7 +7,9 @@ mod brand;
 mod channel;
 mod device_info;
 mod error;
+mod sleep;
 mod sound_mode;
+mod state;
 mod values;
 mod volume;
 mod xml;
@@ -21,12 +23,14 @@ pub use brand::Brand;
 pub use channel::{Channel, ChannelLevel, Subwoofer};
 pub use device_info::{DeviceInfo, is_avr_x_model};
 pub use error::Error;
+pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
+pub use state::{Change, DeviceState, Setting, State, ZoneState};
 pub use values::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, DacFilter,
     DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume, EcoMode,
     EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, Mdax, MultiEq, PictureMode,
-    ReferenceLevelOffset, RoomSize, VideoProcessingMode,
+    Power, ReferenceLevelOffset, RoomSize, VideoProcessingMode,
 };
 pub use volume::Volume;
 pub use zone::{ReceiverType, Zone};
