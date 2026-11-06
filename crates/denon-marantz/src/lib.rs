@@ -19,6 +19,8 @@ pub use pacer::{Adaptive, Pacer, Pacing};
 
 #[cfg(feature = "http")]
 pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
+#[cfg(feature = "telnet")]
+pub use denon_marantz_proto::telnet::Command;
 #[cfg(feature = "http")]
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]

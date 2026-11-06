@@ -68,6 +68,13 @@ pub enum Error {
         /// The limit in bytes.
         limit: usize,
     },
+    /// The telnet connection is not open, so nothing was sent.
+    #[error("the telnet connection is not open")]
+    NotConnected,
+    /// A command cannot be sent, for example because its text has a control
+    /// character.
+    #[error("invalid command: {0}")]
+    InvalidCommand(#[source] denon_marantz_proto::Error),
     /// The host or the path is not valid.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
@@ -88,8 +95,27 @@ impl Error {
             | Self::InvalidResponse { request, .. }
             | Self::Protocol { request, .. }
             | Self::ResponseTooLarge { request, .. } => Some(request),
-            Self::InvalidRequest(_) | Self::InvalidConfig(_) => None,
+            Self::NotConnected
+            | Self::InvalidCommand(_)
+            | Self::InvalidRequest(_)
+            | Self::InvalidConfig(_) => None,
         }
+    }
+
+    /// Returns true if nothing was sent because the telnet connection is not
+    /// open.
+    #[must_use]
+    pub const fn is_not_connected(&self) -> bool {
+        matches!(self, Self::NotConnected)
+    }
+
+    /// Returns true if the caller gave something that cannot be sent.
+    #[must_use]
+    pub const fn is_invalid_input(&self) -> bool {
+        matches!(
+            self,
+            Self::InvalidCommand(_) | Self::InvalidRequest(_) | Self::InvalidConfig(_)
+        )
     }
 
     /// Returns true if the receiver did not answer in time.

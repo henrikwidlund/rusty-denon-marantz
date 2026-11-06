@@ -5,6 +5,8 @@ use denon_marantz_proto::appcommand::{
     self, Cmd, Definition, Endpoint, Field, Response, write_body,
 };
 use denon_marantz_proto::status_page::{self, Page};
+#[cfg(feature = "telnet")]
+use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{Brand, Change, DeviceDescription, ReceiverType, State, Zone};
 use tokio::sync::{broadcast, watch};
 
@@ -13,7 +15,7 @@ use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
-use crate::telnet::{Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
+use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
@@ -183,6 +185,35 @@ impl Avr {
         self.telnet.watch_status()
     }
 
+    /// Sends a command on telnet.
+    ///
+    /// Commands wait for each other and for the spacing between writes (see
+    /// [`TelnetConfig::command_interval`]). They go before the queries that
+    /// fill the state. This returns when the command is written. That does not
+    /// mean that the receiver did it: its answer is an event. If the command
+    /// is waiting when the future is dropped, it is still sent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotConnected`] if the telnet connection is not open.
+    /// Nothing is queued then, so a command is never sent late. Returns
+    /// [`Error::InvalidCommand`] if the command has text that cannot be sent.
+    #[cfg(feature = "telnet")]
+    pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
+        self.telnet.send(telnet::encode(zone, &command)?).await
+    }
+
+    /// Asks the receiver for its state again on telnet. The answers are
+    /// events, and events that repeat the last value are shown again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotConnected`] if the telnet connection is not open.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_refresh(&self) -> Result<(), Error> {
+        self.telnet.refresh().await
+    }
+
     /// Follows the events from the receiver, as they come on telnet. Repeated
     /// events that a query causes are left out. A subscriber that is too slow
     /// loses the oldest events and gets [`broadcast::error::RecvError::Lagged`].
@@ -335,7 +366,7 @@ impl AvrBuilder {
             update_body,
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
-            telnet: Telnet::new(self.telnet),
+            telnet: Telnet::new(self.telnet, brand, single_zone),
         })
     }
 

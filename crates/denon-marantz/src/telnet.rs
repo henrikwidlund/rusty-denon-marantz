@@ -1,26 +1,37 @@
-//! Telnet connection on port 23: live events from the receiver.
+//! Telnet connection on port 23: live events from the receiver, and commands.
 //!
 //! A receiver allows one telnet connection at a time. `Avr::telnet_connect`
 //! opens it and keeps it open in a background task. The task reads events into
-//! the state, sends a query when the connection is idle, and connects again
-//! when the connection is lost.
+//! the state, sends commands and queries, sends a query when the connection is
+//! idle, and connects again when the connection is lost.
+//!
+//! Commands from the caller go first. The queries that fill the state after a
+//! connect are background work: they wait for the commands and for a short
+//! pause after the last one. Writes keep a minimum time between them.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
-    DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, Message,
+    Command, DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder,
+    MAIN_ZONE_POWER_QUERY, Message, state_queries,
 };
+use denon_marantz_proto::{Brand, Zone};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::channels::Channels;
 use crate::error::Error;
 
 /// Events that a slow subscriber can fall behind before it loses some.
 const EVENT_CAPACITY: usize = 256;
+
+/// Requests that wait for the task. A caller that sends more waits.
+const REQUEST_CAPACITY: usize = 64;
 
 /// Bytes read at once.
 const READ_BUFFER: usize = 2048;
@@ -32,6 +43,8 @@ pub struct TelnetConfig {
     pub port: u16,
     /// Time allowed to open the connection.
     pub connect_timeout: Duration,
+    /// Time allowed to write one command.
+    pub write_timeout: Duration,
     /// Time without data after which a query is sent to keep the connection
     /// alive. If there is still nothing after the same time again, the
     /// connection counts as lost.
@@ -41,6 +54,12 @@ pub struct TelnetConfig {
     pub reconnect_min: Duration,
     /// Longest time to wait between two tries to connect again.
     pub reconnect_max: Duration,
+    /// Shortest time between the start of two writes. Receivers need at least
+    /// 50 ms, and buffer commands that come faster.
+    pub command_interval: Duration,
+    /// Time after a command from the caller in which queries wait, so that the
+    /// receiver answers the command first.
+    pub background_pause: Duration,
 }
 
 impl Default for TelnetConfig {
@@ -48,20 +67,28 @@ impl Default for TelnetConfig {
         Self {
             port: 23,
             connect_timeout: Duration::from_secs(2),
+            write_timeout: Duration::from_secs(2),
             keep_alive: Duration::from_secs(30),
             reconnect_min: Duration::from_millis(500),
             reconnect_max: Duration::from_secs(30),
+            command_interval: Duration::from_millis(50),
+            background_pause: Duration::from_millis(250),
         }
     }
 }
 
 impl TelnetConfig {
     pub(crate) fn check(&self) -> Result<(), Error> {
-        if self.connect_timeout.is_zero()
-            || self.keep_alive.is_zero()
-            || self.reconnect_min.is_zero()
-        {
-            return Err(Error::InvalidConfig("telnet times must be above 0"));
+        let times = [
+            self.connect_timeout,
+            self.write_timeout,
+            self.keep_alive,
+            self.reconnect_min,
+        ];
+        if times.iter().any(Duration::is_zero) {
+            return Err(Error::InvalidConfig(
+                "connect_timeout, write_timeout, keep_alive and reconnect_min must be above 0",
+            ));
         }
         if self.reconnect_min > self.reconnect_max {
             return Err(Error::InvalidConfig(
@@ -93,10 +120,33 @@ pub struct TelnetEvent {
     pub parameter: Box<str>,
 }
 
+/// A line to send. The caller waits for `done`.
+struct Outgoing {
+    line: String,
+    done: Option<oneshot::Sender<Result<(), Error>>>,
+}
+
+impl Outgoing {
+    /// Tells the caller that the line was not sent.
+    fn fail(self) {
+        if let Some(done) = self.done {
+            let _ = done.send(Err(Error::NotConnected));
+        }
+    }
+}
+
+/// What the task is asked to do.
+enum Request {
+    Send(Outgoing),
+    /// Ask the receiver for its state again.
+    Refresh,
+}
+
 /// The telnet connection of one receiver.
 #[derive(Debug)]
 pub(crate) struct Telnet {
     config: TelnetConfig,
+    queries: Queries,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
     /// The running task. The lock also stops two calls from connecting at once.
@@ -107,13 +157,37 @@ pub(crate) struct Telnet {
 #[derive(Debug)]
 struct Task {
     shutdown: watch::Sender<bool>,
+    requests: mpsc::Sender<Request>,
     handle: JoinHandle<()>,
 }
 
+/// The queries that ask for the state of the receiver.
+#[derive(Debug, Clone, Copy)]
+struct Queries {
+    brand: Brand,
+    /// A receiver with only the main zone reports its power on the device
+    /// power event.
+    single_zone: bool,
+}
+
+impl Queries {
+    fn all(self) -> VecDeque<&'static str> {
+        let power = if self.single_zone {
+            DEVICE_POWER_QUERY
+        } else {
+            MAIN_ZONE_POWER_QUERY
+        };
+        std::iter::once(power)
+            .chain(state_queries(self.brand))
+            .collect()
+    }
+}
+
 impl Telnet {
-    pub(crate) fn new(config: TelnetConfig) -> Self {
+    pub(crate) fn new(config: TelnetConfig, brand: Brand, single_zone: bool) -> Self {
         Self {
             config,
+            queries: Queries { brand, single_zone },
             events: broadcast::Sender::new(EVENT_CAPACITY),
             status: watch::Sender::new(TelnetStatus::Disconnected),
             task: Mutex::new(None),
@@ -136,15 +210,23 @@ impl Telnet {
         }
         let stream = open(host, &self.config).await?;
         let (shutdown, shutdown_receiver) = watch::channel(false);
+        let (requests, request_receiver) = mpsc::channel(REQUEST_CAPACITY);
         let worker = Worker {
             host: host.to_owned(),
             config: self.config,
+            queries: self.queries,
             channels: channels.clone(),
             events: self.events.clone(),
             status: self.status.clone(),
         };
-        let handle = tokio::spawn(worker.run(stream, shutdown_receiver));
-        *task = Some(Task { shutdown, handle });
+        // The connection is open when this returns, so a command can follow.
+        set_status(&self.status, TelnetStatus::Connected);
+        let handle = tokio::spawn(worker.run(stream, request_receiver, shutdown_receiver));
+        *task = Some(Task {
+            shutdown,
+            requests,
+            handle,
+        });
         Ok(())
     }
 
@@ -156,6 +238,41 @@ impl Telnet {
             let _ = (&mut task.handle).await;
         }
     }
+
+    /// Sends one line. Returns when it is written, or when it cannot be sent.
+    pub(crate) async fn send(&self, line: String) -> Result<(), Error> {
+        let (done, written) = oneshot::channel();
+        self.request(Request::Send(Outgoing {
+            line,
+            done: Some(done),
+        }))
+        .await?;
+        written.await.unwrap_or(Err(Error::NotConnected))
+    }
+
+    /// Asks the task to query the state of the receiver again.
+    pub(crate) async fn refresh(&self) -> Result<(), Error> {
+        self.request(Request::Refresh).await
+    }
+
+    /// Passes a request to the task. A request is refused while there is no
+    /// connection: it would be sent late, after a connect.
+    async fn request(&self, request: Request) -> Result<(), Error> {
+        if *self.status.borrow() != TelnetStatus::Connected {
+            return Err(Error::NotConnected);
+        }
+        let requests = {
+            let task = self.task.lock().await;
+            task.as_ref()
+                .filter(|task| !task.handle.is_finished())
+                .map(|task| task.requests.clone())
+        };
+        requests
+            .ok_or(Error::NotConnected)?
+            .send(request)
+            .await
+            .map_err(|_| Error::NotConnected)
+    }
 }
 
 impl Drop for Task {
@@ -166,12 +283,21 @@ impl Drop for Task {
     }
 }
 
+/// Sets the status. Watchers are told only if it changed.
+fn set_status(status: &watch::Sender<TelnetStatus>, new: TelnetStatus) {
+    status.send_if_modified(|current| {
+        let changed = *current != new;
+        *current = new;
+        changed
+    });
+}
+
 /// Sets the status to disconnected when the task ends, also if it is aborted.
 struct StatusGuard(watch::Sender<TelnetStatus>);
 
 impl Drop for StatusGuard {
     fn drop(&mut self) {
-        self.0.send_replace(TelnetStatus::Disconnected);
+        set_status(&self.0, TelnetStatus::Disconnected);
     }
 }
 
@@ -197,27 +323,80 @@ impl std::fmt::Display for End {
 struct Worker {
     host: String,
     config: TelnetConfig,
+    queries: Queries,
     channels: Channels,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
 }
 
+/// Work that waits for a write.
+struct Queue {
+    /// Lines from the caller, and the keep-alive query.
+    user: VecDeque<Outgoing>,
+    /// Queries that fill the state.
+    background: VecDeque<&'static str>,
+    /// Earliest time of the next write.
+    next_write: Instant,
+    /// When the last line from the caller was written.
+    last_user_write: Option<Instant>,
+}
+
+impl Queue {
+    fn new(background: VecDeque<&'static str>) -> Self {
+        Self {
+            user: VecDeque::new(),
+            background,
+            next_write: Instant::now(),
+            last_user_write: None,
+        }
+    }
+
+    /// When the next line may be written. `None` if there is nothing to write.
+    fn write_time(&self, background_pause: Duration) -> Option<Instant> {
+        if !self.user.is_empty() {
+            Some(self.next_write)
+        } else if !self.background.is_empty() {
+            let after_command = self
+                .last_user_write
+                .map(|written| written + background_pause);
+            Some(after_command.map_or(self.next_write, |time| time.max(self.next_write)))
+        } else {
+            None
+        }
+    }
+
+    /// Tells every caller that is waiting that the line is not sent.
+    fn fail_all(&mut self) {
+        for outgoing in self.user.drain(..) {
+            outgoing.fail();
+        }
+    }
+}
+
 impl Worker {
-    async fn run(self, first: TcpStream, mut shutdown: watch::Receiver<bool>) {
+    async fn run(
+        self,
+        first: TcpStream,
+        mut requests: mpsc::Receiver<Request>,
+        mut shutdown: watch::Receiver<bool>,
+    ) {
         let _guard = StatusGuard(self.status.clone());
         let mut stream = Some(first);
         loop {
-            let stream = match stream.take() {
-                Some(stream) => stream,
-                None => match self.reconnect(&mut shutdown).await {
-                    Some(stream) => stream,
-                    None => return,
-                },
+            let stream = if let Some(stream) = stream.take() {
+                stream
+            } else {
+                let Some(stream) = self.reconnect(&mut shutdown).await else {
+                    return;
+                };
+                // Requests that came while there was no connection are late.
+                drop_requests(&mut requests);
+                stream
             };
-            self.status.send_replace(TelnetStatus::Connected);
+            set_status(&self.status, TelnetStatus::Connected);
             tracing::debug!(host = %self.host, "telnet connected");
-            let end = self.session(stream, &mut shutdown).await;
-            self.status.send_replace(TelnetStatus::Disconnected);
+            let end = self.session(stream, &mut requests, &mut shutdown).await;
+            set_status(&self.status, TelnetStatus::Disconnected);
             if matches!(end, End::Shutdown) {
                 return;
             }
@@ -242,39 +421,105 @@ impl Worker {
         }
     }
 
-    /// Reads events until the connection ends.
-    async fn session(&self, mut stream: TcpStream, shutdown: &mut watch::Receiver<bool>) -> End {
+    /// Reads events and writes lines until the connection ends.
+    async fn session(
+        &self,
+        mut stream: TcpStream,
+        requests: &mut mpsc::Receiver<Request>,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> End {
         let mut decoder = LineDecoder::new();
         let mut filter = DuplicateFilter::new();
+        let mut queue = Queue::new(self.queries.all());
         let mut buffer = [0_u8; READ_BUFFER];
+        let mut line = String::new();
         let keep_alive = format!("{DEVICE_POWER_QUERY}\r");
+        // Only data from the receiver counts. Writes say nothing about it.
+        let mut idle_since = Instant::now();
         let mut asked = false;
-        loop {
-            let Some(read) = until_stopped(
-                shutdown,
-                tokio::time::timeout(self.config.keep_alive, stream.read(&mut buffer)),
-            )
-            .await
-            else {
-                return End::Shutdown;
-            };
-            match read {
-                Ok(Ok(0)) => return End::Closed,
-                Ok(Ok(count)) => {
-                    asked = false;
-                    decoder.decode(&buffer[..count], |line| self.handle_line(line, &mut filter));
-                }
-                Ok(Err(error)) => return End::Failed(error),
-                Err(_) if asked => return End::Silent,
-                Err(_) => {
+        let end = loop {
+            let write_time = queue.write_time(self.config.background_pause);
+            tokio::select! {
+                biased;
+                _ = shutdown.changed() => break End::Shutdown,
+                read = stream.read(&mut buffer) => match read {
+                    Ok(0) => break End::Closed,
+                    Ok(count) => {
+                        idle_since = Instant::now();
+                        asked = false;
+                        decoder.decode(&buffer[..count], |text| self.handle_line(text, &mut filter));
+                    }
+                    Err(error) => break End::Failed(error),
+                },
+                request = requests.recv() => match request {
+                    Some(Request::Send(outgoing)) => queue.user.push_back(outgoing),
+                    Some(Request::Refresh) => {
+                        filter.clear();
+                        queue.background = self.queries.all();
+                    }
+                    None => break End::Shutdown,
+                },
+                () = tokio::time::sleep_until(idle_since + self.config.keep_alive) => {
+                    if asked {
+                        break End::Silent;
+                    }
                     asked = true;
+                    // Wait the same time again for the answer.
+                    idle_since = Instant::now();
                     tracing::trace!(host = %self.host, "telnet idle, sending a query");
-                    if let Err(error) = stream.write_all(keep_alive.as_bytes()).await {
-                        return End::Failed(error);
+                    queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
+                }
+                () = tokio::time::sleep_until(write_time.unwrap_or_else(Instant::now)), if write_time.is_some() => {
+                    if let Err(error) = self.write_next(&mut stream, &mut queue, &mut line).await {
+                        break End::Failed(error);
                     }
                 }
             }
+        };
+        queue.fail_all();
+        drop_requests(requests);
+        end
+    }
+
+    /// Writes the next line: from the caller first, then a query.
+    async fn write_next(
+        &self,
+        stream: &mut TcpStream,
+        queue: &mut Queue,
+        line: &mut String,
+    ) -> Result<(), std::io::Error> {
+        let (text, done, from_user) = if let Some(outgoing) = queue.user.pop_front() {
+            (outgoing.line, outgoing.done, true)
+        } else if let Some(query) = queue.background.pop_front() {
+            line.clear();
+            line.push_str(query);
+            line.push('\r');
+            (std::mem::take(line), None, false)
+        } else {
+            return Ok(());
+        };
+        let result =
+            tokio::time::timeout(self.config.write_timeout, stream.write_all(text.as_bytes()))
+                .await
+                .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()));
+        let now = Instant::now();
+        queue.next_write = now + self.config.command_interval;
+        if from_user {
+            queue.last_user_write = Some(now);
+        } else {
+            // Keep the buffer for the next query.
+            *line = text;
         }
+        if let Some(done) = done {
+            let _ = done.send(match &result {
+                Ok(()) => Ok(()),
+                Err(error) => Err(Error::Network {
+                    request: format!("telnet send to {}", self.host),
+                    source: Box::new(std::io::Error::new(error.kind(), error.to_string())),
+                }),
+            });
+        }
+        result
     }
 
     fn handle_line(&self, line: &str, filter: &mut DuplicateFilter) {
@@ -303,6 +548,15 @@ impl Worker {
                 event: message.event,
                 parameter: message.parameter.into(),
             });
+        }
+    }
+}
+
+/// Tells the callers of waiting requests that nothing was sent.
+fn drop_requests(requests: &mut mpsc::Receiver<Request>) {
+    while let Ok(request) = requests.try_recv() {
+        if let Request::Send(outgoing) = request {
+            outgoing.fail();
         }
     }
 }
@@ -344,6 +598,15 @@ async fn until_stopped<T>(
     }
 }
 
+/// Encodes a command for a zone.
+pub(crate) fn encode(zone: Zone, command: &Command<'_>) -> Result<String, Error> {
+    let mut line = String::new();
+    command
+        .write_line(zone, &mut line)
+        .map_err(Error::InvalidCommand)?;
+    Ok(line)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +622,10 @@ mod tests {
         let bad = [
             TelnetConfig {
                 connect_timeout: Duration::ZERO,
+                ..default
+            },
+            TelnetConfig {
+                write_timeout: Duration::ZERO,
                 ..default
             },
             TelnetConfig {
@@ -380,5 +647,57 @@ mod tests {
                 "{config:?}"
             );
         }
+        // No spacing and no pause are allowed, for tests and fast receivers.
+        let none = TelnetConfig {
+            command_interval: Duration::ZERO,
+            background_pause: Duration::ZERO,
+            ..default
+        };
+        assert!(none.check().is_ok());
+    }
+
+    #[test]
+    fn power_query_depends_on_the_zones() {
+        let multi = Queries {
+            brand: Brand::Denon,
+            single_zone: false,
+        }
+        .all();
+        assert_eq!(multi.front(), Some(&"ZM?"));
+        let single = Queries {
+            brand: Brand::Marantz,
+            single_zone: true,
+        }
+        .all();
+        assert_eq!(single.front(), Some(&"PW?"));
+        assert_eq!(multi.len(), 1 + state_queries(Brand::Denon).count());
+        assert_eq!(single.len(), 1 + state_queries(Brand::Marantz).count());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn queue_orders_the_work() {
+        let pause = Duration::from_millis(250);
+        let mut queue = Queue::new(VecDeque::from(["SI?"]));
+        let start = Instant::now();
+        // A query waits only for the spacing.
+        assert_eq!(queue.write_time(pause), Some(start));
+        // A line from the caller goes first and is due at once.
+        queue.user.push_back(Outgoing {
+            line: "MVUP\r".to_owned(),
+            done: None,
+        });
+        assert_eq!(queue.write_time(pause), Some(start));
+        // After a command the spacing applies, and queries wait for the pause.
+        queue.user.clear();
+        queue.last_user_write = Some(start);
+        queue.next_write = start + Duration::from_millis(50);
+        assert_eq!(queue.write_time(pause), Some(start + pause));
+        queue.next_write = start + Duration::from_millis(400);
+        assert_eq!(
+            queue.write_time(pause),
+            Some(start + Duration::from_millis(400))
+        );
+        queue.background.clear();
+        assert_eq!(queue.write_time(pause), None);
     }
 }

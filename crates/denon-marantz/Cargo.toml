@@ -38,6 +38,10 @@ name = "status"
 required-features = ["http"]
 
 [[example]]
+name = "remote"
+required-features = ["telnet"]
+
+[[example]]
 name = "watch"
 required-features = ["telnet"]
 
