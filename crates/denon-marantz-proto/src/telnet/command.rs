@@ -99,6 +99,9 @@ pub enum Command<'a> {
     ContainmentAmountDown,
     /// Selects a Dirac Live filter.
     SetDiracFilter(DiracFilter),
+    /// Turns Auto Lip Sync on (`true`) or off (`false`). Tested on a Denon
+    /// receiver only.
+    AutoLipSync(bool),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
 }
@@ -200,6 +203,8 @@ impl Command<'_> {
                 out.push_str("PSDIRAC ");
                 out.push_str(filter.code());
             }
+            Self::AutoLipSync(true) => out.push_str("OPALSSET ON"),
+            Self::AutoLipSync(false) => out.push_str("OPALSSET OFF"),
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);
@@ -318,6 +323,8 @@ mod tests {
             (Command::ContainmentAmountDown, "PSCNTAMT DOWN\r"),
             (Command::SetDiracFilter(DiracFilter::Off), "PSDIRAC OFF\r"),
             (Command::SetDiracFilter(DiracFilter::Slot2), "PSDIRAC 2\r"),
+            (Command::AutoLipSync(true), "OPALSSET ON\r"),
+            (Command::AutoLipSync(false), "OPALSSET OFF\r"),
         ];
         for (command, expected) in cases {
             for zone in Zone::ALL {
