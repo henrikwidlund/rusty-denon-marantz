@@ -10,7 +10,7 @@ use common::{read_bytes, read_data, unescape};
 use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
-use denon_marantz_proto::{DeviceInfo, Error, Zone};
+use denon_marantz_proto::{Brand, DeviceDescription, DeviceInfo, Error, Zone};
 
 const DEFINITIONS: [(&str, Definition); 10] = [
     ("GetAllZoneMuteStatus", ac::GET_ALL_ZONE_MUTE_STATUS),
@@ -163,4 +163,19 @@ fn device_info_has_the_expected_values() {
         ok += 1;
     }
     assert!(ok > 15 && html > 3, "{ok} {html}");
+}
+
+#[test]
+fn device_description_of_a_real_receiver() {
+    let body = read_bytes("xml/AVR-X1600H-description.xml");
+    let description = DeviceDescription::parse(&body).unwrap();
+    assert_eq!(description.manufacturer, "Denon");
+    assert_eq!(description.model_name.as_deref(), Some("Denon AVR-X1600H"));
+    assert_eq!(
+        description.friendly_name.as_deref(),
+        Some("Denon AVR-X1600H")
+    );
+    assert_eq!(description.serial_number.as_deref(), Some("XXX"));
+    assert_eq!(description.presentation_url, None);
+    assert_eq!(description.brand(), Brand::Denon);
 }

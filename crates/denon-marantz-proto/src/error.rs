@@ -8,6 +8,9 @@ pub enum Error {
     /// return would end the command and start a new one.
     #[error("command text is empty or contains a control character")]
     InvalidCommandText,
+    /// A device description is not from a supported receiver.
+    #[error("the device description is not from a Denon or Marantz receiver")]
+    UnsupportedDevice,
     /// The name of an XML element is not valid.
     #[error("XML element name is not valid")]
     InvalidName,

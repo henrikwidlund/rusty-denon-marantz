@@ -5,6 +5,7 @@ mod macros;
 
 mod brand;
 mod channel;
+mod device_description;
 mod device_info;
 mod error;
 mod sleep;
@@ -23,6 +24,7 @@ pub mod zone;
 
 pub use brand::Brand;
 pub use channel::{Channel, ChannelLevel, Subwoofer};
+pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use error::Error;
 pub use sleep::Sleep;
