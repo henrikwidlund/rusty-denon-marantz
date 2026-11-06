@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 88] = [
+static QUERIES: [Query; 89] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -79,7 +79,7 @@ static QUERIES: [Query; 88] = [
     marantz("PSMDAX ?"),        // MDAX
     marantz("PSDACFIL ?"),      // DAC Filter
     marantz("ILB ?"),           // Illumination
-    marantz("SSHOS ?"),         // Auto Lip Sync
+    marantz("SSHOS ?"),         // Auto Lip Sync on a Marantz receiver, not tested
     both("PSTONE CTRL ?"),      // TONE
     both("PSDYNEQ ?"),          // Dynamic EQ
     both("PSLFC ?"),            // Audyssey LFC
@@ -121,6 +121,7 @@ static QUERIES: [Query; 88] = [
     both("SSSOD ?"),            // Sources in use or hidden
     both("OPSMLALL ?"),         // Sound modes that the receiver offers
     both("NSFRN?"),             // Friendly name
+    both("OPALS ?"),            // Auto Lip Sync on a Denon receiver
     both("PSREFLEV ?"),         // Reference Level
     both("PSDYNVOL ?"),         // Dynamic Vol.
     both("SPPR ?"),             // Speaker Preset
@@ -179,8 +180,8 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 83);
-        assert_eq!(marantz.len(), 87);
+        assert_eq!(denon.len(), 84);
+        assert_eq!(marantz.len(), 88);
     }
 
     #[test]
@@ -191,9 +192,9 @@ mod tests {
     }
 
     #[test]
-    fn both_brands_ask_for_the_sources_sound_modes_and_name() {
+    fn both_brands_ask_for_the_sources_sound_modes_name_and_lip_sync() {
         for brand in BRANDS {
-            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?"] {
+            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?", "OPALS ?"] {
                 assert!(state_queries(brand).any(|query| query == wanted));
             }
         }

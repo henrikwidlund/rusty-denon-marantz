@@ -80,6 +80,8 @@ pub enum Setting {
     ZoneName,
     /// Name that the user gave the receiver.
     FriendlyName,
+    /// Auto lip sync of the receiver is on.
+    AutoLipSync,
 }
 
 /// A value that changed.
@@ -169,6 +171,8 @@ pub struct DeviceState {
     /// Name that the user gave the receiver. A receiver that has no name
     /// reports an empty one on telnet, which does not change this value.
     pub friendly_name: Option<String>,
+    /// Auto lip sync is on. Telnet reports it on a Denon receiver.
+    pub auto_lip_sync: Option<bool>,
 }
 
 impl DeviceState {
@@ -311,15 +315,7 @@ impl State {
                 self.apply_friendly_name(name)
             }
             Event::Ps => self.apply_sound_setting(parameter),
-            Event::Op => {
-                if let Some(changed) = self.device.sound_modes.apply_op(parameter) {
-                    return changed.then_some(Change {
-                        zone: None,
-                        setting: Setting::SoundModes,
-                    });
-                }
-                self.apply_dirac_slot(parameter)
-            }
+            Event::Op => self.apply_option(parameter),
             _ => None,
         }
     }
@@ -497,6 +493,24 @@ impl State {
             }
             _ => None,
         }
+    }
+
+    /// Applies an `OP` event: the list of sound modes, auto lip sync and the
+    /// Dirac Live slots. The other `OP` events are ignored.
+    fn apply_option(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(changed) = self.device.sound_modes.apply_op(parameter) {
+            return changed.then_some(Change {
+                zone: None,
+                setting: Setting::SoundModes,
+            });
+        }
+        if let Some(value) = parameter.strip_prefix("ALSSET ") {
+            let on = on_off(value.trim())?;
+            return self.device_change(Setting::AutoLipSync, |d| {
+                set(&mut d.auto_lip_sync, Some(on))
+            });
+        }
+        self.apply_dirac_slot(parameter)
     }
 
     /// Applies an `OP` event about a Dirac Live slot, for example
@@ -1221,6 +1235,22 @@ mod tests {
         assert_eq!(state.device().friendly_name.as_deref(), Some("Living room"));
         // Other `NS` lines are not names.
         assert_eq!(apply(&mut state, "NSFNT P01"), None);
+    }
+
+    #[test]
+    fn auto_lip_sync_follows_events() {
+        let mut state = State::new(false);
+        let lip_sync = || change(None, Setting::AutoLipSync);
+        assert_eq!(apply(&mut state, "OPALSSET ON"), lip_sync());
+        assert_eq!(apply(&mut state, "OPALSSET ON"), None);
+        assert_eq!(state.device().auto_lip_sync, Some(true));
+        assert_eq!(apply(&mut state, "OPALSSET OFF"), lip_sync());
+        assert_eq!(state.device().auto_lip_sync, Some(false));
+        // Text that is not a value keeps the value. The other lines are not
+        // handled.
+        assert_eq!(apply(&mut state, "OPALSSET ??"), None);
+        assert_eq!(apply(&mut state, "OPALSVAL 000"), None);
+        assert_eq!(state.device().auto_lip_sync, Some(false));
     }
 
     #[test]
