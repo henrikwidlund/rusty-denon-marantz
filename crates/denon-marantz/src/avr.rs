@@ -80,6 +80,9 @@ pub struct Info {
     pub friendly_name: String,
     /// Version of the communication API.
     pub comm_api_version: Option<String>,
+    /// MAC address of the wired network, as 12 hexadecimal digits without
+    /// separators.
+    pub mac_address: Option<String>,
     /// The receiver supports Dirac Live.
     pub dirac_live: bool,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
@@ -421,6 +424,7 @@ impl AvrBuilder {
                 .and_then(|d| owned(d.serial_number.as_ref())),
             friendly_name,
             comm_api_version: owned(device_info.comm_api_version.as_ref()),
+            mac_address: owned(device_info.mac_address.as_ref()),
             dirac_live: device_info.dirac_live,
             zones: Zone::ALL[..zone_count].to_vec(),
         };

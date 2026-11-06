@@ -63,6 +63,7 @@ async fn connects_to_an_avr_x_receiver() {
     assert_eq!(info.model_name.as_deref(), Some("Denon AVR-X1600H"));
     assert_eq!(info.serial_number.as_deref(), Some("XXX"));
     assert_eq!(info.comm_api_version.as_deref(), Some("0301"));
+    assert_eq!(info.mac_address.as_deref(), Some("0123456789AB"));
     assert_eq!(info.zones, [Zone::Main, Zone::Zone2]);
     // Nothing is read until update.
     assert_eq!(avr.snapshot().zone(Zone::Main).power, None);

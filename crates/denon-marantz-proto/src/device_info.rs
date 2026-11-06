@@ -21,6 +21,9 @@ pub struct DeviceInfo<'a> {
     pub dirac_live: bool,
     /// Kind of device, for example `AV RECEIVER`. Older receivers have none.
     pub category: Option<Cow<'a, str>>,
+    /// MAC address of the wired network, as 12 hexadecimal digits without
+    /// separators.
+    pub mac_address: Option<Cow<'a, str>>,
 }
 
 /// Versions of the communication API that AVR-X receivers report.
@@ -59,6 +62,7 @@ impl<'a> DeviceInfo<'a> {
             device_zones: text("DeviceZones").and_then(|zones| zones.trim().parse().ok()),
             dirac_live: root.contains_descendant("DiracLive"),
             category: text("CategoryName"),
+            mac_address: text("MacAddress"),
         })
     }
 
@@ -71,6 +75,7 @@ impl<'a> DeviceInfo<'a> {
             device_zones: self.device_zones,
             dirac_live: self.dirac_live,
             category: self.category.map(|v| Cow::Owned(v.into_owned())),
+            mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
         }
     }
 
@@ -114,8 +119,10 @@ mod tests {
     fn parses_the_values() {
         let xml = b"<?xml version=\"1.0\"?><Device_Info><CommApiVers>0301</CommApiVers>\
                     <ModelName>AVC-X3700H</ModelName><DeviceZones>2</DeviceZones>\
+                    <MacAddress>0123456789AB</MacAddress>\
                     <Caps><x><DiracLive/></x></Caps></Device_Info>";
         let info = DeviceInfo::parse(xml).unwrap();
+        assert_eq!(info.mac_address.as_deref(), Some("0123456789AB"));
         assert_eq!(info.comm_api_version.as_deref(), Some("0301"));
         assert_eq!(info.model_name.as_deref(), Some("AVC-X3700H"));
         assert_eq!(info.device_zones, Some(2));
@@ -125,11 +132,14 @@ mod tests {
 
     #[test]
     fn into_owned_keeps_the_values() {
-        let body = b"<D><ModelName>AVR-X1</ModelName><DeviceZones>2</DeviceZones></D>".to_vec();
+        let body = b"<D><ModelName>AVR-X1</ModelName><DeviceZones>2</DeviceZones>\
+                     <MacAddress>0123456789AB</MacAddress></D>"
+            .to_vec();
         let owned = DeviceInfo::parse(&body).unwrap().into_owned();
         drop(body);
         assert_eq!(owned.model_name.as_deref(), Some("AVR-X1"));
         assert_eq!(owned.device_zones, Some(2));
+        assert_eq!(owned.mac_address.as_deref(), Some("0123456789AB"));
     }
 
     #[test]
@@ -187,6 +197,7 @@ mod tests {
             device_zones: None,
             dirac_live: false,
             category: None,
+            mac_address: None,
         };
         assert!(by(Some("0210"), None).is_avr_x());
         assert!(by(Some("x0300y"), Some("Unknown")).is_avr_x());

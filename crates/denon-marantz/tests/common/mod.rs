@@ -168,7 +168,7 @@ pub(crate) const DESCRIPTION: &[u8] =
     include_bytes!("../../../denon-marantz-proto/tests/data/xml/AVR-X1600H-description.xml");
 pub(crate) const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
-    <DeviceZones>2</DeviceZones></Device_Info>";
+    <DeviceZones>2</DeviceZones><MacAddress>0123456789AB</MacAddress></Device_Info>";
 /// The device information of a receiver that supports Dirac Live.
 pub(crate) const AVR_X_DIRAC_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
