@@ -1,8 +1,6 @@
-//! Compares the values that `State` takes from `AppCommand` answers with the
-//! values that the Python converters give for the same text.
-//!
-//! The text comes from answers that real receivers sent
-//! (`data/state_golden.tsv`).
+//! Checks the values that `State` takes from `AppCommand` answers and status
+//! pages. The text is from answers that real receivers sent. The expected
+//! values are in `data/state_golden.tsv`.
 
 use std::fs;
 use std::path::PathBuf;
@@ -49,7 +47,7 @@ fn field(name: &str) -> Field {
     }
 }
 
-/// The value in `State` as text, like the Python value.
+/// The value in `State` as text, like the expected value.
 fn rendered(state: &State, name: &str) -> Option<String> {
     let zone = state.zone(Zone::Main);
     match name {
@@ -78,21 +76,22 @@ fn same(name: &str, actual: Option<&str>, expected: Option<&str>) -> bool {
 }
 
 #[test]
-fn answer_values_match_python() {
+fn answer_values_have_the_expected_state() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/state_golden.tsv");
     let golden = fs::read_to_string(path).unwrap();
     let mut rows = 0;
     for row in golden.lines() {
         let f: Vec<&str> = row.split('\t').collect();
-        let (name, raw, python) = (f[0], unescape(f[1]), f[2]);
-        let expected = unescape(python).filter(|_| python != "<error>");
+        let (name, raw, expected_text) = (f[0], unescape(f[1]), f[2]);
+        let expected = unescape(expected_text).filter(|_| expected_text != "<error>");
 
         let mut state = State::new(false);
         state.apply_field(Zone::Main, field(name), raw.as_deref());
         let actual = rendered(&state, name);
 
-        // Python keeps any text as the power. State only knows the three
-        // power values, and accepts lower case. Other text is unknown.
+        // Some receivers send text that is not a power state, for example the
+        // name of a zone. State knows only the three power values, accepts
+        // lower case, and treats other text as unknown.
         let expected = if name == "Power" {
             expected
                 .map(|text| text.to_ascii_uppercase())
@@ -102,7 +101,7 @@ fn answer_values_match_python() {
         };
         assert!(
             same(name, actual.as_deref(), expected.as_deref()),
-            "{name} {raw:?}: got {actual:?}, Python {expected:?}"
+            "{name} {raw:?}: got {actual:?}, expected {expected:?}"
         );
         rows += 1;
     }

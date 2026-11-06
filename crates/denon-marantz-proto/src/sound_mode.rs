@@ -355,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn guess_uses_the_same_order_as_python() {
+    fn guess_checks_words_in_a_fixed_order() {
         use SoundModeGroup as G;
         assert_eq!(G::guess_from_raw("NEW DTS DOLBY"), Some(G::DtsSurround));
         assert_eq!(G::guess_from_raw("new dolby thing"), Some(G::DolbyDigital));

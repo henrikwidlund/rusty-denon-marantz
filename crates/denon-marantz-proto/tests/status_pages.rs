@@ -1,8 +1,7 @@
-//! Compares the status page lookups with the rules of the Python library on
-//! pages that real receivers sent.
+//! Checks the status page lookups on pages that real receivers sent.
 //!
 //! `data/status_golden.tsv` has, for each model and zone, which pages exist
-//! and the values that Python found.
+//! and the expected values.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -68,7 +67,7 @@ fn parse<'a>(body: Option<&'a [u8]>, html_pages: &mut usize) -> Option<Page<'a>>
 }
 
 #[test]
-fn status_pages_match_python() {
+fn status_pages_have_the_expected_values() {
     let golden = fs::read_to_string(data("status_golden.tsv")).unwrap();
     let mut cases = Vec::new();
     let mut expected: BTreeMap<(String, String), Values> = BTreeMap::new();

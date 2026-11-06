@@ -1,8 +1,7 @@
-//! Compares XML parsing with the results of the Python library on answers
-//! that real receivers sent.
+//! Checks XML parsing on answers that real receivers sent.
 //!
 //! `data/xml` has the answers. `data/appcommand_golden.tsv` and
-//! `data/deviceinfo_golden.tsv` have the values that Python found.
+//! `data/deviceinfo_golden.tsv` have the expected values.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -57,7 +56,7 @@ fn unescape(text: &str) -> Option<String> {
 type Values = Vec<(String, Option<String>)>;
 
 #[test]
-fn appcommand_matches_python() {
+fn appcommand_answers_have_the_expected_values() {
     let golden = fs::read_to_string(data("appcommand_golden.tsv")).unwrap();
     let mut files = Vec::new();
     let mut expected: BTreeMap<(String, usize, String, String), Values> = BTreeMap::new();
@@ -154,7 +153,7 @@ fn wrong_item_count_is_an_error() {
 }
 
 #[test]
-fn deviceinfo_matches_python() {
+fn device_info_has_the_expected_values() {
     let golden = fs::read_to_string(data("deviceinfo_golden.tsv")).unwrap();
     let (mut ok, mut html) = (0, 0);
     for row in golden.lines() {
