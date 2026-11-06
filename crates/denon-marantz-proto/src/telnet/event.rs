@@ -172,7 +172,7 @@ impl<'a> Message<'a> {
 }
 
 /// Parameter prefixes of events that the receiver repeats when it is queried.
-const DUPLICATE_PREFIXES: [&str; 23] = [
+const DUPLICATE_PREFIXES: [&str; 24] = [
     "INFSIGRES I",
     "INFSIGRES O",
     "SDVIN ",
@@ -183,6 +183,7 @@ const DUPLICATE_PREFIXES: [&str; 23] = [
     "INFSIGFRL I",
     "INFSIGFRL O",
     "INFSIGCOS",
+    "INFSIGECI",
     "HDMIDIAGMAXRES",
     "HDMIDIAGERR",
     "HDMIDIAGHDCP23",
@@ -362,6 +363,14 @@ mod tests {
         // Groups are independent.
         assert!(filter.accept("INFSIGRES O 4K"));
         assert!(!filter.accept("INFSIGRES O 4K"));
+    }
+
+    #[test]
+    fn duplicate_filter_knows_extended_colorimetry() {
+        let mut filter = DuplicateFilter::new();
+        assert!(filter.accept("INFSIGECI 55"));
+        assert!(!filter.accept("INFSIGECI 55"));
+        assert!(filter.accept("INFSIGECI 00"));
     }
 
     #[test]

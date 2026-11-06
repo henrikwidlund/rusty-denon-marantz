@@ -20,7 +20,7 @@ pub fn state_queries(brand: Brand) -> &'static [&'static str] {
 }
 
 /// Queries for Denon receivers.
-static DENON: [&str; 77] = [
+static DENON: [&str; 78] = [
     "SI?",                // Select INPUT source
     "MV?",                // MASTER VOLUME
     "MU?",                // Mute
@@ -66,6 +66,7 @@ static DENON: [&str; 77] = [
     "SSINFSIGPIX ?",      // Video Pixel Depth
     "SSINFSIGFRL ?",      // Video Max FRL
     "SSINFSIGCOS ?",      // Signal Color Space
+    "SSINFSIGECI ?",      // Signal Extended Colorimetry
     "PSDIRAC ?",          // Dirac Live Filter
     "PSREFLEV ?",         // Reference Level
     "PSDYNVOL ?",         // Dynamic Vol.
@@ -101,7 +102,7 @@ static DENON: [&str; 77] = [
 ];
 
 /// Queries for Marantz receivers.
-static MARANTZ: [&str; 81] = [
+static MARANTZ: [&str; 82] = [
     "SI?",                // Select INPUT source
     "MV?",                // MASTER VOLUME
     "MU?",                // Mute
@@ -151,6 +152,7 @@ static MARANTZ: [&str; 81] = [
     "SSINFSIGPIX ?",      // Video Pixel Depth
     "SSINFSIGFRL ?",      // Video Max FRL
     "SSINFSIGCOS ?",      // Signal Color Space
+    "SSINFSIGECI ?",      // Signal Extended Colorimetry
     "PSDIRAC ?",          // Dirac Live Filter
     "PSREFLEV ?",         // Reference Level
     "PSDYNVOL ?",         // Dynamic Vol.
@@ -208,8 +210,15 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 77);
-        assert_eq!(marantz.len(), 81);
+        assert_eq!(denon.len(), 78);
+        assert_eq!(marantz.len(), 82);
+    }
+
+    #[test]
+    fn both_brands_ask_for_extended_colorimetry() {
+        for brand in [Brand::Denon, Brand::Marantz] {
+            assert!(state_queries(brand).contains(&"SSINFSIGECI ?"));
+        }
     }
 
     #[test]

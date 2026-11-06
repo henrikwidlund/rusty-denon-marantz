@@ -120,7 +120,7 @@ impl<'a> Iterator for Items<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::appcommand::{GET_ALL_ZONE_POWER_STATUS, GET_DIMMER};
+    use crate::appcommand::{Field, GET_ALL_ZONE_POWER_STATUS, GET_DIMMER, GET_TONE_CONTROL};
 
     #[test]
     fn items_and_errors() {
@@ -163,6 +163,31 @@ mod tests {
             }
         );
         assert_eq!(Response::parse(b"<rx></rx>", 0).unwrap().items().count(), 0);
+    }
+
+    #[test]
+    fn blank_values_depend_on_the_definition() {
+        let body = b"<rx><cmd><status>1</status><basslevel/><bassvalue>45</bassvalue></cmd>\
+                     <cmd><value/></cmd></rx>";
+        let response = Response::parse(body, 2).unwrap();
+        let mut values = Vec::new();
+        response.extract(
+            &[GET_TONE_CONTROL, GET_DIMMER],
+            Zone::Main,
+            |field, value| {
+                values.push((field, value.map(str::to_owned)));
+            },
+        );
+        // Tone control keeps its value when the answer is blank.
+        assert_eq!(
+            values,
+            [
+                (Field::ToneControlStatus, Some("1".to_owned())),
+                (Field::Bass, Some("45".to_owned())),
+                // The dimmer is unknown when the answer is blank.
+                (Field::Dimmer, None),
+            ]
+        );
     }
 
     #[test]

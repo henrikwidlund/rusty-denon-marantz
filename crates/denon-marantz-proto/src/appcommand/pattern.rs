@@ -109,6 +109,9 @@ pub struct Definition {
     pub cmd: Cmd<'static>,
     /// Values in the answer.
     pub patterns: &'static [Pattern],
+    /// What a blank value means. `true` means the value is not known. `false`
+    /// means the value did not change, so the answer gives nothing for it.
+    pub blank_is_unknown: bool,
 }
 
 impl Pattern {
@@ -136,7 +139,8 @@ impl Pattern {
 impl Definition {
     /// Calls `on_value` for each value of this command found in `item`.
     ///
-    /// The value is `None` for an empty element or a missing attribute.
+    /// The value is `None` for an empty element or a missing attribute, unless
+    /// [`Definition::blank_is_unknown`] is false: then nothing is called.
     /// Nothing is called for an element that is not there.
     pub fn extract(
         &self,
@@ -154,7 +158,9 @@ impl Definition {
                 zone,
                 pattern.leaf,
                 &mut |value| {
-                    on_value(pattern.field, value);
+                    if value.is_some() || self.blank_is_unknown {
+                        on_value(pattern.field, value);
+                    }
                 },
             );
         }

@@ -7,6 +7,7 @@ const fn query(text: &'static str, patterns: &'static [Pattern]) -> Definition {
     Definition {
         cmd: Cmd::get(text),
         patterns,
+        blank_is_unknown: true,
     }
 }
 
@@ -75,9 +76,9 @@ pub const GET_SURROUND_MODE_STATUS: Definition = query(
 );
 
 /// Tone control state, bass and treble.
-pub const GET_TONE_CONTROL: Definition = query(
-    "GetToneControl",
-    &[
+pub const GET_TONE_CONTROL: Definition = Definition {
+    cmd: Cmd::get("GetToneControl"),
+    patterns: &[
         Pattern::text(Field::ToneControlStatus, &[Step::Tag("status")]),
         Pattern::text(Field::ToneControlAdjust, &[Step::Tag("adjust")]),
         Pattern::text(Field::BassLevel, &[Step::Tag("basslevel")]),
@@ -85,7 +86,9 @@ pub const GET_TONE_CONTROL: Definition = query(
         Pattern::text(Field::TrebleLevel, &[Step::Tag("treblelevel")]),
         Pattern::text(Field::Treble, &[Step::Tag("treblevalue")]),
     ],
-);
+    // Blank while tone control works and telnet reports the values.
+    blank_is_unknown: false,
+};
 
 /// Renamed sources. The answer has `functionrename` with `list` elements.
 pub const GET_RENAME_SOURCE: Definition = query("GetRenameSource", &[]);
@@ -157,6 +160,7 @@ pub const GET_AUDYSSEY: Definition = Definition {
         params: Some(AUDYSSEY_PARAMS),
         set: None,
     },
+    blank_is_unknown: true,
     patterns: &[
         Pattern::text(Field::MultEq, MULTEQ_STEPS),
         Pattern::attribute(Field::MultEqControl, MULTEQ_STEPS, "control"),
