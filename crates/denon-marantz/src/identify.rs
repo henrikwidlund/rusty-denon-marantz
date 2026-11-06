@@ -51,21 +51,19 @@ pub async fn identify_on(
     let mut unreachable = 0;
     for &(receiver_type, port) in candidates {
         let client = HttpClient::new(host, port, config)?;
-        let body = match client.get(DEVICE_INFO_PATH).await {
-            Ok(body) => body,
+        let info = match client
+            .get_parsed(DEVICE_INFO_PATH, |body| {
+                DeviceInfo::parse(body).map(DeviceInfo::into_owned)
+            })
+            .await
+        {
+            Ok(info) => info,
             Err(error) if error.is_timeout() || error.is_network() => {
                 tracing::debug!(host, port, %error, "no answer when identifying the receiver");
                 unreachable += 1;
                 last_error = Some(error);
                 continue;
             }
-            Err(error) => {
-                tracing::debug!(host, port, %error, "not a {} receiver", receiver_type.name());
-                continue;
-            }
-        };
-        let info = match DeviceInfo::parse(&body) {
-            Ok(info) => info.into_owned(),
             Err(error) => {
                 tracing::debug!(host, port, %error, "not a {} receiver", receiver_type.name());
                 continue;
@@ -90,11 +88,6 @@ pub async fn identify_on(
     Ok(Identified {
         receiver_type: ReceiverType::Avr,
         port: ReceiverType::Avr.port(),
-        device_info: device_info.unwrap_or(DeviceInfo {
-            comm_api_version: None,
-            model_name: None,
-            device_zones: None,
-            dirac_live: false,
-        }),
+        device_info: device_info.unwrap_or_default(),
     })
 }

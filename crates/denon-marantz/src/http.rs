@@ -110,6 +110,45 @@ impl HttpClient {
         self.send(Method::POST, path, body).await
     }
 
+    /// Sends a GET request and reads the answer with `parse`.
+    ///
+    /// `parse` makes the value from the body, for example
+    /// [`DeviceInfo::parse`](denon_marantz_proto::DeviceInfo::parse). Its error
+    /// is wrapped in [`Error::Protocol`] with the request.
+    ///
+    /// # Errors
+    ///
+    /// See [`HttpClient::get`]. Also returns an error if `parse` does.
+    pub async fn get_parsed<T>(
+        &self,
+        path: &str,
+        parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
+    ) -> Result<T, Error> {
+        let body = self.get(path).await?;
+        parse(&body).map_err(|source| Error::Protocol {
+            request: self.describe(&Method::GET, path),
+            source,
+        })
+    }
+
+    /// Sends a POST request and reads the answer with `parse`.
+    ///
+    /// # Errors
+    ///
+    /// See [`HttpClient::get_parsed`].
+    pub async fn post_parsed<T>(
+        &self,
+        path: &str,
+        body: Bytes,
+        parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
+    ) -> Result<T, Error> {
+        let answer = self.post(path, body).await?;
+        parse(&answer).map_err(|source| Error::Protocol {
+            request: self.describe(&Method::POST, path),
+            source,
+        })
+    }
+
     async fn send(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
         self.pacer.wait().await;
         let started = Instant::now();
@@ -118,21 +157,19 @@ impl HttpClient {
             self.config.request_timeout,
             self.exchange(&method, path, body),
         )
-        .await;
+        .await
+        .unwrap_or_else(|_| {
+            Err(Error::Timeout {
+                request: self.describe(&method, path),
+                limit: self.config.request_timeout,
+            })
+        });
         match result {
-            Ok(Ok(answer)) => {
+            Ok(answer) => {
                 self.pacer.record_latency(started);
                 Ok(answer)
             }
-            Ok(Err(error)) => {
-                tracing::debug!(host = self.authority(), %method, path, %error, "request failed");
-                Err(error)
-            }
-            Err(_) => {
-                let error = Error::Timeout {
-                    request: self.describe(&method, path),
-                    limit: self.config.request_timeout,
-                };
+            Err(error) => {
                 tracing::debug!(host = self.authority(), %method, path, %error, "request failed");
                 Err(error)
             }
@@ -145,12 +182,12 @@ impl HttpClient {
             .authority(self.authority.clone())
             .path_and_query(path)
             .build()
-            .map_err(|e| Error::InvalidRequest(format!("path {path:?}: {e}")))?;
+            .map_err(|e| invalid_path(path, &e))?;
         let request = Request::builder()
             .method(method.clone())
             .uri(uri)
             .body(Full::new(body))
-            .map_err(|e| Error::InvalidRequest(format!("path {path:?}: {e}")))?;
+            .map_err(|e| invalid_path(path, &e))?;
 
         let response = self
             .client
@@ -239,4 +276,8 @@ impl HttpClient {
             },
         }
     }
+}
+
+fn invalid_path(path: &str, error: &dyn std::fmt::Display) -> Error {
+    Error::InvalidRequest(format!("path {path:?}: {error}"))
 }

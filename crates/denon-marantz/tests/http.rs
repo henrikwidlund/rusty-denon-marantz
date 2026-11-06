@@ -220,3 +220,64 @@ async fn ipv6_hosts_are_accepted() {
         "denon.local:80"
     );
 }
+
+#[tokio::test]
+async fn parsed_answers() {
+    use denon_marantz_proto::DeviceInfo;
+
+    let fake = Fake::start(|seen| match seen.path.as_str() {
+        "/html" => Reply::Body(b"<html><body>Form is not defined</body></html>".to_vec()),
+        _ => Reply::Body(b"<Device_Info><ModelName>AVR-X1</ModelName></Device_Info>".to_vec()),
+    })
+    .await;
+    let client = client(&fake, config());
+    let parse = |body: &[u8]| {
+        DeviceInfo::parse(body).map(|info| info.model_name.map(std::borrow::Cow::into_owned))
+    };
+
+    assert_eq!(
+        client.get_parsed("/info", parse).await.unwrap().as_deref(),
+        Some("AVR-X1")
+    );
+
+    let error = client.get_parsed("/html", parse).await.unwrap_err();
+    assert!(matches!(error, Error::Protocol { .. }), "{error:?}");
+    assert!(error.is_invalid_response());
+    assert!(
+        error.to_string().contains("GET http://127.0.0.1:"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("/html"), "{error}");
+
+    // Errors of the request come before the parser.
+    let closed = Fake::start(|_| Reply::Status(404)).await;
+    let error = self::client(&closed, config())
+        .get_parsed("/info", parse)
+        .await
+        .unwrap_err();
+    assert!(error.is_status(), "{error:?}");
+}
+
+#[tokio::test]
+async fn parsed_post_answers() {
+    let fake = Fake::start(|seen| Reply::Body(seen.body.clone())).await;
+    let length = client(&fake, config())
+        .post_parsed(
+            "/goform/AppCommand.xml",
+            Bytes::from_static(b"<tx/>"),
+            |body| Ok(body.len()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(length, 5);
+    let error = client(&fake, config())
+        .post_parsed(
+            "/goform/AppCommand.xml",
+            Bytes::from_static(b"<tx"),
+            |body| denon_marantz_proto::appcommand::Response::parse(body, 1).map(|_| ()),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::Protocol { .. }), "{error:?}");
+    assert!(error.to_string().contains("POST http://"), "{error}");
+}

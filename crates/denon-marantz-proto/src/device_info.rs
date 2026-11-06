@@ -9,7 +9,7 @@ use crate::xml::{Node, check_well_formed};
 pub const DEVICE_INFO_PATH: &str = "/goform/Deviceinfo.xml";
 
 /// Values of `Deviceinfo.xml` that the library uses.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeviceInfo<'a> {
     /// Version of the communication API, for example `0301`.
     pub comm_api_version: Option<Cow<'a, str>>,
