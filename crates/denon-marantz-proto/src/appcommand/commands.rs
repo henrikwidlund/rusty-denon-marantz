@@ -99,56 +99,42 @@ pub const GET_DELETED_SOURCE: Definition = query("GetDeletedSource", &[]);
 /// Friendly name. The answer has a `friendlyname` element.
 pub const GET_FRIENDLY_NAME: Definition = query("GetFriendlyName", &[]);
 
-const MULTEQ_STEPS: &[Step] = &[
-    Step::Tag("list"),
-    Step::TagWithAttribute {
-        tag: "param",
-        name: "name",
-        value: "multeq",
-    },
-];
-const DYNAMICEQ_STEPS: &[Step] = &[
-    Step::Tag("list"),
-    Step::TagWithAttribute {
-        tag: "param",
-        name: "name",
-        value: "dynamiceq",
-    },
-];
-const REFLEVOFFSET_STEPS: &[Step] = &[
-    Step::Tag("list"),
-    Step::TagWithAttribute {
-        tag: "param",
-        name: "name",
-        value: "reflevoffset",
-    },
-];
-const DYNAMICVOL_STEPS: &[Step] = &[
-    Step::Tag("list"),
-    Step::TagWithAttribute {
-        tag: "param",
-        name: "name",
-        value: "dynamicvol",
-    },
-];
+// Attribute that tells if an Audyssey parameter can be changed.
+const CONTROL: &str = "control";
+
+// Names of the Audyssey parameters. They are in the request and in the answer.
+const DYNAMIC_EQ: &str = "dynamiceq";
+const REF_LEV_OFFSET: &str = "reflevoffset";
+const DYNAMIC_VOL: &str = "dynamicvol";
+const MULT_EQ: &str = "multeq";
+
+/// Steps to the `param` element with this name in the answer.
+const fn param_steps(name: &'static str) -> [Step; 2] {
+    [
+        Step::Tag("list"),
+        Step::TagWithAttribute {
+            tag: "param",
+            name: "name",
+            value: name,
+        },
+    ]
+}
+
+const MULTEQ_STEPS: &[Step] = &param_steps(MULT_EQ);
+const DYNAMICEQ_STEPS: &[Step] = &param_steps(DYNAMIC_EQ);
+const REFLEVOFFSET_STEPS: &[Step] = &param_steps(REF_LEV_OFFSET);
+const DYNAMICVOL_STEPS: &[Step] = &param_steps(DYNAMIC_VOL);
+
+/// A parameter without a value, as the query has it.
+const fn blank_param(name: &'static str) -> Param<'static> {
+    Param { name, text: "" }
+}
 
 const AUDYSSEY_PARAMS: &[Param<'static>] = &[
-    Param {
-        name: "dynamiceq",
-        text: "",
-    },
-    Param {
-        name: "reflevoffset",
-        text: "",
-    },
-    Param {
-        name: "dynamicvol",
-        text: "",
-    },
-    Param {
-        name: "multeq",
-        text: "",
-    },
+    blank_param(DYNAMIC_EQ),
+    blank_param(REF_LEV_OFFSET),
+    blank_param(DYNAMIC_VOL),
+    blank_param(MULT_EQ),
 ];
 
 /// Audyssey settings. This is a query for `AppCommand0300.xml`.
@@ -163,12 +149,52 @@ pub const GET_AUDYSSEY: Definition = Definition {
     blank_is_unknown: true,
     patterns: &[
         Pattern::text(Field::MultEq, MULTEQ_STEPS),
-        Pattern::attribute(Field::MultEqControl, MULTEQ_STEPS, "control"),
+        Pattern::attribute(Field::MultEqControl, MULTEQ_STEPS, CONTROL),
         Pattern::text(Field::DynamicEq, DYNAMICEQ_STEPS),
-        Pattern::attribute(Field::DynamicEqControl, DYNAMICEQ_STEPS, "control"),
+        Pattern::attribute(Field::DynamicEqControl, DYNAMICEQ_STEPS, CONTROL),
         Pattern::text(Field::RefLevOffset, REFLEVOFFSET_STEPS),
-        Pattern::attribute(Field::RefLevOffsetControl, REFLEVOFFSET_STEPS, "control"),
+        Pattern::attribute(Field::RefLevOffsetControl, REFLEVOFFSET_STEPS, CONTROL),
         Pattern::text(Field::DynamicVol, DYNAMICVOL_STEPS),
-        Pattern::attribute(Field::DynamicVolControl, DYNAMICVOL_STEPS, "control"),
+        Pattern::attribute(Field::DynamicVolControl, DYNAMICVOL_STEPS, CONTROL),
     ],
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::appcommand::write_body;
+
+    #[test]
+    fn audyssey_query_body() {
+        let mut body = Vec::new();
+        write_body(&[GET_AUDYSSEY.cmd], &mut body).unwrap();
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            "<?xml version='1.0' encoding='utf-8'?>\n<tx><cmd id=\"3\"><name>GetAudyssey</name><list>\
+             <param name=\"dynamiceq\" /><param name=\"reflevoffset\" /><param name=\"dynamicvol\" />\
+             <param name=\"multeq\" /></list></cmd></tx>"
+        );
+    }
+
+    #[test]
+    fn audyssey_answer_names_match_the_query() {
+        // Each parameter in the query is read from the answer under the same name.
+        for param in GET_AUDYSSEY.cmd.params.unwrap() {
+            let found = GET_AUDYSSEY.patterns.iter().any(|pattern| {
+                pattern
+                    .steps
+                    .iter()
+                    .any(|step| matches!(step, Step::TagWithAttribute { value, .. } if *value == param.name))
+            });
+            assert!(found, "{}", param.name);
+        }
+    }
+
+    #[test]
+    fn queries_are_for_the_standard_endpoint() {
+        for definition in [GET_DIMMER, GET_ECO, GET_TONE_CONTROL, GET_ALL_ZONE_VOLUME] {
+            assert_eq!(definition.cmd.endpoint, Endpoint::AppCommand);
+        }
+        assert_eq!(GET_AUDYSSEY.cmd.endpoint, Endpoint::AppCommand0300);
+    }
+}

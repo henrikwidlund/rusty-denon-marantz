@@ -7,8 +7,21 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use denon_marantz::{HttpConfig, Pacing};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+
+/// Short timeouts and no pacing, so that tests are quick.
+pub(crate) fn config() -> HttpConfig {
+    HttpConfig {
+        connect_timeout: Duration::from_millis(500),
+        request_timeout: Duration::from_millis(500),
+        pacing: Pacing::Fixed {
+            interval: Duration::ZERO,
+        },
+        ..HttpConfig::default()
+    }
+}
 
 /// A request that the fake receiver got.
 #[derive(Debug, Clone, PartialEq, Eq)]

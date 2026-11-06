@@ -10,6 +10,7 @@ mod error;
 mod sleep;
 mod sound_mode;
 mod state;
+mod text;
 mod values;
 mod volume;
 mod xml;

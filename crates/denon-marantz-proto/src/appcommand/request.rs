@@ -1,6 +1,7 @@
 //! Requests to the AppCommand endpoints.
 
 use crate::error::Error;
+use crate::text::reject_control;
 
 /// A receiver does not accept more commands than this in one `tx` element.
 const COMMANDS_PER_ROOT: usize = 5;
@@ -181,9 +182,7 @@ fn write_cmd(cmd: &Cmd<'_>, out: &mut Vec<u8>) -> Result<(), Error> {
 
 /// Appends text with the characters `& < > "` replaced.
 fn escape(text: &str, out: &mut Vec<u8>) -> Result<(), Error> {
-    if text.chars().any(char::is_control) {
-        return Err(Error::InvalidCommandText);
-    }
+    reject_control(text)?;
     for byte in text.bytes() {
         match byte {
             b'&' => out.extend_from_slice(b"&amp;"),

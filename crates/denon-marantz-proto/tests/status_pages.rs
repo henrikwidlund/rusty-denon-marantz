@@ -3,44 +3,17 @@
 //! `data/status_golden.tsv` has, for each model and zone, which pages exist
 //! and the expected values.
 
+mod common;
+
+use common::{data, read_data, unescape};
+
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
 
 use denon_marantz_proto::Zone;
 use denon_marantz_proto::status_page::{Page, extract, status_path, zone_path};
 
-const NONE: &str = "<none>";
-
 type Values = Vec<(String, Option<String>)>;
-
-fn data(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data")
-        .join(name)
-}
-
-fn unescape(text: &str) -> Option<String> {
-    if text == NONE {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            out.push(match chars.next() {
-                Some('t') => '\t',
-                Some('n') => '\n',
-                Some('r') => '\r',
-                Some(other) => other,
-                None => '\\',
-            });
-        } else {
-            out.push(c);
-        }
-    }
-    Some(out)
-}
 
 fn zone(name: &str) -> Zone {
     Zone::from_name(name).unwrap()
@@ -68,7 +41,7 @@ fn parse<'a>(body: Option<&'a [u8]>, html_pages: &mut usize) -> Option<Page<'a>>
 
 #[test]
 fn status_pages_have_the_expected_values() {
-    let golden = fs::read_to_string(data("status_golden.tsv")).unwrap();
+    let golden = read_data("status_golden.tsv");
     let mut cases = Vec::new();
     let mut expected: BTreeMap<(String, String), Values> = BTreeMap::new();
     for row in golden.lines() {

@@ -97,16 +97,24 @@ pub enum EventZone {
 }
 
 impl EventZone {
+    /// The zone. `None` for events about all zones.
+    #[must_use]
+    pub const fn zone(self) -> Option<Zone> {
+        match self {
+            Self::Main => Some(Zone::Main),
+            Self::Zone2 => Some(Zone::Zone2),
+            Self::Zone3 => Some(Zone::Zone3),
+            Self::All => None,
+        }
+    }
+
     /// Returns true if an event with this zone is relevant for `zone`.
     #[must_use]
     pub const fn applies_to(self, zone: Zone) -> bool {
-        matches!(
-            (self, zone),
-            (Self::All, _)
-                | (Self::Main, Zone::Main)
-                | (Self::Zone2, Zone::Zone2)
-                | (Self::Zone3, Zone::Zone3)
-        )
+        match self.zone() {
+            Some(own) => own.index() == zone.index(),
+            None => true,
+        }
     }
 }
 

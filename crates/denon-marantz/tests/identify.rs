@@ -4,22 +4,9 @@
 
 mod common;
 
-use std::time::Duration;
-
-use common::{Fake, Reply};
-use denon_marantz::{HttpConfig, Pacing, identify_on};
+use common::{Fake, Reply, config};
+use denon_marantz::identify_on;
 use denon_marantz_proto::ReceiverType;
-
-fn config() -> HttpConfig {
-    HttpConfig {
-        connect_timeout: Duration::from_millis(300),
-        request_timeout: Duration::from_millis(300),
-        pacing: Pacing::Fixed {
-            interval: Duration::ZERO,
-        },
-        ..HttpConfig::default()
-    }
-}
 
 const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\

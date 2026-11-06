@@ -26,6 +26,15 @@ impl Zone {
         }
     }
 
+    /// Position of the zone in tables that have one entry for each zone.
+    pub(crate) const fn index(self) -> usize {
+        match self {
+            Self::Main => 0,
+            Self::Zone2 => 1,
+            Self::Zone3 => 2,
+        }
+    }
+
     /// Parses a zone name.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {

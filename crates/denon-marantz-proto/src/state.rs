@@ -11,7 +11,7 @@ use std::borrow::Cow;
 
 use crate::appcommand::Field;
 use crate::source::telnet_to_display_source;
-use crate::telnet::{Event, EventZone, Message};
+use crate::telnet::{Event, Message};
 use crate::{AutoStandby, DimmerMode, EcoMode, Power, Sleep, Volume, Zone};
 
 /// A value of the state.
@@ -109,7 +109,7 @@ impl State {
     /// Values of a zone.
     #[must_use]
     pub const fn zone(&self, zone: Zone) -> &ZoneState {
-        &self.zones[index(zone)]
+        &self.zones[zone.index()]
     }
 
     /// Values of the whole receiver.
@@ -121,7 +121,7 @@ impl State {
     /// Applies a telnet event. Returns what changed.
     pub fn apply_message(&mut self, message: &Message<'_>) -> Option<Change> {
         let parameter = message.parameter;
-        let zone = concrete_zone(message.zone);
+        let zone = message.zone.zone();
         match message.event {
             Event::Zm if !self.single_zone => self.set_power(zone?, parameter),
             Event::Pw if self.single_zone => self.set_power(Zone::Main, parameter),
@@ -153,7 +153,7 @@ impl State {
                 })
             }
             Event::Stby => {
-                let value = standby_any(parameter)?;
+                let value = AutoStandby::from_any(parameter)?;
                 self.zone_change(zone?, Setting::AutoStandby, |z| {
                     set(&mut z.auto_standby, Some(value))
                 })
@@ -221,7 +221,7 @@ impl State {
                 self.zone_change(zone, Setting::MaxVolume, |z| set(&mut z.max_volume, limit))
             }
             Field::AutoStandby => {
-                let standby = value.and_then(standby_any);
+                let standby = value.and_then(AutoStandby::from_any);
                 self.zone_change(zone, Setting::AutoStandby, |z| {
                     set(&mut z.auto_standby, standby)
                 })
@@ -233,14 +233,11 @@ impl State {
                 })
             }
             Field::Dimmer => {
-                let dimmer = value.and_then(|v| {
-                    DimmerMode::from_telnet(v).or_else(|| DimmerMode::from_appcommand(v))
-                });
+                let dimmer = value.and_then(DimmerMode::from_any);
                 self.device_change(Setting::Dimmer, |d| set(&mut d.dimmer, dimmer))
             }
             Field::EcoMode => {
-                let eco = value
-                    .and_then(|v| EcoMode::from_telnet(v).or_else(|| EcoMode::from_appcommand(v)));
+                let eco = value.and_then(EcoMode::from_any);
                 self.device_change(Setting::EcoMode, |d| set(&mut d.eco_mode, eco))
             }
             _ => None,
@@ -258,7 +255,7 @@ impl State {
         setting: Setting,
         update: impl FnOnce(&mut ZoneState) -> bool,
     ) -> Option<Change> {
-        update(&mut self.zones[index(zone)]).then_some(Change {
+        update(&mut self.zones[zone.index()]).then_some(Change {
             zone: Some(zone),
             setting,
         })
@@ -273,23 +270,6 @@ impl State {
             zone: None,
             setting,
         })
-    }
-}
-
-const fn index(zone: Zone) -> usize {
-    match zone {
-        Zone::Main => 0,
-        Zone::Zone2 => 1,
-        Zone::Zone3 => 2,
-    }
-}
-
-const fn concrete_zone(zone: EventZone) -> Option<Zone> {
-    match zone {
-        EventZone::Main => Some(Zone::Main),
-        EventZone::Zone2 => Some(Zone::Zone2),
-        EventZone::Zone3 => Some(Zone::Zone3),
-        EventZone::All => None,
     }
 }
 
@@ -344,11 +324,6 @@ fn power_from_answer(text: &str) -> Option<Power> {
         .iter()
         .copied()
         .find(|power| power.code().eq_ignore_ascii_case(text))
-}
-
-/// Auto standby code from telnet or `AppCommand`.
-fn standby_any(code: &str) -> Option<AutoStandby> {
-    AutoStandby::from_telnet(code).or_else(|| AutoStandby::from_appcommand(code))
 }
 
 /// Volume in dB from an `AppCommand` answer. `--` is the lowest volume.

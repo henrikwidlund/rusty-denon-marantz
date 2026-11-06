@@ -3,6 +3,7 @@
 use core::fmt::Write as _;
 
 use crate::error::Error;
+use crate::text::reject_control;
 use crate::volume::Volume;
 use crate::zone::Zone;
 
@@ -85,34 +86,23 @@ impl Command<'_> {
     }
 
     fn write(&self, zone: Zone, out: &mut String) -> Result<(), Error> {
-        let (main, zone2, zone3) = (zone == Zone::Main, zone == Zone::Zone2, zone == Zone::Zone3);
-        let pick = |a: &'static str, b: &'static str, c: &'static str| {
-            if main {
-                a
-            } else if zone2 {
-                b
-            } else {
-                debug_assert!(zone3);
-                c
-            }
-        };
         match *self {
-            Self::PowerOn => out.push_str(pick("ZMON", "Z2ON", "Z3ON")),
-            Self::PowerStandby => out.push_str(pick("ZMOFF", "Z2OFF", "Z3OFF")),
+            Self::PowerOn => push_zone(out, zone, "ZM", "ON"),
+            Self::PowerStandby => push_zone(out, zone, "ZM", "OFF"),
             Self::DevicePowerOn => out.push_str("PWON"),
             Self::DevicePowerStandby => out.push_str("PWSTANDBY"),
-            Self::VolumeUp => out.push_str(pick("MVUP", "Z2UP", "Z3UP")),
-            Self::VolumeDown => out.push_str(pick("MVDOWN", "Z2DOWN", "Z3DOWN")),
+            Self::VolumeUp => push_zone(out, zone, "MV", "UP"),
+            Self::VolumeDown => push_zone(out, zone, "MV", "DOWN"),
             Self::SetVolume(volume) => {
-                out.push_str(pick("MV", "Z2", "Z3"));
+                out.push_str(zone_prefix(zone, "MV"));
                 // Writing to a `String` cannot fail.
                 let _ = write!(out, "{volume}");
             }
-            Self::Mute(true) => out.push_str(pick("MUON", "Z2MUON", "Z3MUON")),
-            Self::Mute(false) => out.push_str(pick("MUOFF", "Z2MUOFF", "Z3MUOFF")),
+            Self::Mute(true) => push_zone(out, zone, "", "MUON"),
+            Self::Mute(false) => push_zone(out, zone, "", "MUOFF"),
             Self::SelectSource(name) => {
                 check_text(name)?;
-                out.push_str(pick("SI", "Z2", "Z3"));
+                out.push_str(zone_prefix(zone, "SI"));
                 out.push_str(name);
             }
             Self::SelectSoundMode(name) => {
@@ -144,11 +134,26 @@ impl Command<'_> {
     }
 }
 
+/// Start of a command for a zone. Each kind of command has its own start for
+/// the main zone. The other zones use `Z2` and `Z3`.
+const fn zone_prefix(zone: Zone, main: &'static str) -> &'static str {
+    match zone {
+        Zone::Main => main,
+        Zone::Zone2 => "Z2",
+        Zone::Zone3 => "Z3",
+    }
+}
+
+fn push_zone(out: &mut String, zone: Zone, main: &'static str, rest: &str) {
+    out.push_str(zone_prefix(zone, main));
+    out.push_str(rest);
+}
+
 fn check_text(text: &str) -> Result<(), Error> {
-    if text.is_empty() || text.chars().any(char::is_control) {
+    if text.is_empty() {
         Err(Error::InvalidCommandText)
     } else {
-        Ok(())
+        reject_control(text)
     }
 }
 

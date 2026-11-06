@@ -3,14 +3,14 @@
 //! `data/xml` has the answers. `data/appcommand_golden.tsv` and
 //! `data/deviceinfo_golden.tsv` have the expected values.
 
+mod common;
+
+use common::{read_bytes, read_data, unescape};
+
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
 use denon_marantz_proto::{DeviceInfo, Error, Zone};
-
-const NONE: &str = "<none>";
 
 const DEFINITIONS: [(&str, Definition); 10] = [
     ("GetAllZoneMuteStatus", ac::GET_ALL_ZONE_MUTE_STATUS),
@@ -25,39 +25,11 @@ const DEFINITIONS: [(&str, Definition); 10] = [
     ("GetAudyssey", ac::GET_AUDYSSEY),
 ];
 
-fn data(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data")
-        .join(name)
-}
-
-fn unescape(text: &str) -> Option<String> {
-    if text == NONE {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            out.push(match chars.next() {
-                Some('t') => '\t',
-                Some('n') => '\n',
-                Some('r') => '\r',
-                Some(other) => other,
-                None => '\\',
-            });
-        } else {
-            out.push(c);
-        }
-    }
-    Some(out)
-}
-
 type Values = Vec<(String, Option<String>)>;
 
 #[test]
 fn appcommand_answers_have_the_expected_values() {
-    let golden = fs::read_to_string(data("appcommand_golden.tsv")).unwrap();
+    let golden = read_data("appcommand_golden.tsv");
     let mut files = Vec::new();
     let mut expected: BTreeMap<(String, usize, String, String), Values> = BTreeMap::new();
     for row in golden.lines() {
@@ -83,7 +55,7 @@ fn appcommand_answers_have_the_expected_values() {
 
     let (mut ok_files, mut html_files, mut compared) = (0, 0, 0);
     for (name, kind, count) in &files {
-        let body = fs::read(data(&format!("xml/{name}"))).unwrap();
+        let body = read_bytes(&format!("xml/{name}"));
         match kind.as_str() {
             "html" => {
                 assert_eq!(
@@ -137,7 +109,7 @@ fn appcommand_answers_have_the_expected_values() {
 
 #[test]
 fn wrong_item_count_is_an_error() {
-    let body = fs::read(data("xml/AVC-X3700H-AppCommand-update-8080.xml")).unwrap();
+    let body = read_bytes("xml/AVC-X3700H-AppCommand-update-8080.xml");
     let count = Response::parse(&body, usize::MAX).unwrap_err();
     assert!(
         matches!(
@@ -154,12 +126,12 @@ fn wrong_item_count_is_an_error() {
 
 #[test]
 fn device_info_has_the_expected_values() {
-    let golden = fs::read_to_string(data("deviceinfo_golden.tsv")).unwrap();
+    let golden = read_data("deviceinfo_golden.tsv");
     let (mut ok, mut html) = (0, 0);
     for row in golden.lines() {
         let f: Vec<&str> = row.split('\t').collect();
         let name = f[0];
-        let body = fs::read(data(&format!("xml/{name}"))).unwrap();
+        let body = read_bytes(&format!("xml/{name}"));
         if f[1] == "html" {
             assert_eq!(
                 DeviceInfo::parse(&body).unwrap_err(),

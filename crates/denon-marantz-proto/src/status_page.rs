@@ -10,8 +10,12 @@ use crate::error::Error;
 use crate::xml::{Node, check_well_formed};
 use crate::zone::Zone;
 
-/// Main zone page that has the values of all zones, for the main zone.
-const MAIN_ZONE_PAGE: &str = "/goform/formMainZone_MainZoneXml.xml";
+/// Page name of the second page. `concat!` needs a macro for a shared literal.
+macro_rules! zone_page {
+    () => {
+        "/goform/formMainZone_MainZoneXml.xml"
+    };
+}
 
 /// A checked status page. It borrows the body.
 #[derive(Debug, Clone, Copy)]
@@ -60,22 +64,24 @@ pub const fn status_path(zone: Zone) -> &'static str {
 #[must_use]
 pub const fn zone_path(zone: Zone) -> &'static str {
     match zone {
-        Zone::Main => MAIN_ZONE_PAGE,
-        Zone::Zone2 => "/goform/formMainZone_MainZoneXml.xml?ZoneName=Zone2",
-        Zone::Zone3 => "/goform/formMainZone_MainZoneXml.xml?ZoneName=Zone3",
+        Zone::Main => zone_page!(),
+        Zone::Zone2 => concat!(zone_page!(), "?ZoneName=Zone2"),
+        Zone::Zone3 => concat!(zone_page!(), "?ZoneName=Zone3"),
     }
 }
 
-const POWER: [&[Step]; 2] = [
-    &[Step::Tag("ZonePower"), Step::Tag("value")],
-    &[Step::Tag("Power"), Step::Tag("value")],
-];
-const ECO_MODE: [&[Step]; 1] = [&[Step::Tag("ECOMode"), Step::Tag("value")]];
-const INPUT: [&[Step]; 1] = [&[Step::Tag("InputFuncSelect"), Step::Tag("value")]];
-const VOLUME: [&[Step]; 1] = [&[Step::Tag("MasterVolume"), Step::Tag("value")]];
-const MUTE: [&[Step]; 1] = [&[Step::Tag("Mute"), Step::Tag("value")]];
-const SELECT_SURROUND: [&[Step]; 1] = [&[Step::Tag("selectSurround"), Step::Tag("value")]];
-const SURR_MODE: [&[Step]; 1] = [&[Step::Tag("SurrMode"), Step::Tag("value")]];
+/// Steps to the `value` element of a tag.
+const fn value_of(tag: &'static str) -> [Step; 2] {
+    [Step::Tag(tag), Step::Tag("value")]
+}
+
+const POWER: [&[Step]; 2] = [&value_of("ZonePower"), &value_of("Power")];
+const ECO_MODE: [&[Step]; 1] = [&value_of("ECOMode")];
+const INPUT: [&[Step]; 1] = [&value_of("InputFuncSelect")];
+const VOLUME: [&[Step]; 1] = [&value_of("MasterVolume")];
+const MUTE: [&[Step]; 1] = [&value_of("Mute")];
+const SELECT_SURROUND: [&[Step]; 1] = [&value_of("selectSurround")];
+const SURR_MODE: [&[Step]; 1] = [&value_of("SurrMode")];
 
 /// Calls `on_value` for each value found on the pages of a zone.
 ///
@@ -102,67 +108,54 @@ pub fn extract(
         &first_only
     };
 
-    first_non_empty(&both, &POWER, zone, |value| {
-        on_value(Field::Power, Some(value));
-    });
-    first_non_empty(&both, &ECO_MODE, zone, |value| {
-        on_value(Field::EcoMode, Some(value));
-    });
-    first_found(for_zone, &INPUT, zone, |value| {
-        on_value(Field::InputFunc, value);
-    });
-    first_found(for_zone, &VOLUME, zone, |value| {
-        on_value(Field::Volume, value);
-    });
-    first_found(for_zone, &MUTE, zone, |value| {
-        on_value(Field::Muted, value);
-    });
+    first(&both, &POWER, zone, true, Field::Power, on_value);
+    first(&both, &ECO_MODE, zone, true, Field::EcoMode, on_value);
+    first(for_zone, &INPUT, zone, false, Field::InputFunc, on_value);
+    first(for_zone, &VOLUME, zone, false, Field::Volume, on_value);
+    first(for_zone, &MUTE, zone, false, Field::Muted, on_value);
     if zone == Zone::Main
-        && !first_found(&both, &SELECT_SURROUND, zone, |value| {
-            on_value(Field::SoundModeRaw, value);
-        })
+        && !first(
+            &both,
+            &SELECT_SURROUND,
+            zone,
+            false,
+            Field::SoundModeRaw,
+            on_value,
+        )
     {
-        first_found(&both, &SURR_MODE, zone, |value| {
-            on_value(Field::SoundModeRaw, value);
-        });
+        first(
+            &both,
+            &SURR_MODE,
+            zone,
+            false,
+            Field::SoundModeRaw,
+            on_value,
+        );
     }
 }
 
-/// Passes the first element found on the pages, with or without text.
-/// Returns true if one was found.
-fn first_found(
+/// Passes the first element found on the pages as `field`.
+///
+/// An element without text is a value (`None`), unless `skip_blank` is set.
+/// Then it is skipped and the search goes on. Returns true if a value was passed.
+fn first(
     pages: &[Option<&Page<'_>>],
     paths: &[&[Step]],
     zone: Zone,
-    mut on_value: impl FnMut(Option<&str>),
+    skip_blank: bool,
+    field: Field,
+    on_value: &mut impl FnMut(Field, Option<&str>),
 ) -> bool {
     for page in pages.iter().flatten() {
         for path in paths {
-            if page.find(path, zone, &mut on_value) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Passes the first element that has text. Empty elements are skipped.
-fn first_non_empty(
-    pages: &[Option<&Page<'_>>],
-    paths: &[&[Step]],
-    zone: Zone,
-    mut on_value: impl FnMut(&str),
-) -> bool {
-    let mut done = false;
-    for page in pages.iter().flatten() {
-        for path in paths {
+            let mut passed = false;
             page.find(path, zone, &mut |value| {
-                if let Some(value) = value {
-                    on_value(value);
-                    done = true;
+                if value.is_some() || !skip_blank {
+                    on_value(field, value);
+                    passed = true;
                 }
             });
-            if done {
+            if passed {
                 return true;
             }
         }

@@ -7,19 +7,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use common::{Fake, Reply};
+use common::{Fake, Reply, config};
 use denon_marantz::{Error, HttpClient, HttpConfig, Pacing};
-
-fn config() -> HttpConfig {
-    HttpConfig {
-        connect_timeout: Duration::from_millis(500),
-        request_timeout: Duration::from_millis(500),
-        pacing: Pacing::Fixed {
-            interval: Duration::ZERO,
-        },
-        ..HttpConfig::default()
-    }
-}
 
 fn client(fake: &Fake, config: HttpConfig) -> HttpClient {
     HttpClient::new("127.0.0.1", fake.port, config).unwrap()

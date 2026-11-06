@@ -271,6 +271,14 @@ mod tests {
             }
             assert_eq!($ty::from_telnet("no such code"), None);
             assert_eq!($ty::from_appcommand("no such code"), None);
+            assert_eq!($ty::from_any("no such code"), None);
+            for &value in $ty::ALL {
+                // A code that is valid in both kinds must mean the same value.
+                let codes = [Some(value.telnet_code()), value.appcommand_code()];
+                for code in codes.into_iter().flatten() {
+                    assert_eq!($ty::from_any(code), Some(value), "{} {code}", stringify!($ty));
+                }
+            }
         )+};
     }
 

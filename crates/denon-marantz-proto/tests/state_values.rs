@@ -2,35 +2,12 @@
 //! pages. The text is from answers that real receivers sent. The expected
 //! values are in `data/state_golden.tsv`.
 
-use std::fs;
-use std::path::PathBuf;
+mod common;
+
+use common::{read_bytes, read_data, unescape};
 
 use denon_marantz_proto::appcommand::Field;
 use denon_marantz_proto::{State, Zone};
-
-const NONE: &str = "<none>";
-
-fn unescape(text: &str) -> Option<String> {
-    if text == NONE {
-        return None;
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            out.push(match chars.next() {
-                Some('t') => '\t',
-                Some('n') => '\n',
-                Some('r') => '\r',
-                Some(other) => other,
-                None => '\\',
-            });
-        } else {
-            out.push(c);
-        }
-    }
-    Some(out)
-}
 
 fn field(name: &str) -> Field {
     match name {
@@ -77,8 +54,7 @@ fn same(name: &str, actual: Option<&str>, expected: Option<&str>) -> bool {
 
 #[test]
 fn answer_values_have_the_expected_state() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/state_golden.tsv");
-    let golden = fs::read_to_string(path).unwrap();
+    let golden = read_data("state_golden.tsv");
     let mut rows = 0;
     for row in golden.lines() {
         let f: Vec<&str> = row.split('\t').collect();
@@ -113,9 +89,7 @@ fn real_update_answer_fills_the_state() {
     use denon_marantz_proto::appcommand::{self as ac, Response};
     use denon_marantz_proto::{AutoStandby, DimmerMode, EcoMode, Power};
 
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/data/xml/AVC-X3700H-AppCommand-update-8080.xml");
-    let body = fs::read(path).unwrap();
+    let body = read_bytes("xml/AVC-X3700H-AppCommand-update-8080.xml");
     // The first five commands of this answer, as the receiver was asked.
     let commands = [
         ac::GET_ALL_ZONE_POWER_STATUS,

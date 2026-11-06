@@ -23,33 +23,41 @@ pub fn xml_to_telnet_source(name: &str) -> &str {
     }
 }
 
+/// Telnet source names and their display names.
+const DISPLAY_NAMES: [(&str, &str); 5] = [
+    ("FAVORITES", "Favorites"),
+    ("FLICKR", "Flickr"),
+    ("IRADIO", "Internet Radio"),
+    ("SERVER", "Media Server"),
+    ("SPOTIFY", "Spotify"),
+];
+
 /// Display name for a telnet source name.
 ///
 /// Returns the input unchanged if there is no special mapping.
 #[must_use]
 pub fn telnet_to_display_source(code: &str) -> &str {
-    match code {
-        "FAVORITES" => "Favorites",
-        "FLICKR" => "Flickr",
-        "IRADIO" | "IRP" => "Internet Radio",
-        "SERVER" => "Media Server",
-        "SPOTIFY" => "Spotify",
-        other => other,
+    // `IRP` is a second name of internet radio.
+    if code == "IRP" {
+        return "Internet Radio";
     }
+    DISPLAY_NAMES
+        .iter()
+        .find(|(telnet, _)| *telnet == code)
+        .map_or(code, |(_, display)| display)
 }
 
 /// Telnet command code to select a source by its display name.
 #[must_use]
 pub fn display_to_select_code(name: &str) -> Option<&'static str> {
-    match name {
-        "Favorites" => Some("FAVORITES"),
-        "Flickr" => Some("FLICKR"),
-        "Internet Radio" => Some("IRADIO"),
-        "Media Server" => Some("SERVER"),
-        "Online Music" => Some("NET"),
-        "Spotify" => Some("SPOTIFY"),
-        _ => None,
+    // Online music is selected as `NET`.
+    if name == "Online Music" {
+        return Some("NET");
     }
+    DISPLAY_NAMES
+        .iter()
+        .find(|(_, display)| *display == name)
+        .map(|(telnet, _)| *telnet)
 }
 
 /// Source names that receivers accept on telnet.
