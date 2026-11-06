@@ -101,7 +101,7 @@ pub enum Command<'a> {
     /// Selects a Dirac Live filter.
     SetDiracFilter(DiracFilter),
     /// Turns Auto Lip Sync on (`true`) or off (`false`). The text depends on
-    /// the brand. Tested on a Denon receiver only.
+    /// the brand.
     AutoLipSync(bool),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),

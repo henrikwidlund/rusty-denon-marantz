@@ -79,7 +79,7 @@ static QUERIES: [Query; 93] = [
     marantz("PSMDAX ?"),        // MDAX
     marantz("PSDACFIL ?"),      // DAC Filter
     marantz("ILB ?"),           // Illumination
-    marantz("SSHOS ?"),         // Auto Lip Sync on a Marantz receiver, not tested
+    marantz("SSHOS ?"),         // Auto Lip Sync
     both("PSTONE CTRL ?"),      // TONE
     both("PSDYNEQ ?"),          // Dynamic EQ
     both("PSLFC ?"),            // Audyssey LFC
@@ -121,7 +121,7 @@ static QUERIES: [Query; 93] = [
     both("SSSOD ?"),            // Sources in use or hidden
     both("OPSMLALL ?"),         // Sound modes that the receiver offers
     both("NSFRN?"),             // Friendly name
-    both("OPALS ?"),            // Auto Lip Sync on a Denon receiver
+    denon("OPALS ?"),           // Auto Lip Sync
     denon("SSQS ?"),            // Quick select names
     denon("SSLEV ?"),           // Speaker channel levels
     both("PSREFLEV ?"),         // Reference Level
@@ -184,8 +184,9 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
+        assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
         assert_eq!(denon.len(), 88);
-        assert_eq!(marantz.len(), 90);
+        assert_eq!(marantz.len(), 89);
     }
 
     #[test]
@@ -204,9 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn both_brands_ask_for_the_sources_sound_modes_name_and_lip_sync() {
+    fn both_brands_ask_for_the_sources_sound_modes_and_name() {
         for brand in BRANDS {
-            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?", "OPALS ?"] {
+            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?"] {
                 assert!(state_queries(brand).any(|query| query == wanted));
             }
         }

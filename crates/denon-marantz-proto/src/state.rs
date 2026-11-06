@@ -290,25 +290,7 @@ impl State {
             }
             Event::Ss if zone == Some(Zone::Main) => {
                 let Some(value) = parameter.strip_prefix("VCTZMALIM") else {
-                    if let Some(changed) = self.device.sources.apply_ss(parameter) {
-                        return changed.then_some(Change {
-                            zone: None,
-                            setting: Setting::Sources,
-                        });
-                    }
-                    if let Some(changed) = self.apply_quick_select_name(parameter) {
-                        return changed.then_some(Change {
-                            zone: None,
-                            setting: Setting::QuickSelectNames,
-                        });
-                    }
-                    if let Some(changed) = self.apply_speaker_level(parameter) {
-                        return changed.then_some(Change {
-                            zone: None,
-                            setting: Setting::SpeakerLevels,
-                        });
-                    }
-                    return self.signal_change(|signal| signal.apply_ss(parameter));
+                    return self.apply_device_ss(parameter);
                 };
                 let value = value.trim();
                 let limit = if matches!(value, "OFF" | "") {
@@ -548,12 +530,18 @@ impl State {
             });
         }
         if let Some(value) = parameter.strip_prefix("ALSSET ") {
-            let on = on_off(value.trim())?;
-            return self.device_change(Setting::AutoLipSync, |d| {
-                set(&mut d.auto_lip_sync, Some(on))
-            });
+            return self.apply_auto_lip_sync(value);
         }
         self.apply_dirac_slot(parameter)
+    }
+
+    /// Applies the value of an auto lip sync event, `ON` or `OFF`. Text that
+    /// is not a value keeps the last value.
+    fn apply_auto_lip_sync(&mut self, value: &str) -> Option<Change> {
+        let on = on_off(value.trim())?;
+        self.device_change(Setting::AutoLipSync, |d| {
+            set(&mut d.auto_lip_sync, Some(on))
+        })
     }
 
     /// Applies an `OP` event about a Dirac Live slot, for example
@@ -583,6 +571,37 @@ impl State {
             }),
             _ => None,
         }
+    }
+
+    /// Applies an `SS` event that is about the receiver, not a zone: sources,
+    /// quick select names, auto lip sync, speaker levels and the signal.
+    fn apply_device_ss(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(changed) = self.device.sources.apply_ss(parameter) {
+            return changed.then_some(Change {
+                zone: None,
+                setting: Setting::Sources,
+            });
+        }
+        if let Some(changed) = self.apply_quick_select_name(parameter) {
+            return changed.then_some(Change {
+                zone: None,
+                setting: Setting::QuickSelectNames,
+            });
+        }
+        // Denon receivers send `ALSSET`, Marantz receivers `HOSALS`.
+        if let Some(value) = ["ALSSET ", "HOSALS ", "HOS "]
+            .iter()
+            .find_map(|prefix| parameter.strip_prefix(prefix))
+        {
+            return self.apply_auto_lip_sync(value);
+        }
+        if let Some(changed) = self.apply_speaker_level(parameter) {
+            return changed.then_some(Change {
+                zone: None,
+                setting: Setting::SpeakerLevels,
+            });
+        }
+        self.signal_change(|signal| signal.apply_ss(parameter))
     }
 
     /// Applies an `SS` event like `QS1QSN Quick Select 1`. Returns `None` if
@@ -1325,6 +1344,16 @@ mod tests {
         assert_eq!(apply(&mut state, "OPALSSET ??"), None);
         assert_eq!(apply(&mut state, "OPALSVAL 000"), None);
         assert_eq!(state.device().auto_lip_sync, Some(false));
+        // The `SS` events: Denon pushes `ALSSET` when the input changes, and
+        // Marantz sends `HOSALS`.
+        assert_eq!(apply(&mut state, "SSALSSET ON"), lip_sync());
+        assert_eq!(apply(&mut state, "SSALSSET ON"), None);
+        assert_eq!(apply(&mut state, "SSALSDSP OFF"), None);
+        assert_eq!(apply(&mut state, "SSHOSALS OFF"), lip_sync());
+        assert_eq!(apply(&mut state, "SSHOS ON"), lip_sync());
+        assert_eq!(state.device().auto_lip_sync, Some(true));
+        assert_eq!(apply(&mut state, "SSHOSIPS ATH"), None);
+        assert_eq!(apply(&mut state, "SSHOSALS ??"), None);
     }
 
     #[test]
