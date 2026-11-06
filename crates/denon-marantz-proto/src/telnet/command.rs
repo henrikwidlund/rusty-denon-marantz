@@ -2,9 +2,11 @@
 
 use core::fmt::Write as _;
 
+use crate::containment::ContainmentAmount;
 use crate::error::Error;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
+use crate::values::{DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset};
 use crate::volume::Volume;
 use crate::zone::Zone;
 
@@ -63,7 +65,8 @@ pub enum Command<'a> {
     /// Opens (`true`) or closes (`false`) the setup menu.
     SetupMenu(bool),
     /// Turns tone control on (`true`) or off (`false`). Bass and treble work
-    /// only when it is on. The receiver ignores this while Dynamic EQ is on.
+    /// only when it is on. The receiver ignores this while Dynamic EQ is on,
+    /// or with a Dirac Live filter such as Dirac ART.
     ToneControl(bool),
     /// Sets the bass level.
     SetBass(ToneLevel),
@@ -77,6 +80,25 @@ pub enum Command<'a> {
     TrebleUp,
     /// Lowers the treble by one step.
     TrebleDown,
+    /// Turns Audyssey Dynamic EQ on (`true`) or off (`false`).
+    DynamicEq(bool),
+    /// Sets the Audyssey MultEQ mode.
+    SetMultiEq(MultiEq),
+    /// Sets the Audyssey reference level offset. The receiver accepts it only
+    /// with Dynamic EQ on.
+    SetReferenceLevelOffset(ReferenceLevelOffset),
+    /// Sets the Audyssey Dynamic Volume.
+    SetDynamicVolume(DynamicVolume),
+    /// Turns Audyssey LFC on (`true`) or off (`false`).
+    Lfc(bool),
+    /// Sets the Audyssey LFC containment amount.
+    SetContainmentAmount(ContainmentAmount),
+    /// Raises the LFC containment amount by one step.
+    ContainmentAmountUp,
+    /// Lowers the LFC containment amount by one step.
+    ContainmentAmountDown,
+    /// Selects a Dirac Live filter.
+    SetDiracFilter(DiracFilter),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
 }
@@ -153,6 +175,31 @@ impl Command<'_> {
             }
             Self::TrebleUp => out.push_str("PSTRE UP"),
             Self::TrebleDown => out.push_str("PSTRE DOWN"),
+            Self::DynamicEq(true) => out.push_str("PSDYNEQ ON"),
+            Self::DynamicEq(false) => out.push_str("PSDYNEQ OFF"),
+            Self::SetMultiEq(mode) => {
+                out.push_str("PSMULTEQ:");
+                out.push_str(mode.telnet_code());
+            }
+            Self::SetReferenceLevelOffset(offset) => {
+                out.push_str("PSREFLEV ");
+                out.push_str(offset.telnet_code());
+            }
+            Self::SetDynamicVolume(volume) => {
+                out.push_str("PSDYNVOL ");
+                out.push_str(volume.telnet_code());
+            }
+            Self::Lfc(true) => out.push_str("PSLFC ON"),
+            Self::Lfc(false) => out.push_str("PSLFC OFF"),
+            Self::SetContainmentAmount(amount) => {
+                let _ = write!(out, "PSCNTAMT {amount}");
+            }
+            Self::ContainmentAmountUp => out.push_str("PSCNTAMT UP"),
+            Self::ContainmentAmountDown => out.push_str("PSCNTAMT DOWN"),
+            Self::SetDiracFilter(filter) => {
+                out.push_str("PSDIRAC ");
+                out.push_str(filter.code());
+            }
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);
@@ -237,6 +284,40 @@ mod tests {
             (Command::SetTreble(level(6)), "PSTRE 56\r"),
             (Command::TrebleUp, "PSTRE UP\r"),
             (Command::TrebleDown, "PSTRE DOWN\r"),
+        ];
+        for (command, expected) in cases {
+            for zone in Zone::ALL {
+                assert_eq!(line(command, zone), expected, "{command:?} {zone:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn audyssey_and_dirac_commands_ignore_the_zone() {
+        let amount = |n| ContainmentAmount::new(n).unwrap();
+        let cases = [
+            (Command::DynamicEq(true), "PSDYNEQ ON\r"),
+            (Command::DynamicEq(false), "PSDYNEQ OFF\r"),
+            (Command::SetMultiEq(MultiEq::LrBypass), "PSMULTEQ:BYP.LR\r"),
+            (
+                Command::SetMultiEq(MultiEq::Reference),
+                "PSMULTEQ:AUDYSSEY\r",
+            ),
+            (
+                Command::SetReferenceLevelOffset(ReferenceLevelOffset::Db10),
+                "PSREFLEV 10\r",
+            ),
+            (
+                Command::SetDynamicVolume(DynamicVolume::Heavy),
+                "PSDYNVOL HEV\r",
+            ),
+            (Command::Lfc(true), "PSLFC ON\r"),
+            (Command::Lfc(false), "PSLFC OFF\r"),
+            (Command::SetContainmentAmount(amount(4)), "PSCNTAMT 04\r"),
+            (Command::ContainmentAmountUp, "PSCNTAMT UP\r"),
+            (Command::ContainmentAmountDown, "PSCNTAMT DOWN\r"),
+            (Command::SetDiracFilter(DiracFilter::Off), "PSDIRAC OFF\r"),
+            (Command::SetDiracFilter(DiracFilter::Slot2), "PSDIRAC 2\r"),
         ];
         for (command, expected) in cases {
             for zone in Zone::ALL {

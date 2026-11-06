@@ -12,7 +12,10 @@ use std::borrow::Cow;
 use crate::appcommand::Field;
 use crate::source::telnet_to_display_source;
 use crate::telnet::{Event, Message};
-use crate::{AutoStandby, DimmerMode, EcoMode, Power, Sleep, ToneLevel, Volume, Zone};
+use crate::{
+    AutoStandby, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume, EcoMode, MultiEq,
+    Power, ReferenceLevelOffset, Sleep, ToneLevel, Volume, Zone,
+};
 
 /// A value of the state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +49,20 @@ pub enum Setting {
     Bass,
     /// Treble level of the receiver.
     Treble,
+    /// Audyssey MultEQ mode of the receiver.
+    MultiEq,
+    /// Audyssey Dynamic EQ of the receiver is on.
+    DynamicEq,
+    /// Audyssey reference level offset of the receiver.
+    ReferenceLevelOffset,
+    /// Audyssey Dynamic Volume of the receiver.
+    DynamicVolume,
+    /// Audyssey LFC of the receiver is on.
+    Lfc,
+    /// Audyssey LFC containment amount of the receiver.
+    ContainmentAmount,
+    /// Dirac Live filter of the receiver.
+    DiracFilter,
 }
 
 /// A value that changed.
@@ -94,6 +111,21 @@ pub struct DeviceState {
     pub bass: Option<ToneLevel>,
     /// Treble level.
     pub treble: Option<ToneLevel>,
+    /// Audyssey MultEQ mode.
+    pub multi_eq: Option<MultiEq>,
+    /// Audyssey Dynamic EQ is on.
+    pub dynamic_eq: Option<bool>,
+    /// Audyssey reference level offset. It works only with Dynamic EQ on.
+    pub reference_level_offset: Option<ReferenceLevelOffset>,
+    /// Audyssey Dynamic Volume.
+    pub dynamic_volume: Option<DynamicVolume>,
+    /// Audyssey LFC is on. Telnet reports it, `AppCommand` does not.
+    pub lfc: Option<bool>,
+    /// Audyssey LFC containment amount. Telnet reports it, `AppCommand` does
+    /// not.
+    pub containment_amount: Option<ContainmentAmount>,
+    /// Dirac Live filter. Telnet reports it, `AppCommand` does not.
+    pub dirac_filter: Option<DiracFilter>,
 }
 
 /// State of a receiver.
@@ -203,7 +235,7 @@ impl State {
                     set(&mut d.settings_menu, Some(value))
                 })
             }
-            Event::Ps => self.apply_tone(parameter),
+            Event::Ps => self.apply_sound_setting(parameter),
             _ => None,
         }
     }
@@ -267,28 +299,87 @@ impl State {
                 let level = value.and_then(ToneLevel::from_answer);
                 self.device_change(Setting::Treble, |d| set(&mut d.treble, level))
             }
+            Field::MultEq => {
+                let mode = value.and_then(MultiEq::from_any);
+                self.device_change(Setting::MultiEq, |d| set(&mut d.multi_eq, mode))
+            }
+            Field::DynamicEq => {
+                let on = value.and_then(on_off_digit);
+                self.device_change(Setting::DynamicEq, |d| set(&mut d.dynamic_eq, on))
+            }
+            Field::RefLevOffset => {
+                let offset = value.and_then(ReferenceLevelOffset::from_any);
+                self.device_change(Setting::ReferenceLevelOffset, |d| {
+                    set(&mut d.reference_level_offset, offset)
+                })
+            }
+            Field::DynamicVol => {
+                let volume = value.and_then(DynamicVolume::from_any);
+                self.device_change(Setting::DynamicVolume, |d| {
+                    set(&mut d.dynamic_volume, volume)
+                })
+            }
             _ => None,
         }
     }
 
-    /// Applies a `PS` event. Bass, treble and tone control are the ones that
-    /// the state holds.
-    fn apply_tone(&mut self, parameter: &str) -> Option<Change> {
-        if let Some(on) = parameter.strip_prefix("TONE CTRL ") {
-            let on = match on {
-                "ON" => true,
-                "OFF" => false,
-                _ => return None,
-            };
-            self.device_change(Setting::ToneControl, |d| set(&mut d.tone_control, Some(on)))
-        } else if let Some(code) = parameter.strip_prefix("BAS ") {
-            let level = ToneLevel::from_telnet(code)?;
-            self.device_change(Setting::Bass, |d| set(&mut d.bass, Some(level)))
-        } else if let Some(code) = parameter.strip_prefix("TRE ") {
-            let level = ToneLevel::from_telnet(code)?;
-            self.device_change(Setting::Treble, |d| set(&mut d.treble, Some(level)))
-        } else {
-            None
+    /// Applies a `PS` event. The state holds the tone control, the Audyssey
+    /// and the Dirac settings. The other `PS` events are ignored.
+    fn apply_sound_setting(&mut self, parameter: &str) -> Option<Change> {
+        let (name, value) = match parameter.strip_prefix("MULTEQ:") {
+            Some(value) => ("MULTEQ", value),
+            None => parameter.split_once(' ')?,
+        };
+        match name {
+            "TONE" => {
+                let on = on_off(value.strip_prefix("CTRL ")?)?;
+                self.device_change(Setting::ToneControl, |d| set(&mut d.tone_control, Some(on)))
+            }
+            "BAS" => {
+                let level = ToneLevel::from_telnet(value)?;
+                self.device_change(Setting::Bass, |d| set(&mut d.bass, Some(level)))
+            }
+            "TRE" => {
+                let level = ToneLevel::from_telnet(value)?;
+                self.device_change(Setting::Treble, |d| set(&mut d.treble, Some(level)))
+            }
+            "MULTEQ" => {
+                let mode = MultiEq::from_telnet(value)?;
+                self.device_change(Setting::MultiEq, |d| set(&mut d.multi_eq, Some(mode)))
+            }
+            "DYNEQ" => {
+                let on = on_off(value)?;
+                self.device_change(Setting::DynamicEq, |d| set(&mut d.dynamic_eq, Some(on)))
+            }
+            "REFLEV" => {
+                let offset = ReferenceLevelOffset::from_telnet(value)?;
+                self.device_change(Setting::ReferenceLevelOffset, |d| {
+                    set(&mut d.reference_level_offset, Some(offset))
+                })
+            }
+            "DYNVOL" => {
+                let volume = DynamicVolume::from_telnet(value)?;
+                self.device_change(Setting::DynamicVolume, |d| {
+                    set(&mut d.dynamic_volume, Some(volume))
+                })
+            }
+            "LFC" => {
+                let on = on_off(value)?;
+                self.device_change(Setting::Lfc, |d| set(&mut d.lfc, Some(on)))
+            }
+            "CNTAMT" => {
+                let amount = ContainmentAmount::from_telnet(value)?;
+                self.device_change(Setting::ContainmentAmount, |d| {
+                    set(&mut d.containment_amount, Some(amount))
+                })
+            }
+            "DIRAC" => {
+                let filter = DiracFilter::from_code(value)?;
+                self.device_change(Setting::DiracFilter, |d| {
+                    set(&mut d.dirac_filter, Some(filter))
+                })
+            }
+            _ => None,
         }
     }
 
@@ -321,7 +412,16 @@ impl State {
     }
 }
 
-/// `1` is on and `0` is off, as in a tone control answer.
+/// `ON` and `OFF`, as telnet events have them.
+fn on_off(text: &str) -> Option<bool> {
+    match text {
+        "ON" => Some(true),
+        "OFF" => Some(false),
+        _ => None,
+    }
+}
+
+/// `1` is on and `0` is off, as in an `AppCommand` answer.
 fn on_off_digit(text: &str) -> Option<bool> {
     match text.trim() {
         "1" => Some(true),
@@ -771,6 +871,92 @@ mod tests {
             setting(Setting::Treble)
         );
         assert_eq!(state.device().treble, None);
+    }
+
+    #[test]
+    fn audyssey_and_dirac_follow_events_and_answers() {
+        let mut state = State::new(false);
+        let setting = |setting| {
+            Some(Change {
+                zone: None,
+                setting,
+            })
+        };
+        let cases = [
+            ("PSMULTEQ:AUDYSSEY", Setting::MultiEq),
+            ("PSDYNEQ ON", Setting::DynamicEq),
+            ("PSREFLEV 10", Setting::ReferenceLevelOffset),
+            ("PSDYNVOL HEV", Setting::DynamicVolume),
+            ("PSLFC ON", Setting::Lfc),
+            ("PSCNTAMT 04", Setting::ContainmentAmount),
+            ("PSDIRAC 2", Setting::DiracFilter),
+        ];
+        for (line, expected) in cases {
+            assert_eq!(apply(&mut state, line), setting(expected), "{line}");
+            assert_eq!(apply(&mut state, line), None, "{line} again");
+        }
+        let device = state.device().clone();
+        assert_eq!(device.multi_eq, Some(MultiEq::Reference));
+        assert_eq!(device.dynamic_eq, Some(true));
+        assert_eq!(
+            device.reference_level_offset,
+            Some(ReferenceLevelOffset::Db10)
+        );
+        assert_eq!(device.dynamic_volume, Some(DynamicVolume::Heavy));
+        assert_eq!(device.lfc, Some(true));
+        assert_eq!(
+            device.containment_amount.map(ContainmentAmount::get),
+            Some(4)
+        );
+        assert_eq!(device.dirac_filter, Some(DiracFilter::Slot2));
+        // Text that is not a value keeps the last value.
+        for line in [
+            "PSMULTEQ:X",
+            "PSDYNEQ MAYBE",
+            "PSREFLEV 7",
+            "PSDYNVOL X",
+            "PSLFC",
+            "PSCNTAMT 09",
+            "PSDIRAC 9",
+            "PSDIRAC",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state.device(), &device);
+        // The values of an answer use the other codes.
+        let answer =
+            |state: &mut State, field, text| state.apply_field(Zone::Main, field, Some(text));
+        assert_eq!(
+            answer(&mut state, Field::MultEq, "2"),
+            setting(Setting::MultiEq)
+        );
+        assert_eq!(state.device().multi_eq, Some(MultiEq::LrBypass));
+        assert_eq!(
+            answer(&mut state, Field::DynamicEq, "0"),
+            setting(Setting::DynamicEq)
+        );
+        assert_eq!(state.device().dynamic_eq, Some(false));
+        assert_eq!(
+            answer(&mut state, Field::RefLevOffset, "3"),
+            setting(Setting::ReferenceLevelOffset)
+        );
+        assert_eq!(
+            state.device().reference_level_offset,
+            Some(ReferenceLevelOffset::Db15)
+        );
+        assert_eq!(
+            answer(&mut state, Field::DynamicVol, "1"),
+            setting(Setting::DynamicVolume)
+        );
+        assert_eq!(state.device().dynamic_volume, Some(DynamicVolume::Light));
+        // An answer with something else makes the value unknown.
+        assert_eq!(
+            answer(&mut state, Field::MultEq, "9"),
+            setting(Setting::MultiEq)
+        );
+        assert_eq!(state.device().multi_eq, None);
+        // Values that the answer does not have stay.
+        assert_eq!(state.device().dirac_filter, Some(DiracFilter::Slot2));
     }
 
     #[test]
