@@ -63,6 +63,8 @@ pub enum Setting {
     ContainmentAmount,
     /// Dirac Live filter of the receiver.
     DiracFilter,
+    /// A Dirac Live slot of the receiver, from 1 to 3.
+    DiracSlot(u8),
 }
 
 /// A value that changed.
@@ -96,6 +98,17 @@ pub struct ZoneState {
     pub sleep: Option<Sleep>,
 }
 
+/// A Dirac Live filter slot. Telnet reports it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiracSlot {
+    /// Name that the filter was saved with. `None` if the slot has none.
+    pub name: Option<String>,
+    /// A filter is in the slot.
+    pub imported: Option<bool>,
+    /// Kind of filter, as the receiver writes it, for example `ART`.
+    pub kind: Option<String>,
+}
+
 /// Values of the whole receiver.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeviceState {
@@ -126,6 +139,26 @@ pub struct DeviceState {
     pub containment_amount: Option<ContainmentAmount>,
     /// Dirac Live filter. Telnet reports it, `AppCommand` does not.
     pub dirac_filter: Option<DiracFilter>,
+    /// The three Dirac Live slots. Slot 1 is the first. Telnet reports them.
+    pub dirac_slots: [DiracSlot; 3],
+}
+
+impl DeviceState {
+    /// The Dirac Live filter of the slot with this name, if the state knows
+    /// one. Upper and lower case are the same. A slot that has no filter is
+    /// not used. If two slots have the name, the first one is used.
+    #[must_use]
+    pub fn dirac_filter_named(&self, name: &str) -> Option<DiracFilter> {
+        let name = name.trim();
+        let index = self.dirac_slots.iter().position(|slot| {
+            slot.imported != Some(false)
+                && slot
+                    .name
+                    .as_deref()
+                    .is_some_and(|slot_name| slot_name.eq_ignore_ascii_case(name))
+        })?;
+        DiracFilter::from_slot_number(u8::try_from(index + 1).ok()?)
+    }
 }
 
 /// State of a receiver.
@@ -236,6 +269,7 @@ impl State {
                 })
             }
             Event::Ps => self.apply_sound_setting(parameter),
+            Event::Op => self.apply_dirac_slot(parameter),
             _ => None,
         }
     }
@@ -379,6 +413,35 @@ impl State {
                     set(&mut d.dirac_filter, Some(filter))
                 })
             }
+            _ => None,
+        }
+    }
+
+    /// Applies an `OP` event about a Dirac Live slot, for example
+    /// `DLSSL1NAME Comte`. The other `OP` events are ignored.
+    fn apply_dirac_slot(&mut self, parameter: &str) -> Option<Change> {
+        let rest = parameter.strip_prefix("DLSSL")?;
+        let number = rest.bytes().next()?.checked_sub(b'1').filter(|n| *n < 3)?;
+        let (field, value) = rest.get(1..)?.split_once(' ')?;
+        let value = value.trim();
+        let change = |state: &mut Self, update: &dyn Fn(&mut DiracSlot) -> bool| {
+            let slot = &mut state.device.dirac_slots[usize::from(number)];
+            update(slot).then_some(Change {
+                zone: None,
+                setting: Setting::DiracSlot(number + 1),
+            })
+        };
+        match field {
+            "NAME" => change(self, &|slot| {
+                set_optional_text(&mut slot.name, Some(value).filter(|name| !name.is_empty()))
+            }),
+            "IMP" => {
+                let imported = on_off(value)?;
+                change(self, &|slot| set(&mut slot.imported, Some(imported)))
+            }
+            "TYP" => change(self, &|slot| {
+                set_optional_text(&mut slot.kind, Some(value).filter(|kind| !kind.is_empty()))
+            }),
             _ => None,
         }
     }
@@ -957,6 +1020,70 @@ mod tests {
         assert_eq!(state.device().multi_eq, None);
         // Values that the answer does not have stay.
         assert_eq!(state.device().dirac_filter, Some(DiracFilter::Slot2));
+    }
+
+    #[test]
+    fn dirac_slots_follow_events() {
+        let mut state = State::new(false);
+        let slot = |n| {
+            Some(Change {
+                zone: None,
+                setting: Setting::DiracSlot(n),
+            })
+        };
+        // The receiver pads the name with spaces.
+        let name = format!("OPDLSSL1NAME {:<55}", "Comte");
+        assert_eq!(apply(&mut state, &name), slot(1));
+        assert_eq!(apply(&mut state, &name), None);
+        assert_eq!(apply(&mut state, "OPDLSSL1IMP ON"), slot(1));
+        assert_eq!(apply(&mut state, "OPDLSSL1TYP BC"), slot(1));
+        assert_eq!(apply(&mut state, "OPDLSSL2NAME Dirac ART"), slot(2));
+        assert_eq!(apply(&mut state, "OPDLSSL2TYP ART"), slot(2));
+        assert_eq!(apply(&mut state, "OPDLSSL3IMP OFF"), slot(3));
+        let slots = &state.device().dirac_slots;
+        assert_eq!(slots[0].name.as_deref(), Some("Comte"));
+        assert_eq!(slots[0].imported, Some(true));
+        assert_eq!(slots[0].kind.as_deref(), Some("BC"));
+        assert_eq!(slots[1].name.as_deref(), Some("Dirac ART"));
+        assert_eq!(slots[1].imported, None);
+        assert_eq!(slots[2].imported, Some(false));
+        // A name of only spaces means the slot has none.
+        assert_eq!(apply(&mut state, "OPDLSSL2NAME      "), slot(2));
+        assert_eq!(state.device().dirac_slots[1].name, None);
+        // A name finds its slot. A slot without a filter is not used.
+        assert_eq!(
+            state.device().dirac_filter_named("comte"),
+            Some(DiracFilter::Slot1)
+        );
+        assert_eq!(
+            state.device().dirac_filter_named(" Comte "),
+            Some(DiracFilter::Slot1)
+        );
+        assert_eq!(state.device().dirac_filter_named("Dirac ART"), None);
+        assert_eq!(state.device().dirac_filter_named(""), None);
+        apply(&mut state, "OPDLSSL2NAME Dirac ART");
+        assert_eq!(
+            state.device().dirac_filter_named("DIRAC art"),
+            Some(DiracFilter::Slot2)
+        );
+        apply(&mut state, "OPDLSSL2IMP OFF");
+        assert_eq!(state.device().dirac_filter_named("Dirac ART"), None);
+        apply(&mut state, "OPDLSSL2IMP ON");
+        apply(&mut state, "OPDLSSL2NAME      ");
+        // Other events and text that is not a value change nothing.
+        let before = state.clone();
+        for line in [
+            "OPDLS END",
+            "OPDLSSL4NAME X",
+            "OPDLSSL0NAME X",
+            "OPDLSSL1IMP MAYBE",
+            "OPDLSSL1",
+            "OPDLSSL1COLOR RED",
+            "OPSLP010",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state, before);
     }
 
     #[test]

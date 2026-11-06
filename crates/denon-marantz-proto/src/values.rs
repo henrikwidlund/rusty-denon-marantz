@@ -74,6 +74,19 @@ code_enum! {
     }
 }
 
+impl DiracFilter {
+    /// The filter of slot 1, 2 or 3. `None` for another number.
+    #[must_use]
+    pub const fn from_slot_number(number: u8) -> Option<Self> {
+        match number {
+            1 => Some(Self::Slot1),
+            2 => Some(Self::Slot2),
+            3 => Some(Self::Slot3),
+            _ => None,
+        }
+    }
+}
+
 code_enum! {
     /// Speakers used for effect channels.
     pub enum EffectSpeakerSelection {

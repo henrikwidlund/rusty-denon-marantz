@@ -32,7 +32,7 @@ pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use error::Error;
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
-pub use state::{Change, DeviceState, Setting, State, ZoneState};
+pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use values::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, DacFilter,
