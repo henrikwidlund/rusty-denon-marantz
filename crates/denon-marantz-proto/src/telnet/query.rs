@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 89] = [
+static QUERIES: [Query; 90] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -122,6 +122,7 @@ static QUERIES: [Query; 89] = [
     both("OPSMLALL ?"),         // Sound modes that the receiver offers
     both("NSFRN?"),             // Friendly name
     both("OPALS ?"),            // Auto Lip Sync on a Denon receiver
+    denon("SSQS ?"),            // Quick select names
     both("PSREFLEV ?"),         // Reference Level
     both("PSDYNVOL ?"),         // Dynamic Vol.
     both("SPPR ?"),             // Speaker Preset
@@ -180,7 +181,7 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 84);
+        assert_eq!(denon.len(), 85);
         assert_eq!(marantz.len(), 88);
     }
 
@@ -189,6 +190,12 @@ mod tests {
         for brand in BRANDS {
             assert!(state_queries(brand).any(|query| query == "OPDLS ?"));
         }
+    }
+
+    #[test]
+    fn a_denon_receiver_asks_for_the_quick_select_names() {
+        assert!(state_queries(Brand::Denon).any(|query| query == "SSQS ?"));
+        assert!(!state_queries(Brand::Marantz).any(|query| query == "SSQS ?"));
     }
 
     #[test]

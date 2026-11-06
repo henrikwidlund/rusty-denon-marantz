@@ -82,6 +82,8 @@ pub enum Setting {
     FriendlyName,
     /// Auto lip sync of the receiver is on.
     AutoLipSync,
+    /// The name of a quick select.
+    QuickSelectNames,
 }
 
 /// A value that changed.
@@ -173,6 +175,10 @@ pub struct DeviceState {
     pub friendly_name: Option<String>,
     /// Auto lip sync is on. Telnet reports it on a Denon receiver.
     pub auto_lip_sync: Option<bool>,
+    /// Names of the quick selects. The first is quick select 1. A quick
+    /// select with no name, or that the receiver has not reported, is `None`.
+    /// Telnet reports them on a Denon receiver.
+    pub quick_select_names: Vec<Option<String>>,
 }
 
 impl DeviceState {
@@ -277,6 +283,12 @@ impl State {
                         return changed.then_some(Change {
                             zone: None,
                             setting: Setting::Sources,
+                        });
+                    }
+                    if let Some(changed) = self.apply_quick_select_name(parameter) {
+                        return changed.then_some(Change {
+                            zone: None,
+                            setting: Setting::QuickSelectNames,
                         });
                     }
                     return self.signal_change(|signal| signal.apply_ss(parameter));
@@ -544,6 +556,23 @@ impl State {
             }),
             _ => None,
         }
+    }
+
+    /// Applies an `SS` event like `QS1QSN Quick Select 1`. Returns `None` if
+    /// the event is not about the name of a quick select, and otherwise true
+    /// if the names changed. An empty name means no name.
+    fn apply_quick_select_name(&mut self, parameter: &str) -> Option<bool> {
+        let rest = parameter.strip_prefix("QS")?;
+        let digit = *rest.as_bytes().first()?;
+        let index = usize::from(digit.checked_sub(b'1').filter(|n| *n < 9)?);
+        // The first byte is an ASCII digit, so the index is a char boundary.
+        let name = rest[1..].strip_prefix("QSN")?.trim();
+        let names = &mut self.device.quick_select_names;
+        let is_new = names.len() <= index;
+        if is_new {
+            names.resize(index + 1, None);
+        }
+        Some(set_optional_text(&mut names[index], Some(name).filter(|n| !n.is_empty())) || is_new)
     }
 
     fn apply_friendly_name(&mut self, name: &str) -> Option<Change> {
@@ -1319,6 +1348,36 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn quick_select_names_follow_events() {
+        let mut state = State::new(false);
+        let names = || change(None, Setting::QuickSelectNames);
+        assert_eq!(apply(&mut state, "SSQS2QSN Movie Night  "), names());
+        assert_eq!(apply(&mut state, "SSQS2QSN Movie Night  "), None);
+        assert_eq!(apply(&mut state, "SSQS1QSN Quick Select 1  "), names());
+        assert_eq!(
+            state.device().quick_select_names,
+            [
+                Some("Quick Select 1".to_owned()),
+                Some("Movie Night".to_owned())
+            ]
+        );
+        // An empty name means no name.
+        assert_eq!(apply(&mut state, "SSQS2QSN       "), names());
+        assert_eq!(state.device().quick_select_names[1], None);
+        // Other quick select events are not names.
+        for line in [
+            "SSQS1VOL ON",
+            "SSQS1 END",
+            "SSQSN1 ?",
+            "SSQS0QSN x",
+            "SSQSQSN x",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state.device().quick_select_names.len(), 2);
     }
 
     #[test]
