@@ -29,8 +29,8 @@
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command, TelnetConfig};
-use denon_marantz_proto::{Volume, Zone};
+use denon_marantz::{Avr, Command, TelnetConfig, ZoneControl};
+use denon_marantz_proto::Zone;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
@@ -38,23 +38,24 @@ use tracing_subscriber::EnvFilter;
 const USAGE: &str =
     "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
+/// Commands that the zone control has methods for.
+const ZONE_COMMANDS: [&str; 9] = [
+    "power-on",
+    "power-standby",
+    "volume-up",
+    "volume-down",
+    "volume",
+    "mute",
+    "unmute",
+    "source",
+    "sound-mode",
+];
+
+/// The other commands, sent with `Avr::send`.
 fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, String> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
     Ok(match name {
-        "power-on" => Command::PowerOn,
-        "power-standby" => Command::PowerStandby,
         "device-power-on" => Command::DevicePowerOn,
         "device-power-standby" => Command::DevicePowerStandby,
-        "volume-up" => Command::VolumeUp,
-        "volume-down" => Command::VolumeDown,
-        "volume" => {
-            let db: f32 = need()?.parse().map_err(|_| "volume is a number in dB")?;
-            Command::SetVolume(Volume::from_db_rounded(db).ok_or("volume is from -80 to 18 dB")?)
-        }
-        "mute" => Command::Mute(true),
-        "unmute" => Command::Mute(false),
-        "source" => Command::SelectSource(need()?),
-        "sound-mode" => Command::SelectSoundMode(need()?),
         "all-zone-stereo-on" => Command::AllZoneStereo(true),
         "all-zone-stereo-off" => Command::AllZoneStereo(false),
         "play" => Command::Play,
@@ -70,9 +71,34 @@ fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, Str
         "options" => Command::Options,
         "setup-open" => Command::SetupMenu(true),
         "setup-close" => Command::SetupMenu(false),
-        "raw" => Command::Raw(need()?),
+        "raw" => Command::Raw(argument.ok_or("raw needs an argument")?),
         other => return Err(format!("unknown command {other}")),
     })
+}
+
+/// Runs a command with the methods of the zone control.
+async fn zone_command(
+    zone: ZoneControl<'_>,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    match name {
+        "power-on" => zone.power_on().await?,
+        "power-standby" => zone.power_standby().await?,
+        "volume-up" => zone.volume_up().await?,
+        "volume-down" => zone.volume_down().await?,
+        "volume" => {
+            let db: f32 = need()?.parse().map_err(|_| "volume is a number in dB")?;
+            zone.set_volume_db(db).await?;
+        }
+        "mute" => zone.set_mute(true).await?,
+        "unmute" => zone.set_mute(false).await?,
+        "source" => zone.select_source(need()?).await?,
+        "sound-mode" => zone.select_sound_mode(need()?).await?,
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
 }
 
 /// The next argument as a number.
@@ -119,7 +145,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let argument = args.next();
-    let command = command(&name, argument.as_deref())?;
+    // A command that is not known is refused before the connect.
+    let other = if ZONE_COMMANDS.contains(&name.as_str()) {
+        None
+    } else {
+        Some(command(&name, argument.as_deref())?)
+    };
 
     let avr = Avr::builder(host).telnet_config(config).connect().await?;
     println!("connected to {}", avr.info().friendly_name);
@@ -146,7 +177,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     sleep(wait).await;
     println!("[{:7.3}] sending {name} to {zone:?}", stamp());
-    avr.send(zone, command).await?;
+    match other {
+        Some(command) => avr.send(zone, command).await?,
+        None => zone_command(avr.zone(zone)?, &name, argument.as_deref()).await?,
+    }
     println!("[{:7.3}] written", stamp());
     sleep(listen).await;
 
