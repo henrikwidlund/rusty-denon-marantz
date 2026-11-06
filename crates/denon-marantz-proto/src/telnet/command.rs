@@ -4,6 +4,7 @@ use core::fmt::Write as _;
 
 use crate::error::Error;
 use crate::text::reject_control;
+use crate::tone::ToneLevel;
 use crate::volume::Volume;
 use crate::zone::Zone;
 
@@ -61,6 +62,21 @@ pub enum Command<'a> {
     Options,
     /// Opens (`true`) or closes (`false`) the setup menu.
     SetupMenu(bool),
+    /// Turns tone control on (`true`) or off (`false`). Bass and treble work
+    /// only when it is on. The receiver ignores this while Dynamic EQ is on.
+    ToneControl(bool),
+    /// Sets the bass level.
+    SetBass(ToneLevel),
+    /// Raises the bass by one step.
+    BassUp,
+    /// Lowers the bass by one step.
+    BassDown,
+    /// Sets the treble level.
+    SetTreble(ToneLevel),
+    /// Raises the treble by one step.
+    TrebleUp,
+    /// Lowers the treble by one step.
+    TrebleDown,
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
 }
@@ -125,6 +141,18 @@ impl Command<'_> {
             Self::Options => out.push_str("MNOPT"),
             Self::SetupMenu(true) => out.push_str("MNMEN ON"),
             Self::SetupMenu(false) => out.push_str("MNMEN OFF"),
+            Self::ToneControl(true) => out.push_str("PSTONE CTRL ON"),
+            Self::ToneControl(false) => out.push_str("PSTONE CTRL OFF"),
+            Self::SetBass(level) => {
+                let _ = write!(out, "PSBAS {level}");
+            }
+            Self::BassUp => out.push_str("PSBAS UP"),
+            Self::BassDown => out.push_str("PSBAS DOWN"),
+            Self::SetTreble(level) => {
+                let _ = write!(out, "PSTRE {level}");
+            }
+            Self::TrebleUp => out.push_str("PSTRE UP"),
+            Self::TrebleDown => out.push_str("PSTRE DOWN"),
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);
@@ -191,6 +219,27 @@ mod tests {
         ];
         for (command, expected) in cases {
             for (zone, expected) in Zone::ALL.into_iter().zip(expected) {
+                assert_eq!(line(command, zone), expected, "{command:?} {zone:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tone_commands_ignore_the_zone() {
+        let level = |db| ToneLevel::from_db(db).unwrap();
+        let cases = [
+            (Command::ToneControl(true), "PSTONE CTRL ON\r"),
+            (Command::ToneControl(false), "PSTONE CTRL OFF\r"),
+            (Command::SetBass(level(-6)), "PSBAS 44\r"),
+            (Command::SetBass(level(0)), "PSBAS 50\r"),
+            (Command::BassUp, "PSBAS UP\r"),
+            (Command::BassDown, "PSBAS DOWN\r"),
+            (Command::SetTreble(level(6)), "PSTRE 56\r"),
+            (Command::TrebleUp, "PSTRE UP\r"),
+            (Command::TrebleDown, "PSTRE DOWN\r"),
+        ];
+        for (command, expected) in cases {
+            for zone in Zone::ALL {
                 assert_eq!(line(command, zone), expected, "{command:?} {zone:?}");
             }
         }

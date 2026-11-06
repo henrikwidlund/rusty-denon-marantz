@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use crate::appcommand::Field;
 use crate::source::telnet_to_display_source;
 use crate::telnet::{Event, Message};
-use crate::{AutoStandby, DimmerMode, EcoMode, Power, Sleep, Volume, Zone};
+use crate::{AutoStandby, DimmerMode, EcoMode, Power, Sleep, ToneLevel, Volume, Zone};
 
 /// A value of the state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,6 +40,12 @@ pub enum Setting {
     EcoMode,
     /// Setup menu of the receiver is open.
     SettingsMenu,
+    /// Tone control of the receiver is on.
+    ToneControl,
+    /// Bass level of the receiver.
+    Bass,
+    /// Treble level of the receiver.
+    Treble,
 }
 
 /// A value that changed.
@@ -82,6 +88,12 @@ pub struct DeviceState {
     pub eco_mode: Option<EcoMode>,
     /// The setup menu is open.
     pub settings_menu: Option<bool>,
+    /// Tone control is on. The bass and treble levels only work then.
+    pub tone_control: Option<bool>,
+    /// Bass level.
+    pub bass: Option<ToneLevel>,
+    /// Treble level.
+    pub treble: Option<ToneLevel>,
 }
 
 /// State of a receiver.
@@ -191,6 +203,7 @@ impl State {
                     set(&mut d.settings_menu, Some(value))
                 })
             }
+            Event::Ps => self.apply_tone(parameter),
             _ => None,
         }
     }
@@ -242,7 +255,40 @@ impl State {
                 let eco = value.and_then(EcoMode::from_any);
                 self.device_change(Setting::EcoMode, |d| set(&mut d.eco_mode, eco))
             }
+            Field::ToneControlAdjust => {
+                let on = value.and_then(on_off_digit);
+                self.device_change(Setting::ToneControl, |d| set(&mut d.tone_control, on))
+            }
+            Field::Bass => {
+                let level = value.and_then(ToneLevel::from_answer);
+                self.device_change(Setting::Bass, |d| set(&mut d.bass, level))
+            }
+            Field::Treble => {
+                let level = value.and_then(ToneLevel::from_answer);
+                self.device_change(Setting::Treble, |d| set(&mut d.treble, level))
+            }
             _ => None,
+        }
+    }
+
+    /// Applies a `PS` event. Bass, treble and tone control are the ones that
+    /// the state holds.
+    fn apply_tone(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(on) = parameter.strip_prefix("TONE CTRL ") {
+            let on = match on {
+                "ON" => true,
+                "OFF" => false,
+                _ => return None,
+            };
+            self.device_change(Setting::ToneControl, |d| set(&mut d.tone_control, Some(on)))
+        } else if let Some(code) = parameter.strip_prefix("BAS ") {
+            let level = ToneLevel::from_telnet(code)?;
+            self.device_change(Setting::Bass, |d| set(&mut d.bass, Some(level)))
+        } else if let Some(code) = parameter.strip_prefix("TRE ") {
+            let level = ToneLevel::from_telnet(code)?;
+            self.device_change(Setting::Treble, |d| set(&mut d.treble, Some(level)))
+        } else {
+            None
         }
     }
 
@@ -272,6 +318,15 @@ impl State {
             zone: None,
             setting,
         })
+    }
+}
+
+/// `1` is on and `0` is off, as in a tone control answer.
+fn on_off_digit(text: &str) -> Option<bool> {
+    match text.trim() {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
     }
 }
 
@@ -595,7 +650,7 @@ mod tests {
         let before = state.clone();
         for line in [
             "NSE1Hello",
-            "PSBAS 50",
+            "PSDRC OFF",
             "VSMONI1",
             "CVFL 50",
             "TR1 ON",
@@ -661,7 +716,61 @@ mod tests {
         assert_eq!(state.zone(zone).source, None);
         assert_eq!(state.apply_field(zone, Field::InputFunc, None), None);
         // Values that the state does not hold are ignored.
-        assert_eq!(state.apply_field(zone, Field::Bass, Some("50")), None);
+        assert_eq!(
+            state.apply_field(zone, Field::BassLevel, Some("+1dB")),
+            None
+        );
+    }
+
+    #[test]
+    fn tone_control_follows_events_and_answers() {
+        let mut state = State::new(false);
+        let message = |parameter: &str| format!("PS{parameter}");
+        let device = |state: &State| state.device().clone();
+        let setting = |setting| {
+            Some(Change {
+                zone: None,
+                setting,
+            })
+        };
+        assert_eq!(
+            apply(&mut state, &message("TONE CTRL ON")),
+            setting(Setting::ToneControl)
+        );
+        assert_eq!(apply(&mut state, &message("TONE CTRL ON")), None);
+        assert_eq!(
+            apply(&mut state, &message("BAS 53")),
+            setting(Setting::Bass)
+        );
+        assert_eq!(
+            apply(&mut state, &message("TRE 44")),
+            setting(Setting::Treble)
+        );
+        let tone = device(&state);
+        assert_eq!(tone.tone_control, Some(true));
+        assert_eq!(tone.bass, ToneLevel::from_db(3));
+        assert_eq!(tone.treble, Some(ToneLevel::MIN));
+        // Text that is not a value keeps the last value.
+        for text in ["BAS 99", "BAS", "TRE x", "TONE CTRL MAYBE", "DRC OFF"] {
+            assert_eq!(apply(&mut state, &message(text)), None, "{text}");
+        }
+        assert_eq!(device(&state), tone);
+        // An answer has the steps above the lowest level.
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::Bass, Some("12")),
+            setting(Setting::Bass)
+        );
+        assert_eq!(state.device().bass, Some(ToneLevel::MAX));
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::ToneControlAdjust, Some("0")),
+            setting(Setting::ToneControl)
+        );
+        assert_eq!(state.device().tone_control, Some(false));
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::Treble, Some("13")),
+            setting(Setting::Treble)
+        );
+        assert_eq!(state.device().treble, None);
     }
 
     #[test]

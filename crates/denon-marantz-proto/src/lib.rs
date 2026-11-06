@@ -12,6 +12,7 @@ mod sleep;
 mod sound_mode;
 mod state;
 mod text;
+mod tone;
 mod values;
 mod volume;
 mod xml;
@@ -30,6 +31,7 @@ pub use error::Error;
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use state::{Change, DeviceState, Setting, State, ZoneState};
+pub use tone::ToneLevel;
 pub use values::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, DacFilter,
     DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume, EcoMode,
