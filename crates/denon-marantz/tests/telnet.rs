@@ -6,10 +6,15 @@ mod common;
 
 use std::time::Duration;
 
-use common::{FakeTelnet, avr_x_receiver, builder, wait_until};
-use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus};
+use common::{
+    AVR_X_DIRAC_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info, builder, wait_until,
+};
+use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker};
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
-use denon_marantz_proto::{Brand, Power, ReceiverType, Setting, ToneLevel, Volume, Zone};
+use denon_marantz_proto::{
+    Brand, DiracFilter, DynamicVolume, MultiEq, Power, ReceiverType, ReferenceLevelOffset, Setting,
+    ToneLevel, Volume, Zone,
+};
 use tokio::time::timeout;
 
 /// Quick reconnects, no spacing between writes, and a keep-alive time that
@@ -740,4 +745,156 @@ async fn a_tone_level_out_of_range_is_refused() {
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(commands_sent(&telnet).is_empty(), "{:?}", sent(&telnet));
+}
+
+#[tokio::test]
+async fn audyssey_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let audyssey = avr.audyssey();
+    audyssey.set_dynamic_eq(true).await.unwrap();
+    audyssey.set_multi_eq(MultiEq::Reference).await.unwrap();
+    audyssey
+        .set_reference_level_offset(ReferenceLevelOffset::Db5)
+        .await
+        .unwrap();
+    audyssey
+        .set_dynamic_volume(DynamicVolume::Medium)
+        .await
+        .unwrap();
+    audyssey.set_lfc(false).await.unwrap();
+    audyssey.set_containment_level(3).await.unwrap();
+    audyssey.containment_amount_up().await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 7).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "PSDYNEQ ON",
+            "PSMULTEQ:AUDYSSEY",
+            "PSREFLEV 5",
+            "PSDYNVOL MED",
+            "PSLFC OFF",
+            "PSCNTAMT 03",
+            "PSCNTAMT UP"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn audyssey_methods_refuse_what_cannot_work() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let audyssey = avr.audyssey();
+    // The offset needs Dynamic EQ, and the state says that it is off.
+    telnet.send(b"PSDYNEQ OFF\rPSCNTAMT 07\r");
+    wait_until("the state", || {
+        let state = avr.snapshot();
+        state.device().dynamic_eq.is_some() && state.device().containment_amount.is_some()
+    })
+    .await;
+    let error = audyssey
+        .set_reference_level_offset(ReferenceLevelOffset::Db0)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::DynamicEqOff), "{error:?}");
+    assert!(error.is_invalid_input());
+    for level in [0, 8, u8::MAX] {
+        let error = audyssey.set_containment_level(level).await.unwrap_err();
+        assert!(
+            matches!(error, Error::ContainmentOutOfRange(value) if value == level),
+            "{error:?}"
+        );
+    }
+    // Steps stop at the highest amount. The step down goes out.
+    audyssey.containment_amount_up().await.unwrap();
+    audyssey.containment_amount_down().await.unwrap();
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["PSCNTAMT DOWN"]);
+}
+
+#[tokio::test]
+async fn tone_control_is_not_turned_on_when_the_receiver_would_ignore_it() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tone = avr.tone();
+    telnet.send(b"PSDIRAC 2\r");
+    wait_until("the filter", || {
+        avr.snapshot().device().dirac_filter.is_some()
+    })
+    .await;
+    for error in [
+        tone.set_enabled(true).await.unwrap_err(),
+        tone.set_bass_db(3).await.unwrap_err(),
+    ] {
+        assert!(
+            matches!(error, Error::ToneControlBlocked(ToneBlocker::DiracFilter)),
+            "{error:?}"
+        );
+        assert!(error.is_invalid_input());
+    }
+    telnet.send(b"PSDIRAC OFF\rPSDYNEQ ON\r");
+    wait_until("dynamic eq", || {
+        avr.snapshot().device().dynamic_eq == Some(true)
+    })
+    .await;
+    let error = tone.treble_up().await.unwrap_err();
+    assert!(
+        matches!(error, Error::ToneControlBlocked(ToneBlocker::DynamicEq)),
+        "{error:?}"
+    );
+    // Turning it off is not blocked.
+    tone.set_enabled(false).await.unwrap();
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["PSTONE CTRL OFF"]);
+    // If the state says that tone control is on, the levels work.
+    telnet.send(b"PSTONE CTRL ON\r");
+    wait_until("tone control on", || {
+        avr.snapshot().device().tone_control == Some(true)
+    })
+    .await;
+    tone.set_bass_db(3).await.unwrap();
+    wait_until("the level", || commands_sent(&telnet).len() >= 2).await;
+    assert_eq!(commands_sent(&telnet)[1], "PSBAS 53");
+}
+
+#[tokio::test]
+async fn dirac_needs_a_receiver_that_supports_it() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let error = avr.dirac().unwrap_err();
+    assert!(matches!(error, Error::DiracNotSupported), "{error:?}");
+    assert!(error.is_invalid_input());
+
+    let http = avr_x_receiver_with_info(AVR_X_DIRAC_INFO).await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    avr.dirac()
+        .unwrap()
+        .set_filter(DiracFilter::Slot2)
+        .await
+        .unwrap();
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["PSDIRAC 2"]);
+}
+
+#[tokio::test]
+async fn dirac_slot_events_fill_the_slots() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let mut changes = avr.changes();
+    telnet.send(b"OPDLSSL2NAME Dirac ART      \rOPDLSSL2IMP ON\rOPDLSSL2TYP ART\rOPDLS END\r");
+    wait_until("the slot", || {
+        avr.snapshot().device().dirac_slots[1].kind.is_some()
+    })
+    .await;
+    let slot = avr.snapshot().device().dirac_slots[1].clone();
+    assert_eq!(slot.name.as_deref(), Some("Dirac ART"));
+    assert_eq!(slot.imported, Some(true));
+    assert_eq!(slot.kind.as_deref(), Some("ART"));
+    let change = changes.recv().await.unwrap();
+    assert_eq!(change.setting, Setting::DiracSlot(2));
 }

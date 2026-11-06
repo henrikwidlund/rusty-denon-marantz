@@ -5,8 +5,12 @@ mod channels;
 mod error;
 mod pacer;
 
+#[cfg(feature = "telnet")]
+mod audyssey;
 #[cfg(feature = "http")]
 mod avr;
+#[cfg(feature = "telnet")]
+mod dirac;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
@@ -18,13 +22,17 @@ mod tone_control;
 #[cfg(feature = "telnet")]
 mod zone_control;
 
-pub use error::Error;
+pub use error::{Error, ToneBlocker};
 pub use pacer::{Adaptive, Pacer, Pacing};
 
+#[cfg(feature = "telnet")]
+pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 #[cfg(feature = "telnet")]
 pub use denon_marantz_proto::telnet::Command;
+#[cfg(feature = "telnet")]
+pub use dirac::Dirac;
 #[cfg(feature = "http")]
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]

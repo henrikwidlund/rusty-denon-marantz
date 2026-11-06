@@ -10,7 +10,11 @@ use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{Brand, Change, DeviceDescription, ReceiverType, State, Zone};
 use tokio::sync::{broadcast, watch};
 
+#[cfg(feature = "telnet")]
+use crate::audyssey::Audyssey;
 use crate::channels::Channels;
+#[cfg(feature = "telnet")]
+use crate::dirac::Dirac;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
@@ -230,6 +234,28 @@ impl Avr {
     #[must_use]
     pub const fn tone(&self) -> ToneControl<'_> {
         ToneControl::new(self)
+    }
+
+    /// Controls the Audyssey settings on telnet with typed methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn audyssey(&self) -> Audyssey<'_> {
+        Audyssey::new(self)
+    }
+
+    /// Controls Dirac Live on telnet with typed methods.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DiracNotSupported`] if the receiver does not support
+    /// Dirac Live.
+    #[cfg(feature = "telnet")]
+    pub const fn dirac(&self) -> Result<Dirac<'_>, Error> {
+        if self.info.dirac_live {
+            Ok(Dirac::new(self))
+        } else {
+            Err(Error::DiracNotSupported)
+        }
     }
 
     /// Asks the receiver for its state again on telnet. The answers are

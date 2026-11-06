@@ -22,7 +22,10 @@
 //!
 //! Commands: power-on, power-standby, device-power-on, device-power-standby,
 //! tone-on, tone-off, bass DB, bass-up, bass-down, treble DB, treble-up,
-//! treble-down (DB is a whole number from -6 to 6), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
+//! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
+//! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
+//! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME (a
+//! CODE is the telnet code, for example AUDYSSEY, 5, HEV or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, raw TEXT.
 //!
@@ -31,7 +34,7 @@
 use std::time::Duration;
 
 use denon_marantz::{Avr, Command, TelnetConfig, ToneControl, ZoneControl};
-use denon_marantz_proto::Zone;
+use denon_marantz_proto::{DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
@@ -62,6 +65,22 @@ const TONE_COMMANDS: [&str; 8] = [
     "treble",
     "treble-up",
     "treble-down",
+];
+
+/// Commands that the Audyssey and Dirac controls have methods for.
+const SOUND_COMMANDS: [&str; 12] = [
+    "dynamic-eq-on",
+    "dynamic-eq-off",
+    "multi-eq",
+    "ref-level",
+    "dynamic-volume",
+    "lfc-on",
+    "lfc-off",
+    "containment",
+    "containment-up",
+    "containment-down",
+    "dirac",
+    "dirac-name",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -110,6 +129,51 @@ async fn tone_command(
         "treble" => tone.set_treble_db(db()?).await?,
         "treble-up" => tone.treble_up().await?,
         "treble-down" => tone.treble_down().await?,
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
+}
+
+/// Runs a command with the methods of the Audyssey and Dirac controls. The
+/// argument is the telnet code, for example `AUDYSSEY` or `HEV`.
+async fn sound_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let audyssey = avr.audyssey();
+    match name {
+        "dynamic-eq-on" => audyssey.set_dynamic_eq(true).await?,
+        "dynamic-eq-off" => audyssey.set_dynamic_eq(false).await?,
+        "multi-eq" => {
+            let mode = MultiEq::from_telnet(need()?).ok_or_else(|| unknown("MultEQ mode"))?;
+            audyssey.set_multi_eq(mode).await?;
+        }
+        "ref-level" => {
+            let offset = ReferenceLevelOffset::from_telnet(need()?)
+                .ok_or_else(|| unknown("reference level offset"))?;
+            audyssey.set_reference_level_offset(offset).await?;
+        }
+        "dynamic-volume" => {
+            let volume =
+                DynamicVolume::from_telnet(need()?).ok_or_else(|| unknown("Dynamic Volume"))?;
+            audyssey.set_dynamic_volume(volume).await?;
+        }
+        "lfc-on" => audyssey.set_lfc(true).await?,
+        "lfc-off" => audyssey.set_lfc(false).await?,
+        "containment" => {
+            let level = need()?.parse().map_err(|_| "containment is from 1 to 7")?;
+            audyssey.set_containment_level(level).await?;
+        }
+        "containment-up" => audyssey.containment_amount_up().await?,
+        "containment-down" => audyssey.containment_amount_down().await?,
+        "dirac" => {
+            let filter = DiracFilter::from_code(need()?).ok_or_else(|| unknown("Dirac filter"))?;
+            avr.dirac()?.set_filter(filter).await?;
+        }
+        "dirac-name" => avr.dirac()?.set_slot_by_name(need()?).await?,
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
@@ -185,8 +249,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let argument = args.next();
     // A command that is not known is refused before the connect.
-    let other = if ZONE_COMMANDS.contains(&name.as_str()) || TONE_COMMANDS.contains(&name.as_str())
-    {
+    let typed = |commands: &[&str]| commands.contains(&name.as_str());
+    let other = if typed(&ZONE_COMMANDS) || typed(&TONE_COMMANDS) || typed(&SOUND_COMMANDS) {
         None
     } else {
         Some(command(&name, argument.as_deref())?)
@@ -219,7 +283,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[{:7.3}] sending {name} to {zone:?}", stamp());
     match other {
         Some(command) => avr.send(zone, command).await?,
-        None if TONE_COMMANDS.contains(&name.as_str()) => {
+        None if typed(&SOUND_COMMANDS) => {
+            sound_command(&avr, &name, argument.as_deref()).await?;
+        }
+        None if typed(&TONE_COMMANDS) => {
             tone_command(avr.tone(), &name, argument.as_deref()).await?;
         }
         None => zone_command(avr.zone(zone)?, &name, argument.as_deref()).await?,

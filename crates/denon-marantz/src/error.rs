@@ -6,6 +6,25 @@ use denon_marantz_proto::Zone;
 
 type Source = Box<dyn std::error::Error + Send + Sync>;
 
+/// What stops tone control from turning on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToneBlocker {
+    /// Audyssey Dynamic EQ is on.
+    DynamicEq,
+    /// A Dirac Live filter is selected.
+    DiracFilter,
+}
+
+impl std::fmt::Display for ToneBlocker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::DynamicEq => "Dynamic EQ is on",
+            Self::DiracFilter => "a Dirac filter is selected",
+        })
+    }
+}
+
 /// Error of the client.
 ///
 /// Errors from requests say which request failed. Use the `is_*` methods to
@@ -92,6 +111,26 @@ pub enum Error {
     /// The bass or treble level is not from -6 to +6 dB.
     #[error("tone level {0} dB is not from -6 to 6 dB")]
     ToneOutOfRange(i8),
+    /// The containment amount is not from 1 to 7.
+    #[error("containment amount {0} is not from 1 to 7")]
+    ContainmentOutOfRange(u8),
+    /// Tone control would not turn on. The receiver ignores the command and
+    /// sends no error. Nothing was sent.
+    #[error("tone control cannot be turned on: {0}")]
+    ToneControlBlocked(ToneBlocker),
+    /// The reference level offset works only with Dynamic EQ on. Nothing was
+    /// sent.
+    #[error("the reference level offset needs Dynamic EQ to be on")]
+    DynamicEqOff,
+    /// The Dirac Live slot is not 1, 2 or 3.
+    #[error("Dirac slot {0} is not 1, 2 or 3")]
+    DiracSlotOutOfRange(u8),
+    /// No Dirac Live slot has this name, as far as the state knows.
+    #[error("no Dirac slot is named {0:?}")]
+    UnknownDiracSlot(String),
+    /// The receiver does not support Dirac Live.
+    #[error("the receiver does not support Dirac Live")]
+    DiracNotSupported,
     /// A setting is not valid.
     #[error("invalid setting: {0}")]
     InvalidConfig(&'static str),
@@ -116,6 +155,12 @@ impl Error {
             | Self::NoSoundMode(_)
             | Self::VolumeOutOfRange(_)
             | Self::ToneOutOfRange(_)
+            | Self::ContainmentOutOfRange(_)
+            | Self::ToneControlBlocked(_)
+            | Self::DynamicEqOff
+            | Self::DiracSlotOutOfRange(_)
+            | Self::UnknownDiracSlot(_)
+            | Self::DiracNotSupported
             | Self::InvalidConfig(_) => None,
         }
     }
@@ -138,6 +183,12 @@ impl Error {
                 | Self::NoSoundMode(_)
                 | Self::VolumeOutOfRange(_)
                 | Self::ToneOutOfRange(_)
+                | Self::ContainmentOutOfRange(_)
+                | Self::ToneControlBlocked(_)
+                | Self::DynamicEqOff
+                | Self::DiracSlotOutOfRange(_)
+                | Self::UnknownDiracSlot(_)
+                | Self::DiracNotSupported
                 | Self::InvalidConfig(_)
         )
     }

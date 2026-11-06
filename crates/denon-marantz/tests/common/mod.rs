@@ -169,6 +169,10 @@ pub(crate) const DESCRIPTION: &[u8] =
 pub(crate) const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
     <DeviceZones>2</DeviceZones></Device_Info>";
+/// The device information of a receiver that supports Dirac Live.
+pub(crate) const AVR_X_DIRAC_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
+    <DeviceZones>2</DeviceZones><Caps><x><DiracLive/></x></Caps></Device_Info>";
 /// The answer to the update request, one item for each command.
 pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
     <cmd><zone1>ON</zone1><zone2>OFF</zone2></cmd>\
@@ -202,22 +206,29 @@ pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
 
 /// An AVR-X receiver that has all the pages.
 pub(crate) async fn avr_x_receiver() -> Fake {
-    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
-        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-        ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
-        ("POST", "/goform/AppCommand.xml")
-            if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
-        {
-            Reply::Body(friendly_name_answer("Living room"))
-        }
-        ("POST", "/goform/AppCommand.xml")
-            if String::from_utf8_lossy(&seen.body).contains("GetToneControl") =>
-        {
-            Reply::Body(update_answer_with_tone())
-        }
-        ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
-        _ => Reply::Status(404),
-    })
+    avr_x_receiver_with_info(AVR_X_INFO).await
+}
+
+/// Like [`avr_x_receiver`], with this device information.
+pub(crate) async fn avr_x_receiver_with_info(info: &'static [u8]) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
+            ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
+            ("POST", "/goform/AppCommand.xml")
+                if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
+            {
+                Reply::Body(friendly_name_answer("Living room"))
+            }
+            ("POST", "/goform/AppCommand.xml")
+                if String::from_utf8_lossy(&seen.body).contains("GetToneControl") =>
+            {
+                Reply::Body(update_answer_with_tone())
+            }
+            ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
+            _ => Reply::Status(404),
+        },
+    )
     .await
 }
 

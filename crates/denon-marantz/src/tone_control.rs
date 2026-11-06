@@ -1,10 +1,10 @@
 //! Typed control of bass, treble and tone control on telnet.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{ToneLevel, Zone};
+use denon_marantz_proto::{DiracFilter, ToneLevel, Zone};
 
 use crate::avr::Avr;
-use crate::error::Error;
+use crate::error::{Error, ToneBlocker};
 
 /// Controls bass, treble and tone control of a receiver. Get it from
 /// [`Avr::tone`].
@@ -12,8 +12,10 @@ use crate::error::Error;
 /// Bass and treble work only while tone control is on. A method that changes
 /// them turns tone control on first if the state says that it is off. The
 /// receiver ignores that while Dynamic EQ is on, or with a Dirac Live filter
-/// such as Dirac ART (seen on an AVC-A10H). It sends no answer and no error,
-/// so the state shows that tone control is still off.
+/// such as Dirac ART (seen on an AVC-A10H). It sends no answer and no error.
+/// So these methods return [`Error::ToneControlBlocked`] and send nothing when
+/// the state shows one of the two. To send the command anyway, use
+/// [`Avr::send`] with [`Command::ToneControl`].
 ///
 /// Each method returns when the commands are written, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns
@@ -32,8 +34,13 @@ impl<'a> ToneControl<'a> {
     ///
     /// # Errors
     ///
-    /// See [`ToneControl`].
+    /// Returns [`Error::ToneControlBlocked`], and sends nothing, if `on` is
+    /// `true` and the state says that Dynamic EQ is on or a Dirac filter is
+    /// selected. See also [`ToneControl`].
     pub async fn set_enabled(&self, on: bool) -> Result<(), Error> {
+        if on {
+            self.check_not_blocked()?;
+        }
         self.send(Command::ToneControl(on)).await
     }
 
@@ -138,6 +145,23 @@ impl<'a> ToneControl<'a> {
             self.set_enabled(true).await?;
         }
         self.send(command).await
+    }
+
+    /// Fails if the state shows what stops tone control from turning on.
+    fn check_not_blocked(self) -> Result<(), Error> {
+        let state = self.avr.state();
+        let state = state.borrow();
+        let device = state.device();
+        if device.dynamic_eq == Some(true) {
+            Err(Error::ToneControlBlocked(ToneBlocker::DynamicEq))
+        } else if device
+            .dirac_filter
+            .is_some_and(|filter| filter != DiracFilter::Off)
+        {
+            Err(Error::ToneControlBlocked(ToneBlocker::DiracFilter))
+        } else {
+            Ok(())
+        }
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {
