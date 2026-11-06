@@ -12,6 +12,7 @@ code_enum! {
         Subwoofer4 = "SW4", "Subwoofer 4";
         SurroundLeft = "SL", "Surround Left";
         SurroundRight = "SR", "Surround Right";
+        SurroundBack = "SB", "Surround Back";
         SurroundBackLeft = "SBL", "Surround Back Left";
         SurroundBackRight = "SBR", "Surround Back Right";
         FrontHeightLeft = "FHL", "Front Height Left";
@@ -128,7 +129,7 @@ mod tests {
         for &sub in Subwoofer::ALL {
             assert_eq!(Subwoofer::from_code(sub.code()), Some(sub));
         }
-        assert_eq!(Channel::ALL.len(), 33);
+        assert_eq!(Channel::ALL.len(), 34);
     }
 
     #[test]

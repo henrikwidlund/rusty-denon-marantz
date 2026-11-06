@@ -16,8 +16,8 @@ use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
 use crate::{
-    AutoStandby, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume, EcoMode, MultiEq,
-    Power, ReferenceLevelOffset, Sleep, ToneLevel, Volume, Zone,
+    AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
+    EcoMode, MultiEq, Power, ReferenceLevelOffset, Sleep, ToneLevel, Volume, Zone,
 };
 
 /// A value of the state.
@@ -84,6 +84,8 @@ pub enum Setting {
     AutoLipSync,
     /// The name of a quick select.
     QuickSelectNames,
+    /// The level of a speaker channel.
+    SpeakerLevels,
 }
 
 /// A value that changed.
@@ -179,6 +181,9 @@ pub struct DeviceState {
     /// select with no name, or that the receiver has not reported, is `None`.
     /// Telnet reports them on a Denon receiver.
     pub quick_select_names: Vec<Option<String>>,
+    /// Level of each speaker channel that the receiver has reported, in the
+    /// order of the report. Telnet reports them on a Denon receiver.
+    pub speaker_levels: Vec<(Channel, ChannelLevel)>,
 }
 
 impl DeviceState {
@@ -289,6 +294,12 @@ impl State {
                         return changed.then_some(Change {
                             zone: None,
                             setting: Setting::QuickSelectNames,
+                        });
+                    }
+                    if let Some(changed) = self.apply_speaker_level(parameter) {
+                        return changed.then_some(Change {
+                            zone: None,
+                            setting: Setting::SpeakerLevels,
                         });
                     }
                     return self.signal_change(|signal| signal.apply_ss(parameter));
@@ -573,6 +584,21 @@ impl State {
             names.resize(index + 1, None);
         }
         Some(set_optional_text(&mut names[index], Some(name).filter(|n| !n.is_empty())) || is_new)
+    }
+
+    /// Applies an `SS` event like `LEVFL 505`. Returns `None` if the event
+    /// is not the level of a known channel, and otherwise true if the levels
+    /// changed.
+    fn apply_speaker_level(&mut self, parameter: &str) -> Option<bool> {
+        let (code, value) = parameter.strip_prefix("LEV")?.split_once(' ')?;
+        let channel = Channel::from_code(code)?;
+        let level = ChannelLevel::from_code(value.trim())?;
+        let levels = &mut self.device.speaker_levels;
+        if let Some((_, current)) = levels.iter_mut().find(|(known, _)| *known == channel) {
+            return Some(std::mem::replace(current, level) != level);
+        }
+        levels.push((channel, level));
+        Some(true)
     }
 
     fn apply_friendly_name(&mut self, name: &str) -> Option<Change> {
@@ -1348,6 +1374,31 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn speaker_levels_follow_events() {
+        let mut state = State::new(false);
+        let levels = || change(None, Setting::SpeakerLevels);
+        assert_eq!(apply(&mut state, "SSLEVFL 505"), levels());
+        assert_eq!(apply(&mut state, "SSLEVFL 505"), None);
+        assert_eq!(apply(&mut state, "SSLEVSW2 48"), levels());
+        assert_eq!(apply(&mut state, "SSLEVFL 495"), levels());
+        let db = |channel| {
+            let levels = &state.device().speaker_levels;
+            levels
+                .iter()
+                .find(|(c, _)| *c == channel)
+                .map(|(_, l)| l.db())
+        };
+        assert_eq!(db(Channel::FrontLeft), Some(-0.5));
+        assert_eq!(db(Channel::Subwoofer2), Some(-2.0));
+        assert_eq!(state.device().speaker_levels.len(), 2);
+        // The end of the list, and a channel or level that is not known.
+        for line in ["SSLEV END", "SSLEVXX 50", "SSLEVFR 99", "SSLEVFR"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state.device().speaker_levels.len(), 2);
     }
 
     #[test]
