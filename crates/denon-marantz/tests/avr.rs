@@ -9,7 +9,7 @@ use common::{
 };
 use denon_marantz::{Avr, Error, UpdateMethod};
 use denon_marantz_proto::{
-    AutoStandby, Brand, DimmerMode, EcoMode, Power, ReceiverType, Volume, Zone,
+    AutoStandby, Brand, DimmerMode, EcoMode, Power, ReceiverType, ToneLevel, Volume, Zone,
 };
 
 const OLD_STATUS: &[u8] = include_bytes!(
@@ -337,4 +337,24 @@ async fn update_reports_a_receiver_that_stops_answering() {
     assert!(error.is_timeout(), "{error:?}");
     // The values from the first update stay.
     assert_eq!(avr.snapshot().zone(Zone::Main).power, Some(Power::On));
+}
+
+#[tokio::test]
+async fn update_of_a_2016_receiver_reads_tone_control() {
+    let fake = avr_x_receiver().await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    avr.update().await.unwrap();
+    let last = fake.requests().pop().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&last.body)
+            .matches("<cmd id=\"1\">")
+            .count(),
+        9
+    );
+    let state = avr.snapshot();
+    assert_eq!(state.device().tone_control, Some(true));
+    assert_eq!(state.device().bass, ToneLevel::from_db(3));
+    assert_eq!(state.device().treble, Some(ToneLevel::MIN));
+    // The other values are still read.
+    assert_eq!(state.zone(Zone::Main).power, Some(Power::On));
 }

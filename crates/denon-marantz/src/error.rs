@@ -89,6 +89,9 @@ pub enum Error {
     /// The volume is not from -80 to +18 dB, or not a number.
     #[error("volume {0} dB is not from -80 to 18 dB")]
     VolumeOutOfRange(f32),
+    /// The bass or treble level is not from -6 to +6 dB.
+    #[error("tone level {0} dB is not from -6 to 6 dB")]
+    ToneOutOfRange(i8),
     /// A setting is not valid.
     #[error("invalid setting: {0}")]
     InvalidConfig(&'static str),
@@ -112,6 +115,7 @@ impl Error {
             | Self::NoSuchZone(_)
             | Self::NoSoundMode(_)
             | Self::VolumeOutOfRange(_)
+            | Self::ToneOutOfRange(_)
             | Self::InvalidConfig(_) => None,
         }
     }
@@ -133,6 +137,7 @@ impl Error {
                 | Self::NoSuchZone(_)
                 | Self::NoSoundMode(_)
                 | Self::VolumeOutOfRange(_)
+                | Self::ToneOutOfRange(_)
                 | Self::InvalidConfig(_)
         )
     }

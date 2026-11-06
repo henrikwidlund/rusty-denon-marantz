@@ -183,6 +183,19 @@ pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
     <cmd><surround>DOLBY  ATMOS</surround></cmd>\
     </rx>";
 
+/// The answer to the update request of a 2016 receiver: the tone control item
+/// comes after the others.
+pub(crate) fn update_answer_with_tone() -> Vec<u8> {
+    let head = &UPDATE_ANSWER[..UPDATE_ANSWER.len() - b"</rx>".len()];
+    [
+        head,
+        b"<cmd><status>1</status><adjust>1</adjust><basslevel>+3dB</basslevel>\
+        <bassvalue>9</bassvalue><treblelevel>-6dB</treblelevel>\
+        <treblevalue>0</treblevalue></cmd></rx>",
+    ]
+    .concat()
+}
+
 pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
     format!("<rx><cmd><friendlyname> {name} </friendlyname></cmd></rx>").into_bytes()
 }
@@ -196,6 +209,11 @@ pub(crate) async fn avr_x_receiver() -> Fake {
             if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
         {
             Reply::Body(friendly_name_answer("Living room"))
+        }
+        ("POST", "/goform/AppCommand.xml")
+            if String::from_utf8_lossy(&seen.body).contains("GetToneControl") =>
+        {
+            Reply::Body(update_answer_with_tone())
         }
         ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
         _ => Reply::Status(404),

@@ -14,6 +14,8 @@ mod identify;
 #[cfg(feature = "telnet")]
 mod telnet;
 #[cfg(feature = "telnet")]
+mod tone_control;
+#[cfg(feature = "telnet")]
 mod zone_control;
 
 pub use error::Error;
@@ -29,5 +31,7 @@ pub use http::{HttpClient, HttpConfig};
 pub use identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
 pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
+#[cfg(feature = "telnet")]
+pub use tone_control::ToneControl;
 #[cfg(feature = "telnet")]
 pub use zone_control::ZoneControl;

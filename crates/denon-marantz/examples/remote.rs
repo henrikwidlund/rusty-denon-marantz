@@ -21,7 +21,8 @@
 //!   the quiet time.
 //!
 //! Commands: power-on, power-standby, device-power-on, device-power-standby,
-//! volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
+//! tone-on, tone-off, bass DB, bass-up, bass-down, treble DB, treble-up,
+//! treble-down (DB is a whole number from -6 to 6), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, raw TEXT.
 //!
@@ -29,7 +30,7 @@
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command, TelnetConfig, ZoneControl};
+use denon_marantz::{Avr, Command, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::Zone;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -49,6 +50,18 @@ const ZONE_COMMANDS: [&str; 9] = [
     "unmute",
     "source",
     "sound-mode",
+];
+
+/// Commands that the tone control has methods for.
+const TONE_COMMANDS: [&str; 8] = [
+    "tone-on",
+    "tone-off",
+    "bass",
+    "bass-up",
+    "bass-down",
+    "treble",
+    "treble-up",
+    "treble-down",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -74,6 +87,32 @@ fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, Str
         "raw" => Command::Raw(argument.ok_or("raw needs an argument")?),
         other => return Err(format!("unknown command {other}")),
     })
+}
+
+/// Runs a command with the methods of the tone control.
+async fn tone_command(
+    tone: ToneControl<'_>,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let db = || -> Result<i8, String> {
+        argument
+            .ok_or_else(|| format!("{name} needs an argument"))?
+            .parse()
+            .map_err(|_| format!("{name} is a whole number of dB"))
+    };
+    match name {
+        "tone-on" => tone.set_enabled(true).await?,
+        "tone-off" => tone.set_enabled(false).await?,
+        "bass" => tone.set_bass_db(db()?).await?,
+        "bass-up" => tone.bass_up().await?,
+        "bass-down" => tone.bass_down().await?,
+        "treble" => tone.set_treble_db(db()?).await?,
+        "treble-up" => tone.treble_up().await?,
+        "treble-down" => tone.treble_down().await?,
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
 }
 
 /// Runs a command with the methods of the zone control.
@@ -146,7 +185,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let argument = args.next();
     // A command that is not known is refused before the connect.
-    let other = if ZONE_COMMANDS.contains(&name.as_str()) {
+    let other = if ZONE_COMMANDS.contains(&name.as_str()) || TONE_COMMANDS.contains(&name.as_str())
+    {
         None
     } else {
         Some(command(&name, argument.as_deref())?)
@@ -179,6 +219,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[{:7.3}] sending {name} to {zone:?}", stamp());
     match other {
         Some(command) => avr.send(zone, command).await?,
+        None if TONE_COMMANDS.contains(&name.as_str()) => {
+            tone_command(avr.tone(), &name, argument.as_deref()).await?;
+        }
         None => zone_command(avr.zone(zone)?, &name, argument.as_deref()).await?,
     }
     println!("[{:7.3}] written", stamp());

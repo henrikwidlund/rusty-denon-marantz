@@ -9,7 +9,7 @@ use std::time::Duration;
 use common::{FakeTelnet, avr_x_receiver, builder, wait_until};
 use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus};
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
-use denon_marantz_proto::{Brand, Power, ReceiverType, Setting, Volume, Zone};
+use denon_marantz_proto::{Brand, Power, ReceiverType, Setting, ToneLevel, Volume, Zone};
 use tokio::time::timeout;
 
 /// Quick reconnects, no spacing between writes, and a keep-alive time that
@@ -652,4 +652,92 @@ async fn zone_methods_refuse_what_cannot_work() {
         "{:?}",
         sent(&telnet)
     );
+}
+
+/// The commands that the client sent, without the queries.
+fn commands_sent(telnet: &FakeTelnet) -> Vec<String> {
+    sent(telnet)
+        .into_iter()
+        .filter(|line| !line.ends_with('?'))
+        .collect()
+}
+
+#[tokio::test]
+async fn tone_events_change_the_state() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    telnet.send(b"PSTONE CTRL ON\rPSBAS 53\rPSTRE 44\r");
+    wait_until("the tone values", || {
+        avr.snapshot().device().treble.is_some()
+    })
+    .await;
+    let state = avr.snapshot();
+    assert_eq!(state.device().tone_control, Some(true));
+    assert_eq!(state.device().bass, ToneLevel::from_db(3));
+    assert_eq!(state.device().treble, Some(ToneLevel::MIN));
+}
+
+#[tokio::test]
+async fn tone_methods_turn_tone_control_on_first() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tone = avr.tone();
+    // The state does not say that tone control is on.
+    tone.set_bass_db(-6).await.unwrap();
+    tone.treble_up().await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["PSTONE CTRL ON", "PSBAS 44", "PSTONE CTRL ON", "PSTRE UP"]
+    );
+    // The receiver says that it is on. Then no switch command goes first.
+    telnet.send(b"PSTONE CTRL ON\r");
+    wait_until("tone control on", || {
+        avr.snapshot().device().tone_control == Some(true)
+    })
+    .await;
+    tone.bass_down().await.unwrap();
+    tone.set_treble(ToneLevel::MAX).await.unwrap();
+    tone.set_enabled(false).await.unwrap();
+    wait_until("more commands", || commands_sent(&telnet).len() >= 7).await;
+    assert_eq!(
+        commands_sent(&telnet)[4..],
+        ["PSBAS DOWN", "PSTRE 56", "PSTONE CTRL OFF"]
+    );
+}
+
+#[tokio::test]
+async fn tone_steps_stop_at_the_ends() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    telnet.send(b"PSTONE CTRL ON\rPSBAS 56\rPSTRE 44\r");
+    wait_until("the tone values", || {
+        avr.snapshot().device().treble.is_some()
+    })
+    .await;
+    let tone = avr.tone();
+    tone.bass_up().await.unwrap();
+    tone.treble_down().await.unwrap();
+    // These go out. The last one shows that nothing came before it.
+    tone.bass_down().await.unwrap();
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["PSBAS DOWN"]);
+}
+
+#[tokio::test]
+async fn a_tone_level_out_of_range_is_refused() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    for db in [-7, 7, i8::MIN, i8::MAX] {
+        let error = avr.tone().set_bass_db(db).await.unwrap_err();
+        assert!(
+            matches!(error, Error::ToneOutOfRange(value) if value == db),
+            "{error:?}"
+        );
+        assert!(error.is_invalid_input());
+        let error = avr.tone().set_treble_db(db).await.unwrap_err();
+        assert!(matches!(error, Error::ToneOutOfRange(_)), "{error:?}");
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(commands_sent(&telnet).is_empty(), "{:?}", sent(&telnet));
 }

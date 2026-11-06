@@ -17,12 +17,16 @@ use crate::identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
 use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]
+use crate::tone_control::ToneControl;
+#[cfg(feature = "telnet")]
 use crate::zone_control::ZoneControl;
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
 
 /// Queries that fill the state. The answer has one item for each, in this order.
+/// Receivers of the 2016 generation and later get [`appcommand::GET_TONE_CONTROL`]
+/// after them.
 const UPDATE_COMMANDS: [Definition; 8] = [
     appcommand::GET_ALL_ZONE_POWER_STATUS,
     appcommand::GET_AUTO_STANDBY,
@@ -94,7 +98,9 @@ pub struct AvrBuilder {
 pub struct Avr {
     http: HttpClient,
     info: Info,
-    /// The request body of [`UPDATE_COMMANDS`].
+    /// The queries of [`Avr::update`].
+    update_commands: Box<[Definition]>,
+    /// The request body of `update_commands`.
     update_body: Bytes,
     channels: Channels,
     #[cfg(feature = "telnet")]
@@ -219,6 +225,13 @@ impl Avr {
         }
     }
 
+    /// Controls bass, treble and tone control on telnet with typed methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn tone(&self) -> ToneControl<'_> {
+        ToneControl::new(self)
+    }
+
     /// Asks the receiver for its state again on telnet. The answers are
     /// events, and events that repeat the last value are shown again.
     ///
@@ -245,10 +258,10 @@ impl Avr {
                 Endpoint::AppCommand.path(),
                 self.update_body.clone(),
                 |body| {
-                    let response = Response::parse(body, UPDATE_COMMANDS.len())?;
+                    let response = Response::parse(body, self.update_commands.len())?;
                     self.channels.modify(|state, notify| {
                         for &zone in &self.info.zones {
-                            response.extract(&UPDATE_COMMANDS, zone, |field, value| {
+                            response.extract(&self.update_commands, zone, |field, value| {
                                 notify(state.apply_field(zone, field, value));
                             });
                         }
@@ -370,7 +383,11 @@ impl AvrBuilder {
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
 
-        let commands: Vec<Cmd<'_>> = UPDATE_COMMANDS
+        let mut update_commands = UPDATE_COMMANDS.to_vec();
+        if receiver_type == ReceiverType::AvrX2016 {
+            update_commands.push(appcommand::GET_TONE_CONTROL);
+        }
+        let commands: Vec<Cmd<'_>> = update_commands
             .iter()
             .map(|definition| definition.cmd)
             .collect();
@@ -379,6 +396,7 @@ impl AvrBuilder {
         Ok(Avr {
             http,
             info,
+            update_commands: update_commands.into_boxed_slice(),
             update_body,
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
