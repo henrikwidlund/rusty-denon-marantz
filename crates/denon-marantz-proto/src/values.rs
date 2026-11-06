@@ -224,6 +224,16 @@ code_enum! {
 }
 
 code_enum! {
+    /// Surround level compensation.
+    pub enum SurroundLevelCompensation {
+        Off = "OFF", "Off";
+        Light = "LIT", "Light";
+        Medium = "MED", "Medium";
+        Heavy = "HEV", "Heavy";
+    }
+}
+
+code_enum! {
     /// Room size.
     pub enum RoomSize {
         Small = "S", "S";

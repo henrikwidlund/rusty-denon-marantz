@@ -19,6 +19,8 @@ use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
+use crate::sound_control::SoundControl;
+#[cfg(feature = "telnet")]
 use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]
 use crate::tone_control::ToneControl;
@@ -250,6 +252,13 @@ impl Avr {
     #[must_use]
     pub const fn audyssey(&self) -> Audyssey<'_> {
         Audyssey::new(self)
+    }
+
+    /// Controls the sound settings on telnet with typed methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn sound(&self) -> SoundControl<'_> {
+        SoundControl::new(self)
     }
 
     /// Controls Dirac Live on telnet with typed methods.

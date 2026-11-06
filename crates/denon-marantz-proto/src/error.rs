@@ -8,6 +8,13 @@ pub enum Error {
     /// return would end the command and start a new one.
     #[error("command text is empty or contains a control character")]
     InvalidCommandText,
+    /// A number for a command is outside the range that the receiver
+    /// accepts.
+    #[error("{what} is out of range")]
+    ValueOutOfRange {
+        /// The setting.
+        what: &'static str,
+    },
     /// A device description is not from a supported receiver.
     #[error("the device description is not from a Denon or Marantz receiver")]
     UnsupportedDevice,
@@ -47,6 +54,9 @@ impl Error {
     /// Returns true if the error comes from text that the caller gave.
     #[must_use]
     pub const fn is_invalid_input(&self) -> bool {
-        matches!(self, Self::InvalidCommandText | Self::InvalidName)
+        matches!(
+            self,
+            Self::InvalidCommandText | Self::InvalidName | Self::ValueOutOfRange { .. }
+        )
     }
 }

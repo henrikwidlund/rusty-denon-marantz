@@ -1428,7 +1428,7 @@ mod tests {
         assert_eq!(apply(&mut state, "PSRSTR LOW"), None);
         assert_eq!(apply(&mut state, "PSSP:HF"), changed());
         assert_eq!(apply(&mut state, "PSCINEMA EQ.ON"), changed());
-        assert_eq!(apply(&mut state, "PSSURLEV HEV"), changed());
+        assert_eq!(apply(&mut state, "PSXYZ HEV"), changed());
         let settings = &state.device().sound_settings;
         assert_eq!(settings.audio_restorer, Some(crate::AudioRestorer::Low));
         assert_eq!(
@@ -1436,7 +1436,7 @@ mod tests {
             Some(crate::EffectSpeakerSelection::HeightAndFloor)
         );
         assert_eq!(settings.cinema_eq, Some(true));
-        assert_eq!(settings.other["SURLEV"], "HEV");
+        assert_eq!(settings.other["XYZ"], "HEV");
         // Settings that have their own value are not mixed up with these.
         assert_eq!(
             apply(&mut state, "PSLFC ON").map(|c| c.setting),

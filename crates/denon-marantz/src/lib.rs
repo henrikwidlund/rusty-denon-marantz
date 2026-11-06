@@ -18,6 +18,8 @@ mod http;
 #[cfg(feature = "http")]
 mod identify;
 #[cfg(feature = "telnet")]
+mod sound_control;
+#[cfg(feature = "telnet")]
 mod telnet;
 #[cfg(feature = "telnet")]
 mod tone_control;
@@ -41,6 +43,8 @@ pub use discovery::{DiscoveredReceiver, DiscoveryConfig, LocationPolicy, discove
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]
 pub use identify::{Identified, identify, identify_on};
+#[cfg(feature = "telnet")]
+pub use sound_control::SoundControl;
 #[cfg(feature = "telnet")]
 pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]

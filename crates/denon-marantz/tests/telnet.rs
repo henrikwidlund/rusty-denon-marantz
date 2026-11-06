@@ -12,8 +12,8 @@ use common::{
 use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker};
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
-    Brand, DiracFilter, DynamicVolume, MultiEq, Power, ReceiverType, ReferenceLevelOffset, Setting,
-    ToneLevel, Volume, Zone,
+    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, MultiEq, Power, ReceiverType,
+    ReferenceLevelOffset, RoomSize, Setting, ToneLevel, Volume, Zone,
 };
 use tokio::time::timeout;
 
@@ -778,6 +778,54 @@ async fn audyssey_methods_send_their_commands() {
             "PSCNTAMT UP"
         ]
     );
+}
+
+#[tokio::test]
+async fn sound_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    sound.set_room_size(RoomSize::Large).await.unwrap();
+    sound.set_audio_restorer(AudioRestorer::Off).await.unwrap();
+    sound.set_graphic_eq(true).await.unwrap();
+    sound.set_cinema_eq(false).await.unwrap();
+    sound.set_audio_delay(5).await.unwrap();
+    sound.set_imax_high_pass(80).await.unwrap();
+    let level = ChannelLevel::from_half_db(-1).unwrap();
+    sound.set_subwoofer_level(2, level).await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 7).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "PSRSZ L",
+            "PSRSTR OFF",
+            "PSGEQ ON",
+            "PSCINEMA EQ.OFF",
+            "PSDELAY 005",
+            "PSIMAXHPF 080",
+            "PSSWL2 495"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn sound_methods_refuse_numbers_out_of_range() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    let level = ChannelLevel::from_half_db(0).unwrap();
+    let errors = [
+        sound.set_audio_delay(501).await.unwrap_err(),
+        sound.set_center_width(8).await.unwrap_err(),
+        sound.set_imax_high_pass(70).await.unwrap_err(),
+        sound.set_subwoofer_level(5, level).await.unwrap_err(),
+    ];
+    for error in errors {
+        assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
+        assert!(error.is_invalid_input());
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(commands_sent(&telnet).is_empty(), "{:?}", sent(&telnet));
 }
 
 #[tokio::test]

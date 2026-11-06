@@ -5,6 +5,7 @@ use core::fmt::Write as _;
 use crate::brand::Brand;
 use crate::containment::ContainmentAmount;
 use crate::error::Error;
+use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
 use crate::values::{DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset};
@@ -103,6 +104,8 @@ pub enum Command<'a> {
     /// Turns Auto Lip Sync on (`true`) or off (`false`). The text depends on
     /// the brand.
     AutoLipSync(bool),
+    /// Sets a sound setting, for example the room size or the audio delay.
+    SetSoundSetting(SoundSettingValue),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
 }
@@ -211,6 +214,7 @@ impl Command<'_> {
                 });
                 out.push_str(if on { "ON" } else { "OFF" });
             }
+            Self::SetSoundSetting(value) => value.write(out)?,
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);

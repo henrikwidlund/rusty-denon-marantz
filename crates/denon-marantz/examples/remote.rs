@@ -24,8 +24,9 @@
 //! tone-on, tone-off, bass DB, bass-up, bass-down, treble DB, treble-up,
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
-//! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME (a
-//! CODE is the telnet code, for example AUDYSSEY, 5, HEV or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
+//! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off (a
+//! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, raw TEXT.
 //!
@@ -34,7 +35,10 @@
 use std::time::Duration;
 
 use denon_marantz::{Avr, Command, TelnetConfig, ToneControl, ZoneControl};
-use denon_marantz_proto::{DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone};
+use denon_marantz_proto::{
+    AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset,
+    RoomSize, Zone,
+};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
@@ -67,8 +71,8 @@ const TONE_COMMANDS: [&str; 8] = [
     "treble-down",
 ];
 
-/// Commands that the Audyssey and Dirac controls have methods for.
-const SOUND_COMMANDS: [&str; 12] = [
+/// Commands that the Audyssey, Dirac and sound controls have methods for.
+const SOUND_COMMANDS: [&str; 16] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -81,6 +85,10 @@ const SOUND_COMMANDS: [&str; 12] = [
     "containment-down",
     "dirac",
     "dirac-name",
+    "room-size",
+    "audio-restorer",
+    "dialog-enhancer",
+    "graphic-eq",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -174,6 +182,28 @@ async fn sound_command(
             avr.dirac()?.set_filter(filter).await?;
         }
         "dirac-name" => avr.dirac()?.set_slot_by_name(need()?).await?,
+        "room-size" => {
+            let size = RoomSize::from_code(need()?).ok_or_else(|| unknown("room size"))?;
+            avr.sound().set_room_size(size).await?;
+        }
+        "audio-restorer" => {
+            let level =
+                AudioRestorer::from_code(need()?).ok_or_else(|| unknown("audio restorer"))?;
+            avr.sound().set_audio_restorer(level).await?;
+        }
+        "dialog-enhancer" => {
+            let level = DialogEnhancerLevel::from_code(need()?)
+                .ok_or_else(|| unknown("dialog enhancer"))?;
+            avr.sound().set_dialog_enhancer(level).await?;
+        }
+        "graphic-eq" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("graphic EQ").into()),
+            };
+            avr.sound().set_graphic_eq(on).await?;
+        }
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
