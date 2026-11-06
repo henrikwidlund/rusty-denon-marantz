@@ -219,7 +219,9 @@ impl Avr {
     /// [`Error::InvalidCommand`] if the command has text that cannot be sent.
     #[cfg(feature = "telnet")]
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
-        self.telnet.send(telnet::encode(zone, &command)?).await
+        self.telnet
+            .send(telnet::encode(self.info.brand, zone, &command)?)
+            .await
     }
 
     /// Controls one zone on telnet with typed methods.

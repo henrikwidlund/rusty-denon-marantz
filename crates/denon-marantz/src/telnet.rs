@@ -631,11 +631,11 @@ async fn until_stopped<T>(
     }
 }
 
-/// Encodes a command for a zone.
-pub(crate) fn encode(zone: Zone, command: &Command<'_>) -> Result<String, Error> {
+/// Encodes a command for a zone of a receiver of this brand.
+pub(crate) fn encode(brand: Brand, zone: Zone, command: &Command<'_>) -> Result<String, Error> {
     let mut line = String::new();
     command
-        .write_line(zone, &mut line)
+        .write_line(brand, zone, &mut line)
         .map_err(Error::InvalidCommand)?;
     Ok(line)
 }

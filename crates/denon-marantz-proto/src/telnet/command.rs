@@ -2,6 +2,7 @@
 
 use core::fmt::Write as _;
 
+use crate::brand::Brand;
 use crate::containment::ContainmentAmount;
 use crate::error::Error;
 use crate::text::reject_control;
@@ -99,8 +100,8 @@ pub enum Command<'a> {
     ContainmentAmountDown,
     /// Selects a Dirac Live filter.
     SetDiracFilter(DiracFilter),
-    /// Turns Auto Lip Sync on (`true`) or off (`false`). Tested on a Denon
-    /// receiver only.
+    /// Turns Auto Lip Sync on (`true`) or off (`false`). The text depends on
+    /// the brand. Tested on a Denon receiver only.
     AutoLipSync(bool),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
@@ -115,9 +116,9 @@ impl Command<'_> {
     ///
     /// Returns [`Error::InvalidCommandText`] if text in the command is empty
     /// or has a control character.
-    pub fn write_line(&self, zone: Zone, out: &mut String) -> Result<(), Error> {
+    pub fn write_line(&self, brand: Brand, zone: Zone, out: &mut String) -> Result<(), Error> {
         let start = out.len();
-        let result = self.write(zone, out);
+        let result = self.write(brand, zone, out);
         if result.is_err() {
             out.truncate(start);
         } else {
@@ -126,7 +127,7 @@ impl Command<'_> {
         result
     }
 
-    fn write(&self, zone: Zone, out: &mut String) -> Result<(), Error> {
+    fn write(&self, brand: Brand, zone: Zone, out: &mut String) -> Result<(), Error> {
         match *self {
             Self::PowerOn => push_zone(out, zone, "ZM", "ON"),
             Self::PowerStandby => push_zone(out, zone, "ZM", "OFF"),
@@ -203,8 +204,13 @@ impl Command<'_> {
                 out.push_str("PSDIRAC ");
                 out.push_str(filter.code());
             }
-            Self::AutoLipSync(true) => out.push_str("OPALSSET ON"),
-            Self::AutoLipSync(false) => out.push_str("OPALSSET OFF"),
+            Self::AutoLipSync(on) => {
+                out.push_str(match brand {
+                    Brand::Denon => "OPALSSET ",
+                    Brand::Marantz => "SSHOSALS ",
+                });
+                out.push_str(if on { "ON" } else { "OFF" });
+            }
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);
@@ -243,7 +249,7 @@ mod tests {
 
     fn line(command: Command<'_>, zone: Zone) -> String {
         let mut out = String::new();
-        command.write_line(zone, &mut out).unwrap();
+        command.write_line(Brand::Denon, zone, &mut out).unwrap();
         out
     }
 
@@ -323,12 +329,26 @@ mod tests {
             (Command::ContainmentAmountDown, "PSCNTAMT DOWN\r"),
             (Command::SetDiracFilter(DiracFilter::Off), "PSDIRAC OFF\r"),
             (Command::SetDiracFilter(DiracFilter::Slot2), "PSDIRAC 2\r"),
-            (Command::AutoLipSync(true), "OPALSSET ON\r"),
-            (Command::AutoLipSync(false), "OPALSSET OFF\r"),
         ];
         for (command, expected) in cases {
             for zone in Zone::ALL {
                 assert_eq!(line(command, zone), expected, "{command:?} {zone:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn auto_lip_sync_depends_on_the_brand() {
+        let mut out = String::new();
+        for (brand, on, off) in [
+            (Brand::Denon, "OPALSSET ON\r", "OPALSSET OFF\r"),
+            (Brand::Marantz, "SSHOSALS ON\r", "SSHOSALS OFF\r"),
+        ] {
+            for (value, expected) in [(true, on), (false, off)] {
+                out.clear();
+                let command = Command::AutoLipSync(value);
+                command.write_line(brand, Zone::Main, &mut out).unwrap();
+                assert_eq!(out, expected, "{brand:?}");
             }
         }
     }
@@ -383,7 +403,7 @@ mod tests {
     fn appends_to_existing_text() {
         let mut out = String::from("PW?\r");
         Command::Mute(true)
-            .write_line(Zone::Main, &mut out)
+            .write_line(Brand::Denon, Zone::Main, &mut out)
             .unwrap();
         assert_eq!(out, "PW?\rMUON\r");
     }
@@ -397,7 +417,9 @@ mod tests {
                 Command::Raw(text),
             ] {
                 let mut out = String::from("KEEP");
-                let error = command.write_line(Zone::Main, &mut out).unwrap_err();
+                let error = command
+                    .write_line(Brand::Denon, Zone::Main, &mut out)
+                    .unwrap_err();
                 assert_eq!(error, Error::InvalidCommandText, "{text:?}");
                 assert!(error.is_invalid_input());
                 assert_eq!(out, "KEEP");

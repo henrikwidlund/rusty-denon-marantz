@@ -11,7 +11,7 @@ use allocation_counter::measure;
 use denon_marantz_proto::appcommand::{self as ac, Cmd, Param, Response, write_body};
 use denon_marantz_proto::telnet::{Command, DuplicateFilter, Event, LineDecoder, Message};
 use denon_marantz_proto::{
-    ChannelLevel, DeviceInfo, DimmerMode, SoundModeGroup, Volume, Zone, source,
+    Brand, ChannelLevel, DeviceInfo, DimmerMode, SoundModeGroup, Volume, Zone, source,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -90,7 +90,7 @@ fn encoding_and_tables_do_not_allocate() {
                 Command::Mute(true),
             ] {
                 line.clear();
-                command.write_line(zone, &mut line).unwrap();
+                command.write_line(Brand::Denon, zone, &mut line).unwrap();
                 black_box(&line);
             }
         }
