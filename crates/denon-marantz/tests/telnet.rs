@@ -898,3 +898,29 @@ async fn dirac_slot_events_fill_the_slots() {
     let change = changes.recv().await.unwrap();
     assert_eq!(change.setting, Setting::DiracSlot(2));
 }
+
+#[tokio::test]
+async fn source_events_fill_the_source_list() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let mut changes = avr.changes();
+    telnet.send(
+        b"SSFUNMPLAY Apple TV   \rSSFUNTV TV Audio\rSSFUN END\rSSSODMPLAY USE\rSSSODTV DEL\rSSSOD END\r",
+    );
+    wait_until("the sources", || {
+        avr.snapshot()
+            .device()
+            .sources
+            .get("TV")
+            .is_some_and(|source| source.in_use.is_some())
+    })
+    .await;
+    let state = avr.snapshot();
+    let sources = &state.device().sources;
+    assert_eq!(sources.name("MPLAY"), Some("Apple TV"));
+    assert_eq!(sources.name("TV"), Some("TV Audio"));
+    assert_eq!(sources.get("MPLAY").unwrap().in_use, Some(true));
+    assert_eq!(sources.get("TV").unwrap().in_use, Some(false));
+    let change = changes.recv().await.unwrap();
+    assert_eq!(change.setting, Setting::Sources);
+}

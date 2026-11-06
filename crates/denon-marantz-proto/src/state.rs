@@ -11,7 +11,9 @@ use std::borrow::Cow;
 
 use crate::appcommand::Field;
 use crate::signal::SignalState;
+use crate::sound_mode_list::SoundModeList;
 use crate::source::telnet_to_display_source;
+use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
 use crate::{
     AutoStandby, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume, EcoMode, MultiEq,
@@ -69,6 +71,11 @@ pub enum Setting {
     /// The video or audio signal of the receiver. Any value of the signal
     /// information changed.
     Signal,
+    /// The names or the use of the input sources of the receiver. Any value
+    /// of the source list changed.
+    Sources,
+    /// The list of sound modes that the receiver offers.
+    SoundModes,
 }
 
 /// A value that changed.
@@ -147,6 +154,10 @@ pub struct DeviceState {
     pub dirac_slots: [DiracSlot; 3],
     /// The video and audio signal. Telnet reports it.
     pub signal: SignalState,
+    /// The input sources, with their names. Telnet reports them.
+    pub sources: SourceList,
+    /// The sound modes that the receiver offers. Telnet reports them.
+    pub sound_modes: SoundModeList,
 }
 
 impl DeviceState {
@@ -247,6 +258,12 @@ impl State {
             }
             Event::Ss if zone == Some(Zone::Main) => {
                 let Some(value) = parameter.strip_prefix("VCTZMALIM") else {
+                    if let Some(changed) = self.device.sources.apply_ss(parameter) {
+                        return changed.then_some(Change {
+                            zone: None,
+                            setting: Setting::Sources,
+                        });
+                    }
                     return self.signal_change(|signal| signal.apply_ss(parameter));
                 };
                 let value = value.trim();
@@ -279,7 +296,15 @@ impl State {
                 })
             }
             Event::Ps => self.apply_sound_setting(parameter),
-            Event::Op => self.apply_dirac_slot(parameter),
+            Event::Op => {
+                if let Some(changed) = self.device.sound_modes.apply_op(parameter) {
+                    return changed.then_some(Change {
+                        zone: None,
+                        setting: Setting::SoundModes,
+                    });
+                }
+                self.apply_dirac_slot(parameter)
+            }
             _ => None,
         }
     }
@@ -1037,6 +1062,47 @@ mod tests {
         assert_eq!(state.device().multi_eq, None);
         // Values that the answer does not have stay.
         assert_eq!(state.device().dirac_filter, Some(DiracFilter::Slot2));
+    }
+
+    #[test]
+    fn sources_follow_events() {
+        let mut state = State::new(false);
+        let sources = || change(None, Setting::Sources);
+        assert_eq!(apply(&mut state, "SSFUNMPLAY Apple TV   "), sources());
+        assert_eq!(apply(&mut state, "SSFUNMPLAY Apple TV   "), None);
+        assert_eq!(apply(&mut state, "SSSODMPLAY USE"), sources());
+        assert_eq!(apply(&mut state, "SSSODTV DEL"), sources());
+        // The ends of the lists and the other name lists are not changes.
+        assert_eq!(apply(&mut state, "SSFUN END"), None);
+        assert_eq!(apply(&mut state, "SSSOD END"), None);
+        assert_eq!(apply(&mut state, "SSFUNGDNBD Blu-ray"), None);
+        let list = &state.device().sources;
+        assert_eq!(list.name("MPLAY"), Some("Apple TV"));
+        assert_eq!(list.get("MPLAY").unwrap().in_use, Some(true));
+        assert_eq!(list.get("TV").unwrap().in_use, Some(false));
+        // Signal events still reach the signal state.
+        assert_eq!(
+            apply(&mut state, "SSINFSIGRES I4K50"),
+            change(None, Setting::Signal)
+        );
+    }
+
+    #[test]
+    fn sound_modes_follow_events() {
+        let mut state = State::new(false);
+        assert_eq!(apply(&mut state, "OPSMLALL MOV011Stereo"), None);
+        assert_eq!(apply(&mut state, "OPSMLALL MUS080Stereo"), None);
+        assert_eq!(state.device().sound_modes.as_slice(), []);
+        assert_eq!(
+            apply(&mut state, "OPSMLALL END"),
+            change(None, Setting::SoundModes)
+        );
+        assert_eq!(state.device().sound_modes.as_slice().len(), 2);
+        // The Dirac slots still work.
+        assert_eq!(
+            apply(&mut state, "OPDLSSL1IMP ON"),
+            change(None, Setting::DiracSlot(1))
+        );
     }
 
     #[test]

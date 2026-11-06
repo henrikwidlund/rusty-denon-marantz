@@ -20,7 +20,9 @@ mod volume;
 mod xml;
 
 pub mod appcommand;
+mod sound_mode_list;
 pub mod source;
+mod source_list;
 pub mod status_page;
 pub mod telnet;
 pub mod zone;
@@ -34,6 +36,8 @@ pub use error::Error;
 pub use signal::{InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
+pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
+pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use values::{

@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 84] = [
+static QUERIES: [Query; 87] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -117,6 +117,9 @@ static QUERIES: [Query; 84] = [
     both("SSINFSIGECI ?"),      // Signal Extended Colorimetry
     both("PSDIRAC ?"),          // Dirac Live Filter
     both("OPDLS ?"),            // Dirac Live slots: name, filter and kind
+    both("SSFUN ?"),            // Source names
+    both("SSSOD ?"),            // Sources in use or hidden
+    both("OPSMLALL ?"),         // Sound modes that the receiver offers
     both("PSREFLEV ?"),         // Reference Level
     both("PSDYNVOL ?"),         // Dynamic Vol.
     both("SPPR ?"),             // Speaker Preset
@@ -175,14 +178,23 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 79);
-        assert_eq!(marantz.len(), 83);
+        assert_eq!(denon.len(), 82);
+        assert_eq!(marantz.len(), 86);
     }
 
     #[test]
     fn both_brands_ask_for_the_dirac_slots() {
         for brand in BRANDS {
             assert!(state_queries(brand).any(|query| query == "OPDLS ?"));
+        }
+    }
+
+    #[test]
+    fn both_brands_ask_for_the_sources_and_sound_modes() {
+        for brand in BRANDS {
+            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?"] {
+                assert!(state_queries(brand).any(|query| query == wanted));
+            }
         }
     }
 
