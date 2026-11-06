@@ -75,7 +75,8 @@ pub enum Error {
     /// character.
     #[error("invalid command: {0}")]
     InvalidCommand(#[source] denon_marantz_proto::Error),
-    /// The host or the path is not valid.
+    /// A request is not valid, for example the host, the path, a zone that the
+    /// receiver does not have, or a value that is out of range.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     /// A setting is not valid.

@@ -596,3 +596,56 @@ async fn queries_keep_their_own_interval() {
         first.elapsed()
     );
 }
+
+#[tokio::test]
+async fn zone_methods_send_the_commands_of_the_zone() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    assert_eq!(zone2.zone(), Zone::Zone2);
+    main.power_on().await.unwrap();
+    main.set_volume_db(-36.5).await.unwrap();
+    main.select_sound_mode("MOVIE").await.unwrap();
+    zone2.set_mute(true).await.unwrap();
+    zone2.volume_up().await.unwrap();
+    zone2.select_source("GAME").await.unwrap();
+    zone2.power_standby().await.unwrap();
+    wait_until("the commands", || sent(&telnet).len() >= 7).await;
+    let commands: Vec<String> = sent(&telnet)
+        .into_iter()
+        .filter(|line| !line.ends_with('?'))
+        .collect();
+    assert_eq!(
+        commands,
+        [
+            "ZMON", "MV435", "MSMOVIE", "Z2MUON", "Z2UP", "Z2GAME", "Z2OFF"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn zone_methods_refuse_what_cannot_work() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    // The receiver of the test has two zones.
+    let error = avr.zone(Zone::Zone3).unwrap_err();
+    assert!(matches!(error, Error::InvalidRequest(_)), "{error:?}");
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    for error in [
+        zone2.select_sound_mode("MOVIE").await.unwrap_err(),
+        zone2.set_volume_db(18.5).await.unwrap_err(),
+        zone2.set_volume_db(f32::NAN).await.unwrap_err(),
+    ] {
+        assert!(matches!(error, Error::InvalidRequest(_)), "{error:?}");
+    }
+    let error = zone2.select_source("").await.unwrap_err();
+    assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
+    // Only the queries after the connect went out.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        sent(&telnet).iter().all(|line| line.ends_with('?')),
+        "{:?}",
+        sent(&telnet)
+    );
+}

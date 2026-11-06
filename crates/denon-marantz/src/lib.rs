@@ -13,6 +13,8 @@ mod http;
 mod identify;
 #[cfg(feature = "telnet")]
 mod telnet;
+#[cfg(feature = "telnet")]
+mod zone_control;
 
 pub use error::Error;
 pub use pacer::{Adaptive, Pacer, Pacing};
@@ -27,3 +29,5 @@ pub use http::{HttpClient, HttpConfig};
 pub use identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
 pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
+#[cfg(feature = "telnet")]
+pub use zone_control::ZoneControl;

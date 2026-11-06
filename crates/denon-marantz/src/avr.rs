@@ -16,6 +16,8 @@ use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
 #[cfg(feature = "telnet")]
 use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
+#[cfg(feature = "telnet")]
+use crate::zone_control::ZoneControl;
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
@@ -201,6 +203,23 @@ impl Avr {
     #[cfg(feature = "telnet")]
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet.send(telnet::encode(zone, &command)?).await
+    }
+
+    /// Controls one zone on telnet with typed methods.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidRequest`] if the receiver does not have the zone.
+    #[cfg(feature = "telnet")]
+    pub fn zone(&self, zone: Zone) -> Result<ZoneControl<'_>, Error> {
+        if self.info.zones.contains(&zone) {
+            Ok(ZoneControl::new(self, zone))
+        } else {
+            Err(Error::InvalidRequest(format!(
+                "the receiver has no {}",
+                zone.name()
+            )))
+        }
     }
 
     /// Asks the receiver for its state again on telnet. The answers are
