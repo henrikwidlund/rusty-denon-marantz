@@ -1,7 +1,57 @@
 //! Signal information: the video and audio signal that the receiver gets and
 //! sends. Telnet reports it.
 
+use std::fmt;
+
 use crate::values::{ColorSpace, PixelDepth};
+
+/// The channels of an audio signal, as they are usually written: `5.1` or
+/// `7.1.4`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChannelLayout {
+    /// Channels around the listener, without the subwoofer.
+    pub bed: u8,
+    /// Subwoofer (LFE) channels.
+    pub lfe: u8,
+    /// Height and other overhead channels.
+    pub immersive: u8,
+}
+
+impl ChannelLayout {
+    /// Reads the channel text of the receiver. Each position of the text is a
+    /// channel, and a `2` means that the channel is active. Returns `None` if
+    /// no channel is active.
+    #[must_use]
+    pub fn from_status(text: &str) -> Option<Self> {
+        let mut layout = Self {
+            bed: 0,
+            lfe: 0,
+            immersive: 0,
+        };
+        for (index, status) in text.trim().bytes().enumerate() {
+            if status != b'2' {
+                continue;
+            }
+            match index {
+                0..=2 | 4..=8 => layout.bed += 1,
+                3 => layout.lfe += 1,
+                13 => layout.immersive += 2,
+                _ => layout.immersive += 1,
+            }
+        }
+        (layout.bed + layout.lfe + layout.immersive > 0).then_some(layout)
+    }
+}
+
+impl fmt::Display for ChannelLayout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.bed, self.lfe)?;
+        if self.immersive > 0 {
+            write!(f, ".{}", self.immersive)?;
+        }
+        Ok(())
+    }
+}
 
 /// A value for the input and one for the output of the receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +114,8 @@ pub struct SignalState {
     pub audio_sound: Option<String>,
     /// Audio sampling rate in kHz, for example `48` or `44.1`.
     pub sampling_rate: Option<String>,
+    /// Active channels of the audio that the receiver gets and plays.
+    pub channels: InOut<ChannelLayout>,
 }
 
 impl SignalState {
@@ -97,6 +149,18 @@ impl SignalState {
             self.bt2020.set(true, Some(input != "0")) | self.bt2020.set(false, Some(output != "0"))
         } else if let Some(rate) = parameter.strip_prefix("INFAISFSV") {
             set_text(&mut self.sampling_rate, sampling_rate(rate))
+        } else {
+            false
+        }
+    }
+
+    /// Applies the text of an `OP` event, for example `INFINS 22000000`.
+    /// Returns true if a value changed. Other events change nothing.
+    pub(crate) fn apply_op(&mut self, parameter: &str) -> bool {
+        if let Some(rest) = parameter.strip_prefix("INFINS") {
+            self.channels.set(true, ChannelLayout::from_status(rest))
+        } else if let Some(rest) = parameter.strip_prefix("INFASP") {
+            self.channels.set(false, ChannelLayout::from_status(rest))
         } else {
             false
         }
@@ -312,6 +376,40 @@ mod tests {
         ] {
             ss(&mut signal, text);
             assert_eq!(signal.sampling_rate.as_deref(), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn channel_layouts() {
+        let layout = |text: &str| ChannelLayout::from_status(text).map(|l| l.to_string());
+        assert_eq!(layout("22111111111111000000").as_deref(), Some("2.0"));
+        assert_eq!(layout("22222222000000000000").as_deref(), Some("7.1"));
+        assert_eq!(layout("22222222022000000000").as_deref(), Some("7.1.2"));
+        assert_eq!(layout("22222222000022000000").as_deref(), Some("7.1.3"));
+        assert_eq!(layout("22000000000002").as_deref(), Some("2.0.2"));
+        assert_eq!(layout("00000000"), None);
+        assert_eq!(layout(""), None);
+    }
+
+    #[test]
+    fn channel_events() {
+        let mut signal = SignalState::default();
+        assert!(signal.apply_op("INFINS 22000000000000000000"));
+        assert!(signal.apply_op("INFASP 22222222000000000000"));
+        assert!(!signal.apply_op("INFASP 22222222000000000000"));
+        assert_eq!(
+            signal.channels.input.map(|l| l.to_string()).as_deref(),
+            Some("2.0")
+        );
+        assert_eq!(
+            signal.channels.output.map(|l| l.to_string()).as_deref(),
+            Some("7.1")
+        );
+        // No channel is active.
+        assert!(signal.apply_op("INFINS 00000000"));
+        assert_eq!(signal.channels.input, None);
+        for text in ["", "ALSSET ON", "INFAISFSV 48K"] {
+            assert!(!signal.apply_op(text), "{text}");
         }
     }
 

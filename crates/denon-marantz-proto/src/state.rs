@@ -495,9 +495,13 @@ impl State {
         }
     }
 
-    /// Applies an `OP` event: the list of sound modes, auto lip sync and the
-    /// Dirac Live slots. The other `OP` events are ignored.
+    /// Applies an `OP` event: the list of sound modes, the audio channels,
+    /// auto lip sync and the Dirac Live slots. The other `OP` events are
+    /// ignored.
     fn apply_option(&mut self, parameter: &str) -> Option<Change> {
+        if parameter.starts_with("INF") {
+            return self.signal_change(|signal| signal.apply_op(parameter));
+        }
         if let Some(changed) = self.device.sound_modes.apply_op(parameter) {
             return changed.then_some(Change {
                 zone: None,
@@ -1332,6 +1336,8 @@ mod tests {
             "SSINFSIGECI 00",
             "SSINFSIGPIX 11",
             "SSINFAISFSV 48K",
+            "OPINFINS 22111111111111000000",
+            "OPINFASP 22121111011000000000000001100000",
             "SYSDA PCM                  ",
             "SYSMI Stereo",
             "SYSDVOUT 4K50",
@@ -1348,6 +1354,9 @@ mod tests {
         assert_eq!(signal_state.video.output.as_deref(), Some("4K50"));
         assert_eq!(signal_state.audio_sound.as_deref(), Some("Stereo"));
         assert_eq!(signal_state.sampling_rate.as_deref(), Some("48"));
+        assert_eq!(signal_state.channels.input.unwrap().to_string(), "2.0");
+        assert_eq!(signal_state.channels.output.unwrap().to_string(), "2.1");
+        assert_eq!(apply(&mut state, "OPINFASP 22222222000000000000"), signal);
         assert_eq!(apply(&mut state, "SSINFSIGRES I4K50"), None);
         assert_eq!(apply(&mut state, "SSINFSIGRES I4K60"), signal);
         // The volume limit shares the event and is not mixed up with it.

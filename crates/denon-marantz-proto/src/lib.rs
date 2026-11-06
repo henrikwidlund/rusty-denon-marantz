@@ -33,7 +33,7 @@ pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use error::Error;
-pub use signal::{InOut, SignalState};
+pub use signal::{ChannelLayout, InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
