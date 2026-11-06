@@ -180,7 +180,7 @@ impl<'a> Message<'a> {
 }
 
 /// Parameter prefixes of events that the receiver repeats when it is queried.
-const DUPLICATE_PREFIXES: [&str; 24] = [
+const DUPLICATE_PREFIXES: [&str; 25] = [
     "INFSIGRES I",
     "INFSIGRES O",
     "SDVIN ",
@@ -203,6 +203,7 @@ const DUPLICATE_PREFIXES: [&str; 24] = [
     "HDMIDIAGPCM2",
     "INFASP",
     "INFINS",
+    "INFAISFSV",
     "SDA",
     "SMI",
 ];
@@ -379,6 +380,17 @@ mod tests {
         assert!(filter.accept("INFSIGECI 55"));
         assert!(!filter.accept("INFSIGECI 55"));
         assert!(filter.accept("INFSIGECI 00"));
+    }
+
+    #[test]
+    fn duplicate_filter_knows_the_audio_sampling_rate() {
+        // A receiver sends this event several times in a row.
+        let mut filter = DuplicateFilter::new();
+        assert!(filter.accept("INFAISFSV NON"));
+        for _ in 0..6 {
+            assert!(!filter.accept("INFAISFSV NON"));
+        }
+        assert!(filter.accept("INFAISFSV 48K"));
     }
 
     #[test]
