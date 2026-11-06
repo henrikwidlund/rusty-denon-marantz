@@ -198,7 +198,7 @@ async fn connects_to_an_older_receiver_with_status_pages() {
     assert_eq!(main.volume.map(Volume::db), Some(-70.0));
     assert_eq!(main.muted, Some(false));
     assert_eq!(main.source.as_deref(), Some("SAT/CBL"));
-    assert_eq!(main.sound_mode.as_deref(), Some("PLII Cinema"));
+    assert_eq!(main.sound_mode.as_deref(), Some("PLII CINEMA"));
     assert_eq!(state.zone(Zone::Zone2).power, Some(Power::Off));
     assert_eq!(state.zone(Zone::Zone2).volume.map(Volume::db), Some(-58.0));
 }

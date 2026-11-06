@@ -68,6 +68,12 @@ fn answer_values_have_the_expected_state() {
         // Some receivers send text that is not a power state, for example the
         // name of a zone. State knows only the three power values, accepts
         // lower case, and treats other text as unknown.
+        // Sound modes are kept in upper case, whatever the receiver sent.
+        let expected = if name == "SoundModeRaw" {
+            expected.map(|text| text.to_ascii_uppercase())
+        } else {
+            expected
+        };
         let expected = if name == "Power" {
             expected
                 .map(|text| text.to_ascii_uppercase())

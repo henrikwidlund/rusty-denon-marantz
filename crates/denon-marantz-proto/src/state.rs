@@ -65,8 +65,7 @@ pub struct ZoneState {
     pub muted: Option<bool>,
     /// Selected source, as the receiver reports it.
     pub source: Option<String>,
-    /// Sound mode, as the receiver reports it, with single spaces. Only the
-    /// main zone has one.
+    /// Sound mode in upper case, with single spaces. Only the main zone has one.
     pub sound_mode: Option<String>,
     /// Auto standby time.
     pub auto_standby: Option<AutoStandby>,
@@ -148,7 +147,7 @@ impl State {
                 if parameter.starts_with("QUICK") || parameter.starts_with("SMART") {
                     return None;
                 }
-                let mode = collapse_spaces(parameter);
+                let mode = normalize_sound_mode(parameter);
                 self.zone_change(zone?, Setting::SoundMode, |z| {
                     set_text(&mut z.sound_mode, &mode)
                 })
@@ -230,7 +229,7 @@ impl State {
             // Only the main zone has a sound mode.
             Field::SoundModeRaw if zone != Zone::Main => None,
             Field::SoundModeRaw => {
-                let mode = value.map(collapse_spaces);
+                let mode = value.map(normalize_sound_mode);
                 self.zone_change(zone, Setting::SoundMode, |z| {
                     set_optional_text(&mut z.sound_mode, mode.as_deref())
                 })
@@ -309,16 +308,28 @@ fn set_optional_text(slot: &mut Option<String>, value: Option<&str>) -> bool {
     }
 }
 
-/// Text with white space replaced by single spaces, without spaces at the ends.
-fn collapse_spaces(text: &str) -> Cow<'_, str> {
-    let clean = text
-        .split(' ')
-        .all(|word| !word.is_empty() && !word.contains(char::is_whitespace));
+/// A sound mode in upper case, with single spaces and no spaces at the ends.
+///
+/// Receivers write the same mode in different ways: `Stereo` in `AppCommand`
+/// answers and `STEREO` in telnet events. One spelling keeps a mode that did
+/// not change from looking like a change.
+fn normalize_sound_mode(text: &str) -> Cow<'_, str> {
+    let clean = text.split(' ').all(|word| {
+        !word.is_empty()
+            && !word.contains(char::is_whitespace)
+            && !word.bytes().any(|b| b.is_ascii_lowercase())
+    });
     if clean {
-        Cow::Borrowed(text)
-    } else {
-        Cow::Owned(text.split_whitespace().collect::<Vec<_>>().join(" "))
+        return Cow::Borrowed(text);
     }
+    let mut mode = String::with_capacity(text.len());
+    for (index, word) in text.split_whitespace().enumerate() {
+        if index > 0 {
+            mode.push(' ');
+        }
+        mode.extend(word.chars().map(|c| c.to_ascii_uppercase()));
+    }
+    Cow::Owned(mode)
 }
 
 /// Power from an `AppCommand` answer. Some receivers answer in lower case.
@@ -663,9 +674,26 @@ mod tests {
     }
 
     #[test]
-    fn spaces_are_collapsed_without_allocating_when_clean() {
-        assert!(matches!(collapse_spaces("DTS SURROUND"), Cow::Borrowed(_)));
-        assert_eq!(collapse_spaces("  A \t B  "), "A B");
-        assert_eq!(collapse_spaces(""), "");
+    fn sound_modes_are_normalized() {
+        assert!(matches!(
+            normalize_sound_mode("DTS SURROUND"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(normalize_sound_mode("  A \t B  "), "A B");
+        assert_eq!(normalize_sound_mode("Stereo"), "STEREO");
+        assert_eq!(normalize_sound_mode("Dolby  Atmos + x"), "DOLBY ATMOS + X");
+        assert_eq!(normalize_sound_mode(""), "");
+    }
+
+    #[test]
+    fn a_sound_mode_that_only_differs_in_case_is_not_a_change() {
+        let mut state = State::new(false);
+        assert!(
+            state
+                .apply_field(Zone::Main, Field::SoundModeRaw, Some("Stereo"))
+                .is_some()
+        );
+        assert_eq!(apply(&mut state, "MSSTEREO"), None);
+        assert_eq!(state.zone(Zone::Main).sound_mode.as_deref(), Some("STEREO"));
     }
 }
