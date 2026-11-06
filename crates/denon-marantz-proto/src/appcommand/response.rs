@@ -103,6 +103,44 @@ impl<'a> Item<'a> {
     pub(super) const fn node(&self) -> Node<'a> {
         self.node
     }
+
+    /// Calls `on_entry` with the name and the new name of each source in the
+    /// answer to `GetRenameSource`. The new name is `None` if it is empty.
+    /// Nothing is called for an item with an error.
+    pub fn renamed_sources(&self, on_entry: impl FnMut(&str, Option<&str>)) {
+        self.source_entries("functionrename", "rename", on_entry);
+    }
+
+    /// Calls `on_entry` with the name and the `use` value of each source in
+    /// the answer to `GetDeletedSource`. The value is `None` if it is empty.
+    /// Nothing is called for an item with an error.
+    pub fn source_use(&self, on_entry: impl FnMut(&str, Option<&str>)) {
+        self.source_entries("functiondelete", "use", on_entry);
+    }
+
+    fn source_entries(
+        &self,
+        wrapper: &str,
+        value: &str,
+        mut on_entry: impl FnMut(&str, Option<&str>),
+    ) {
+        if self.is_error {
+            return;
+        }
+        let Some(wrapper) = self.node.child(wrapper) else {
+            return;
+        };
+        for entry in wrapper.node().children().filter(|child| child.is("list")) {
+            let text = |name: &str| {
+                let child = entry.node().child(name)?;
+                let text = child.node().text()?;
+                Some(text.trim().to_owned()).filter(|text| !text.is_empty())
+            };
+            if let Some(name) = text("name") {
+                on_entry(&name, text(value).as_deref());
+            }
+        }
+    }
 }
 
 impl<'a> Iterator for Items<'a> {
@@ -188,6 +226,44 @@ mod tests {
                 (Field::Dimmer, None),
             ]
         );
+    }
+
+    #[test]
+    fn source_lists_are_read() {
+        let body = b"<rx><cmd><functionrename>\
+            <list><name>CBL/SAT</name><rename>TV </rename></list>\
+            <list><name>AUX3</name><rename></rename></list>\
+            <list><rename>No name</rename></list>\
+            </functionrename></cmd><cmd><functiondelete>\
+            <list><name>CBL/SAT</name><FuncName>CBL/SAT</FuncName><use>0</use></list>\
+            <list><name>CD</name><use/></list>\
+            </functiondelete></cmd><error>2</error></rx>";
+        let response = Response::parse(body, 3).unwrap();
+        let items: Vec<_> = response.items().collect();
+        let mut renamed = Vec::new();
+        items[0]
+            .renamed_sources(|name, new| renamed.push((name.to_owned(), new.map(str::to_owned))));
+        assert_eq!(
+            renamed,
+            [
+                ("CBL/SAT".to_owned(), Some("TV".to_owned())),
+                ("AUX3".to_owned(), None)
+            ]
+        );
+        let mut used = Vec::new();
+        items[1].source_use(|name, value| used.push((name.to_owned(), value.map(str::to_owned))));
+        assert_eq!(
+            used,
+            [
+                ("CBL/SAT".to_owned(), Some("0".to_owned())),
+                ("CD".to_owned(), None)
+            ]
+        );
+        // An item with an error, or another kind of answer, gives nothing.
+        let mut count = 0;
+        items[2].renamed_sources(|_, _| count += 1);
+        items[0].source_use(|_, _| count += 1);
+        assert_eq!(count, 0);
     }
 
     #[test]

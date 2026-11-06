@@ -51,23 +51,33 @@ impl SourceList {
                 return None;
             }
             let (code, name) = split_code(rest)?;
-            let name = Some(name.trim_end()).filter(|name| !name.is_empty());
-            Some(self.source(code, |source| set_text(&mut source.name, name)))
+            Some(self.set_name(code, Some(name)))
         } else if let Some(rest) = parameter.strip_prefix("SOD") {
             let (code, value) = split_code(rest)?;
-            let in_use = match value.trim_end() {
-                "USE" => true,
-                "DEL" => false,
-                _ => return Some(false),
-            };
-            Some(self.source(code, |source| {
-                let changed = source.in_use != Some(in_use);
-                source.in_use = Some(in_use);
-                changed
-            }))
+            Some(match value.trim_end() {
+                "USE" => self.set_in_use(code, true),
+                "DEL" => self.set_in_use(code, false),
+                _ => false,
+            })
         } else {
             None
         }
+    }
+
+    /// Sets the name of a source. Spaces at the end and an empty name mean no
+    /// name. Returns true if the list changed.
+    pub(crate) fn set_name(&mut self, code: &str, name: Option<&str>) -> bool {
+        let name = name.map(str::trim_end).filter(|name| !name.is_empty());
+        self.source(code, |source| set_text(&mut source.name, name))
+    }
+
+    /// Sets if a source is in use. Returns true if the list changed.
+    pub(crate) fn set_in_use(&mut self, code: &str, in_use: bool) -> bool {
+        self.source(code, |source| {
+            let changed = source.in_use != Some(in_use);
+            source.in_use = Some(in_use);
+            changed
+        })
     }
 
     /// Updates a source, and adds it first if the list has none with this

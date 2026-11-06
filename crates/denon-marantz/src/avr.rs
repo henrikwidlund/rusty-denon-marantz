@@ -31,7 +31,7 @@ const DEFAULT_NAME: &str = "AVR";
 /// Queries that fill the state. The answer has one item for each, in this order.
 /// Receivers of the 2016 generation and later get [`appcommand::GET_TONE_CONTROL`]
 /// after them.
-const UPDATE_COMMANDS: [Definition; 8] = [
+const UPDATE_COMMANDS: [Definition; 10] = [
     appcommand::GET_ALL_ZONE_POWER_STATUS,
     appcommand::GET_AUTO_STANDBY,
     appcommand::GET_DIMMER,
@@ -40,6 +40,8 @@ const UPDATE_COMMANDS: [Definition; 8] = [
     appcommand::GET_ALL_ZONE_VOLUME,
     appcommand::GET_ALL_ZONE_MUTE_STATUS,
     appcommand::GET_SURROUND_MODE_STATUS,
+    appcommand::GET_RENAME_SOURCE,
+    appcommand::GET_DELETED_SOURCE,
 ];
 
 /// How the state is read over HTTP.
@@ -290,6 +292,19 @@ impl Avr {
                             response.extract(&self.update_commands, zone, |field, value| {
                                 notify(state.apply_field(zone, field, value));
                             });
+                        }
+                        // The source lists are for the whole receiver.
+                        for (definition, item) in self.update_commands.iter().zip(response.items())
+                        {
+                            if *definition == appcommand::GET_RENAME_SOURCE {
+                                item.renamed_sources(|name, rename| {
+                                    notify(state.apply_renamed_source(name, rename));
+                                });
+                            } else if *definition == appcommand::GET_DELETED_SOURCE {
+                                item.source_use(|name, value| {
+                                    notify(state.apply_source_use(name, value));
+                                });
+                            }
                         }
                     });
                     Ok(())

@@ -185,6 +185,12 @@ pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
         <zone2><volume>--</volume><limit>OFF</limit></zone2></cmd>\
     <cmd><zone1>off</zone1><zone2>ON</zone2></cmd>\
     <cmd><surround>DOLBY  ATMOS</surround></cmd>\
+    <cmd><functionrename>\
+        <list><name>Media Player</name><rename>Apple TV </rename></list>\
+        <list><name>CD</name><rename></rename></list></functionrename></cmd>\
+    <cmd><functiondelete>\
+        <list><name>Media Player</name><FuncName>Media Player</FuncName><use>1</use></list>\
+        <list><name>CD</name><FuncName>CD</FuncName><use>0</use></list></functiondelete></cmd>\
     </rx>";
 
 /// The answer to the update request of a 2016 receiver: the tone control item

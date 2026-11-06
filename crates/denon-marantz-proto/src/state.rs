@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use crate::appcommand::Field;
 use crate::signal::SignalState;
 use crate::sound_mode_list::SoundModeList;
-use crate::source::telnet_to_display_source;
+use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
 use crate::{
@@ -307,6 +307,30 @@ impl State {
             }
             _ => None,
         }
+    }
+
+    /// Applies one entry of the `AppCommand` answer to `GetRenameSource`: the
+    /// name of the source in the XML, and its new name. `None` is no new name.
+    pub fn apply_renamed_source(&mut self, name: &str, rename: Option<&str>) -> Option<Change> {
+        let code = xml_to_telnet_source(name);
+        let changed = self.device.sources.set_name(code, rename);
+        changed.then_some(Change {
+            zone: None,
+            setting: Setting::Sources,
+        })
+    }
+
+    /// Applies one entry of the `AppCommand` answer to `GetDeletedSource`: the
+    /// name of the source in the XML, and its `use` value, `1` or `0`. Another
+    /// value is ignored.
+    pub fn apply_source_use(&mut self, name: &str, value: Option<&str>) -> Option<Change> {
+        let in_use = value.and_then(on_off_digit)?;
+        let code = xml_to_telnet_source(name);
+        let changed = self.device.sources.set_in_use(code, in_use);
+        changed.then_some(Change {
+            zone: None,
+            setting: Setting::Sources,
+        })
     }
 
     /// Applies a value from an `AppCommand` answer. Returns what changed.
@@ -1103,6 +1127,26 @@ mod tests {
             apply(&mut state, "OPDLSSL1IMP ON"),
             change(None, Setting::DiracSlot(1))
         );
+    }
+
+    #[test]
+    fn appcommand_source_lists_use_the_telnet_codes() {
+        let mut state = State::new(false);
+        let sources = || change(None, Setting::Sources);
+        assert_eq!(state.apply_renamed_source("CBL/SAT", Some("TV")), sources());
+        assert_eq!(state.apply_renamed_source("CBL/SAT", Some("TV")), None);
+        assert_eq!(state.apply_renamed_source("TV AUDIO", None), sources());
+        assert_eq!(state.apply_source_use("CBL/SAT", Some("0")), sources());
+        assert_eq!(state.apply_source_use("CBL/SAT", Some("0")), None);
+        assert_eq!(state.apply_source_use("Media Player", Some("x")), None);
+        assert_eq!(state.apply_source_use("Media Player", None), None);
+        let list = &state.device().sources;
+        assert_eq!(list.name("SAT/CBL"), Some("TV"));
+        assert_eq!(list.get("SAT/CBL").unwrap().in_use, Some(false));
+        assert_eq!(list.name("TV"), None);
+        // Telnet and HTTP fill the same entry.
+        assert_eq!(apply(&mut state, "SSFUNSAT/CBL Sat"), sources());
+        assert_eq!(state.device().sources.name("SAT/CBL"), Some("Sat"));
     }
 
     #[test]

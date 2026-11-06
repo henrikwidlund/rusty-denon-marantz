@@ -84,7 +84,7 @@ async fn update_reads_all_zones_with_one_request() {
         String::from_utf8_lossy(&last.body)
             .matches("<cmd id=\"1\">")
             .count(),
-        8
+        10
     );
 
     let state = avr.snapshot();
@@ -340,6 +340,20 @@ async fn update_reports_a_receiver_that_stops_answering() {
 }
 
 #[tokio::test]
+async fn update_reads_the_source_names_and_the_hidden_sources() {
+    let fake = avr_x_receiver().await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    avr.update().await.unwrap();
+    let state = avr.snapshot();
+    let sources = &state.device().sources;
+    // The XML names are the telnet codes in the list.
+    assert_eq!(sources.name("MPLAY"), Some("Apple TV"));
+    assert_eq!(sources.get("MPLAY").unwrap().in_use, Some(true));
+    assert_eq!(sources.name("CD"), None);
+    assert_eq!(sources.get("CD").unwrap().in_use, Some(false));
+}
+
+#[tokio::test]
 async fn update_of_a_2016_receiver_reads_tone_control() {
     let fake = avr_x_receiver().await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
@@ -349,7 +363,7 @@ async fn update_of_a_2016_receiver_reads_tone_control() {
         String::from_utf8_lossy(&last.body)
             .matches("<cmd id=\"1\">")
             .count(),
-        9
+        11
     );
     let state = avr.snapshot();
     assert_eq!(state.device().tone_control, Some(true));
