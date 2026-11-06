@@ -69,12 +69,10 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidRequest`], and sends nothing, if the value is
+    /// Returns [`Error::VolumeOutOfRange`], and sends nothing, if the value is
     /// not from -80 to +18 dB. See also [`ZoneControl`].
     pub async fn set_volume_db(&self, db: f32) -> Result<(), Error> {
-        let volume = Volume::from_db_rounded(db).ok_or_else(|| {
-            Error::InvalidRequest(format!("volume {db} dB is not from -80 to 18 dB"))
-        })?;
+        let volume = Volume::from_db_rounded(db).ok_or(Error::VolumeOutOfRange(db))?;
         self.set_volume(volume).await
     }
 
@@ -110,16 +108,13 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidRequest`], and sends nothing, for a zone other
+    /// Returns [`Error::NoSoundMode`], and sends nothing, for a zone other
     /// than the main zone: only the main zone has a sound mode. Returns
     /// [`Error::InvalidCommand`] if the name is empty or has a control
     /// character. See also [`ZoneControl`].
     pub async fn select_sound_mode(&self, name: &str) -> Result<(), Error> {
         if self.zone != Zone::Main {
-            return Err(Error::InvalidRequest(format!(
-                "{} has no sound mode",
-                self.zone.name()
-            )));
+            return Err(Error::NoSoundMode(self.zone));
         }
         self.send(Command::SelectSoundMode(name)).await
     }

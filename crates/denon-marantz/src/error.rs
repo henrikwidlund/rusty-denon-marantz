@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use denon_marantz_proto::Zone;
+
 type Source = Box<dyn std::error::Error + Send + Sync>;
 
 /// Error of the client.
@@ -75,10 +77,18 @@ pub enum Error {
     /// character.
     #[error("invalid command: {0}")]
     InvalidCommand(#[source] denon_marantz_proto::Error),
-    /// A request is not valid, for example the host, the path, a zone that the
-    /// receiver does not have, or a value that is out of range.
+    /// A request is not valid: the host or the path.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// The receiver does not have the zone.
+    #[error("the receiver has no {}", .0.name())]
+    NoSuchZone(Zone),
+    /// The zone has no sound mode. Only the main zone has one.
+    #[error("{} has no sound mode", .0.name())]
+    NoSoundMode(Zone),
+    /// The volume is not from -80 to +18 dB, or not a number.
+    #[error("volume {0} dB is not from -80 to 18 dB")]
+    VolumeOutOfRange(f32),
     /// A setting is not valid.
     #[error("invalid setting: {0}")]
     InvalidConfig(&'static str),
@@ -99,6 +109,9 @@ impl Error {
             Self::NotConnected
             | Self::InvalidCommand(_)
             | Self::InvalidRequest(_)
+            | Self::NoSuchZone(_)
+            | Self::NoSoundMode(_)
+            | Self::VolumeOutOfRange(_)
             | Self::InvalidConfig(_) => None,
         }
     }
@@ -115,7 +128,12 @@ impl Error {
     pub const fn is_invalid_input(&self) -> bool {
         matches!(
             self,
-            Self::InvalidCommand(_) | Self::InvalidRequest(_) | Self::InvalidConfig(_)
+            Self::InvalidCommand(_)
+                | Self::InvalidRequest(_)
+                | Self::NoSuchZone(_)
+                | Self::NoSoundMode(_)
+                | Self::VolumeOutOfRange(_)
+                | Self::InvalidConfig(_)
         )
     }
 

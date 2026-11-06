@@ -209,16 +209,13 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidRequest`] if the receiver does not have the zone.
+    /// Returns [`Error::NoSuchZone`] if the receiver does not have the zone.
     #[cfg(feature = "telnet")]
     pub fn zone(&self, zone: Zone) -> Result<ZoneControl<'_>, Error> {
         if self.info.zones.contains(&zone) {
             Ok(ZoneControl::new(self, zone))
         } else {
-            Err(Error::InvalidRequest(format!(
-                "the receiver has no {}",
-                zone.name()
-            )))
+            Err(Error::NoSuchZone(zone))
         }
     }
 

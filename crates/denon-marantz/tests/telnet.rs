@@ -630,14 +630,18 @@ async fn zone_methods_refuse_what_cannot_work() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     // The receiver of the test has two zones.
     let error = avr.zone(Zone::Zone3).unwrap_err();
-    assert!(matches!(error, Error::InvalidRequest(_)), "{error:?}");
+    assert!(matches!(error, Error::NoSuchZone(Zone::Zone3)), "{error:?}");
+    assert!(error.is_invalid_input());
     let zone2 = avr.zone(Zone::Zone2).unwrap();
-    for error in [
-        zone2.select_sound_mode("MOVIE").await.unwrap_err(),
-        zone2.set_volume_db(18.5).await.unwrap_err(),
-        zone2.set_volume_db(f32::NAN).await.unwrap_err(),
-    ] {
-        assert!(matches!(error, Error::InvalidRequest(_)), "{error:?}");
+    let error = zone2.select_sound_mode("MOVIE").await.unwrap_err();
+    assert!(
+        matches!(error, Error::NoSoundMode(Zone::Zone2)),
+        "{error:?}"
+    );
+    for db in [18.5, f32::NAN] {
+        let error = zone2.set_volume_db(db).await.unwrap_err();
+        assert!(matches!(error, Error::VolumeOutOfRange(_)), "{error:?}");
+        assert!(error.is_invalid_input());
     }
     let error = zone2.select_source("").await.unwrap_err();
     assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
