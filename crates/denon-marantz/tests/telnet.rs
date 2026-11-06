@@ -23,6 +23,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         reconnect_min: Duration::from_millis(50),
         reconnect_max: Duration::from_millis(100),
         command_interval: Duration::ZERO,
+        query_interval: Duration::ZERO,
         background_pause: Duration::ZERO,
     }
 }
@@ -436,7 +437,7 @@ async fn send_writes_the_command_for_the_zone() {
 async fn commands_go_before_the_remaining_queries() {
     let telnet = FakeTelnet::start().await;
     let config = TelnetConfig {
-        command_interval: Duration::from_millis(20),
+        query_interval: Duration::from_millis(20),
         ..telnet_config(telnet.port)
     };
     let (avr, _http) = connected(config).await;
@@ -466,6 +467,7 @@ async fn queries_wait_after_a_command() {
     let telnet = FakeTelnet::start().await;
     let config = TelnetConfig {
         command_interval: Duration::from_millis(10),
+        query_interval: Duration::from_millis(20),
         background_pause: Duration::from_millis(300),
         ..telnet_config(telnet.port)
     };
@@ -572,5 +574,24 @@ async fn a_waiting_command_fails_when_the_connection_ends() {
         !sent(&telnet).iter().any(|line| line == "MVUP"),
         "{:?}",
         sent(&telnet)
+    );
+}
+
+#[tokio::test]
+async fn queries_keep_their_own_interval() {
+    let telnet = FakeTelnet::start().await;
+    let config = TelnetConfig {
+        query_interval: Duration::from_millis(80),
+        ..telnet_config(telnet.port)
+    };
+    let (_avr, _http) = connected(config).await;
+    wait_until("the first query", || !sent(&telnet).is_empty()).await;
+    let first = tokio::time::Instant::now();
+    wait_until("four queries", || sent(&telnet).len() >= 4).await;
+    // Three gaps of 80 ms. The test allows for the clock of the fake.
+    assert!(
+        first.elapsed() >= Duration::from_millis(200),
+        "{:?}",
+        first.elapsed()
     );
 }

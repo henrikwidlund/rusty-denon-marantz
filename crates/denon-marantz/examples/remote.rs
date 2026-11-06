@@ -1,12 +1,22 @@
-//! Sends one command to a receiver and prints the events that follow.
+//! Sends one command to a receiver and prints the events, with the time of each.
 //!
 //! ```sh
 //! cargo run -p denon-marantz --example remote -- 192.168.1.20 volume-up
 //! cargo run -p denon-marantz --example remote -- 192.168.1.20 volume -40.5
 //! cargo run -p denon-marantz --example remote -- 192.168.1.20 --zone 2 power-on
 //! cargo run -p denon-marantz --example remote -- 192.168.1.20 raw "MV?"
+//! cargo run -p denon-marantz --example remote -- 192.168.1.20 --wait 15 --listen 2 mute
 //! RUST_LOG=denon_marantz=debug cargo run -p denon-marantz --example remote -- 192.168.1.20 mute
 //! ```
+//!
+//! Options before the command:
+//!
+//! - `--zone 2` or `--zone 3`: the zone of the command, default is the main zone.
+//! - `--wait SECONDS`: wait after the connect before the command is sent. The
+//!   receiver answers the queries after a connect for several seconds. With a
+//!   wait you see how fast it answers a command when it is not busy.
+//! - `--listen SECONDS`: how long to show events after the command, default 3.
+//! - `--command-interval MS` and `--query-interval MS`: the spacing of writes.
 //!
 //! Commands: power-on, power-standby, device-power-on, device-power-standby,
 //! volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
@@ -17,16 +27,14 @@
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command};
+use denon_marantz::{Avr, Command, TelnetConfig};
 use denon_marantz_proto::{Volume, Zone};
 use tokio::sync::broadcast::error::RecvError;
+use tokio::time::{Instant, sleep};
 use tracing_subscriber::EnvFilter;
 
-/// How long the events are shown after the command.
-const LISTEN: Duration = Duration::from_secs(3);
-
 const USAGE: &str =
-    "usage: remote <host> [--zone 2|3] <command> [argument]  (see the top of the example file)";
+    "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
 fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, String> {
     let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
@@ -65,6 +73,13 @@ fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, Str
     })
 }
 
+/// The next argument as a number.
+fn number(args: &mut impl Iterator<Item = String>, option: &str) -> Result<u64, String> {
+    args.next()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| format!("{option} needs a whole number"))
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -72,38 +87,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let mut args = std::env::args().skip(1);
     let host = args.next().ok_or(USAGE)?;
-    let mut name = args.next().ok_or(USAGE)?;
     let mut zone = Zone::Main;
-    if name == "--zone" {
-        zone = match args.next().as_deref() {
-            Some("2") => Zone::Zone2,
-            Some("3") => Zone::Zone3,
-            _ => return Err("--zone is 2 or 3".into()),
-        };
-        name = args.next().ok_or(USAGE)?;
-    }
+    let (mut wait, mut listen) = (Duration::ZERO, Duration::from_secs(3));
+    let mut config = TelnetConfig::default();
+    let name = loop {
+        let word = args.next().ok_or(USAGE)?;
+        match word.as_str() {
+            "--zone" => {
+                zone = match args.next().as_deref() {
+                    Some("2") => Zone::Zone2,
+                    Some("3") => Zone::Zone3,
+                    _ => return Err("--zone is 2 or 3".into()),
+                };
+            }
+            "--wait" => wait = Duration::from_secs(number(&mut args, "--wait")?),
+            "--listen" => listen = Duration::from_secs(number(&mut args, "--listen")?),
+            "--command-interval" => {
+                config.command_interval =
+                    Duration::from_millis(number(&mut args, "--command-interval")?);
+            }
+            "--query-interval" => {
+                config.query_interval =
+                    Duration::from_millis(number(&mut args, "--query-interval")?);
+            }
+            _ => break word,
+        }
+    };
     let argument = args.next();
     let command = command(&name, argument.as_deref())?;
 
-    let avr = Avr::builder(host).connect().await?;
+    let avr = Avr::builder(host).telnet_config(config).connect().await?;
     println!("connected to {}", avr.info().friendly_name);
+    let start = Instant::now();
+    let stamp = move || start.elapsed().as_secs_f64();
+
     let mut events = avr.events();
     avr.telnet_connect().await?;
-    avr.send(zone, command).await?;
-    println!("sent {name} to {zone:?}, events for {LISTEN:?}:");
-
-    let end = tokio::time::sleep(LISTEN);
-    tokio::pin!(end);
-    loop {
-        tokio::select! {
-            event = events.recv() => match event {
-                Ok(event) => println!("event   {:?} {:?} {:?}", event.zone, event.event, event.parameter),
-                Err(RecvError::Lagged(count)) => println!("lost {count} events"),
+    let printer = tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) => println!(
+                    "[{:7.3}] event   {:?} {:?} {:?}",
+                    stamp(),
+                    event.zone,
+                    event.event,
+                    event.parameter
+                ),
+                Err(RecvError::Lagged(count)) => println!("[{:7.3}] lost {count} events", stamp()),
                 Err(RecvError::Closed) => break,
-            },
-            () = &mut end => break,
+            }
         }
-    }
+    });
+
+    sleep(wait).await;
+    println!("[{:7.3}] sending {name} to {zone:?}", stamp());
+    avr.send(zone, command).await?;
+    println!("[{:7.3}] written", stamp());
+    sleep(listen).await;
+
+    printer.abort();
     avr.telnet_disconnect().await;
     Ok(())
 }
