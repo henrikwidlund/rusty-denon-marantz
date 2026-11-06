@@ -65,6 +65,17 @@ code_enum! {
 }
 
 code_enum! {
+    /// Color space of an HDMI video signal.
+    pub enum ColorSpace {
+        Yuv422 = "1", "4:2:2";
+        Yuv444 = "2", "4:4:4";
+        Rgb = "3", "RGB";
+        Yuv420 = "8", "4:2:0";
+        Yuv422Bt2020 = "9", "4:2:2/BT.2020";
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -84,6 +95,16 @@ impl DiracFilter {
             3 => Some(Self::Slot3),
             _ => None,
         }
+    }
+}
+
+code_enum! {
+    /// Bits for each color of an HDMI video signal.
+    pub enum PixelDepth {
+        Unknown = "0", "Unknown";
+        Bits8 = "1", "8-bit";
+        Bits10 = "2", "10-bit";
+        Bits12 = "3", "12-bit";
     }
 }
 
@@ -302,6 +323,7 @@ mod tests {
             Auro3dMode,
             AuroMatic3dPreset,
             BluetoothOutputMode,
+            ColorSpace,
             DacFilter,
             DialogEnhancerLevel,
             DigitalCodec,
@@ -313,6 +335,7 @@ mod tests {
             Illumination,
             Mdax,
             PictureMode,
+            PixelDepth,
             Power,
             RoomSize,
             VideoProcessingMode,
@@ -338,6 +361,12 @@ mod tests {
         assert_eq!(HdmiOutput::Hdmi2.label(), "HDMI2");
         assert_eq!(PictureMode::IsfNight.code(), "NGT");
         assert_eq!(DiracFilter::Slot3.code(), "3");
+        assert_eq!(ColorSpace::from_code("9"), Some(ColorSpace::Yuv422Bt2020));
+        assert_eq!(ColorSpace::from_code("0"), None);
+        assert_eq!(
+            PixelDepth::from_code("2").map(PixelDepth::label),
+            Some("10-bit")
+        );
         assert_eq!(VideoProcessingMode::Movie.code(), "MOVI");
         assert_eq!(Drc::High.code(), "HI");
     }

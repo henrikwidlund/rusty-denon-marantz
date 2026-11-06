@@ -9,6 +9,7 @@ mod containment;
 mod device_description;
 mod device_info;
 mod error;
+mod signal;
 mod sleep;
 mod sound_mode;
 mod state;
@@ -30,15 +31,16 @@ pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use error::Error;
+pub use signal::{InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use values::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, DacFilter,
-    DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume, EcoMode,
-    EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, Mdax, MultiEq, PictureMode,
-    Power, ReferenceLevelOffset, RoomSize, VideoProcessingMode,
+    AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, ColorSpace,
+    DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume,
+    EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, Mdax, MultiEq,
+    PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, VideoProcessingMode,
 };
 pub use volume::Volume;
 pub use zone::{ReceiverType, Zone};

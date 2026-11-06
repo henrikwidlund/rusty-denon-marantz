@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 
 use crate::appcommand::Field;
+use crate::signal::SignalState;
 use crate::source::telnet_to_display_source;
 use crate::telnet::{Event, Message};
 use crate::{
@@ -65,6 +66,9 @@ pub enum Setting {
     DiracFilter,
     /// A Dirac Live slot of the receiver, from 1 to 3.
     DiracSlot(u8),
+    /// The video or audio signal of the receiver. Any value of the signal
+    /// information changed.
+    Signal,
 }
 
 /// A value that changed.
@@ -141,6 +145,8 @@ pub struct DeviceState {
     pub dirac_filter: Option<DiracFilter>,
     /// The three Dirac Live slots. Slot 1 is the first. Telnet reports them.
     pub dirac_slots: [DiracSlot; 3],
+    /// The video and audio signal. Telnet reports it.
+    pub signal: SignalState,
 }
 
 impl DeviceState {
@@ -240,7 +246,10 @@ impl State {
                 self.zone_change(zone?, Setting::Sleep, |z| set(&mut z.sleep, Some(value)))
             }
             Event::Ss if zone == Some(Zone::Main) => {
-                let value = parameter.strip_prefix("VCTZMALIM")?.trim();
+                let Some(value) = parameter.strip_prefix("VCTZMALIM") else {
+                    return self.signal_change(|signal| signal.apply_ss(parameter));
+                };
+                let value = value.trim();
                 let limit = if matches!(value, "OFF" | "") {
                     None
                 } else {
@@ -250,6 +259,7 @@ impl State {
                     set(&mut z.max_volume, limit)
                 })
             }
+            Event::Sy => self.signal_change(|signal| signal.apply_sy(parameter)),
             Event::Dim => {
                 let value = DimmerMode::from_telnet(parameter.get(1..)?)?;
                 self.device_change(Setting::Dimmer, |d| set(&mut d.dimmer, Some(value)))
@@ -460,6 +470,13 @@ impl State {
         update(&mut self.zones[zone.index()]).then_some(Change {
             zone: Some(zone),
             setting,
+        })
+    }
+
+    fn signal_change(&mut self, update: impl FnOnce(&mut SignalState) -> bool) -> Option<Change> {
+        update(&mut self.device.signal).then_some(Change {
+            zone: None,
+            setting: Setting::Signal,
         })
     }
 
@@ -817,7 +834,7 @@ mod tests {
             "VSMONI1",
             "CVFL 50",
             "TR1 ON",
-            "SYSDA ANALOG",
+            "SYHDMIDIAGERR NO",
         ] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
@@ -1084,6 +1101,47 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn signal_events_change_the_signal() {
+        let mut state = State::new(false);
+        let signal = Some(Change {
+            zone: None,
+            setting: Setting::Signal,
+        });
+        // The values of a real receiver.
+        for line in [
+            "SSINFSIGRES I4K50",
+            "SSINFSIGHDR I---",
+            "SSINFSIGCOS 22",
+            "SSINFSIGECI 00",
+            "SSINFSIGPIX 11",
+            "SSINFAISFSV 48K",
+            "SYSDA PCM                  ",
+            "SYSMI Stereo",
+            "SYSDVOUT 4K50",
+        ] {
+            let changed = apply(&mut state, line);
+            // The line before it can have set the same value.
+            assert!(
+                changed == signal || changed.is_none(),
+                "{line}: {changed:?}"
+            );
+        }
+        let signal_state = &state.device().signal;
+        assert_eq!(signal_state.video.input.as_deref(), Some("4K50"));
+        assert_eq!(signal_state.video.output.as_deref(), Some("4K50"));
+        assert_eq!(signal_state.audio_sound.as_deref(), Some("Stereo"));
+        assert_eq!(signal_state.sampling_rate.as_deref(), Some("48"));
+        assert_eq!(apply(&mut state, "SSINFSIGRES I4K50"), None);
+        assert_eq!(apply(&mut state, "SSINFSIGRES I4K60"), signal);
+        // The volume limit shares the event and is not mixed up with it.
+        assert_eq!(
+            apply(&mut state, "SSVCTZMALIM 60"),
+            change(Some(Zone::Main), Setting::MaxVolume)
+        );
+        assert_eq!(apply(&mut state, "SSTTR OFF"), None);
     }
 
     #[test]
