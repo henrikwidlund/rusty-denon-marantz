@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 91] = [
+static QUERIES: [Query; 93] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -155,6 +155,8 @@ static QUERIES: [Query; 91] = [
     both("PSDRC ?"),            // DRC
     both("PSDEL ?"),            // DELAY TIME
     both("PSRSTR ?"),           // AUDIO RESTORER
+    both("PSCLV ?"),            // Center level
+    both("PSPAN ?"),            // Panorama
 ];
 
 #[cfg(test)]
@@ -182,8 +184,8 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 86);
-        assert_eq!(marantz.len(), 88);
+        assert_eq!(denon.len(), 88);
+        assert_eq!(marantz.len(), 90);
     }
 
     #[test]

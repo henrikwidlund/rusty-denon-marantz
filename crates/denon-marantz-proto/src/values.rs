@@ -199,6 +199,31 @@ code_enum! {
 }
 
 code_enum! {
+    /// IMAX mode.
+    pub enum ImaxMode {
+        Auto = "AUTO", "Auto";
+        On = "ON", "On";
+        Off = "OFF", "Off";
+    }
+}
+
+code_enum! {
+    /// IMAX audio settings.
+    pub enum ImaxAudio {
+        Auto = "AUTO", "Auto";
+        Manual = "MANUAL", "Manual";
+    }
+}
+
+code_enum! {
+    /// Subwoofer output in IMAX mode.
+    pub enum ImaxSubwooferOutput {
+        LfeAndMain = "L+M", "LFE + Main";
+        Lfe = "LFE", "LFE";
+    }
+}
+
+code_enum! {
     /// Room size.
     pub enum RoomSize {
         Small = "S", "S";

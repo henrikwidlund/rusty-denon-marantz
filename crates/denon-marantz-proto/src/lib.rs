@@ -12,6 +12,7 @@ mod error;
 mod signal;
 mod sleep;
 mod sound_mode;
+mod sound_settings;
 mod state;
 mod text;
 mod tone;
@@ -37,14 +38,16 @@ pub use signal::{ChannelLayout, InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
+pub use sound_settings::SoundSettings;
 pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use values::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, ColorSpace,
     DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume,
-    EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, Mdax, MultiEq,
-    PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, VideoProcessingMode,
+    EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
+    ImaxMode, ImaxSubwooferOutput, Mdax, MultiEq, PictureMode, PixelDepth, Power,
+    ReferenceLevelOffset, RoomSize, VideoProcessingMode,
 };
 pub use volume::Volume;
 pub use zone::{ReceiverType, Zone};

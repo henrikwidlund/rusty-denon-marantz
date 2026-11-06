@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use crate::appcommand::Field;
 use crate::signal::SignalState;
 use crate::sound_mode_list::SoundModeList;
+use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
@@ -86,6 +87,8 @@ pub enum Setting {
     QuickSelectNames,
     /// The level of a speaker channel.
     SpeakerLevels,
+    /// A sound setting such as the audio restorer or the room size.
+    SoundSettings,
 }
 
 /// A value that changed.
@@ -184,6 +187,9 @@ pub struct DeviceState {
     /// Level of each speaker channel that the receiver has reported, in the
     /// order of the report. Telnet reports them on a Denon receiver.
     pub speaker_levels: Vec<(Channel, ChannelLevel)>,
+    /// The sound settings that the state has no value for above, such as
+    /// the audio restorer. Telnet reports them.
+    pub sound_settings: SoundSettings,
 }
 
 impl DeviceState {
@@ -461,9 +467,13 @@ impl State {
     /// Applies a `PS` event. The state holds the tone control, the Audyssey
     /// and the Dirac settings. The other `PS` events are ignored.
     fn apply_sound_setting(&mut self, parameter: &str) -> Option<Change> {
-        let (name, value) = match parameter.strip_prefix("MULTEQ:") {
-            Some(value) => ("MULTEQ", value),
-            None => parameter.split_once(' ')?,
+        // These names end with a colon, and the value follows with no space.
+        let (name, value) = if let Some(value) = parameter.strip_prefix("MULTEQ:") {
+            ("MULTEQ", value)
+        } else if let Some(value) = parameter.strip_prefix("SP:") {
+            ("SP:", value)
+        } else {
+            parameter.split_once(' ')?
         };
         match name {
             "TONE" => {
@@ -514,7 +524,13 @@ impl State {
                     set(&mut d.dirac_filter, Some(filter))
                 })
             }
-            _ => None,
+            _ => {
+                let changed = self.device.sound_settings.apply(name, value);
+                changed.then_some(Change {
+                    zone: None,
+                    setting: Setting::SoundSettings,
+                })
+            }
         }
     }
 
@@ -984,7 +1000,6 @@ mod tests {
         let before = state.clone();
         for line in [
             "NSE1Hello",
-            "PSDRC OFF",
             "VSMONI1",
             "CVFL 50",
             "TR1 ON",
@@ -1085,7 +1100,7 @@ mod tests {
         assert_eq!(tone.bass, ToneLevel::from_db(3));
         assert_eq!(tone.treble, Some(ToneLevel::MIN));
         // Text that is not a value keeps the last value.
-        for text in ["BAS 99", "BAS", "TRE x", "TONE CTRL MAYBE", "DRC OFF"] {
+        for text in ["BAS 99", "BAS", "TRE x", "TONE CTRL MAYBE"] {
             assert_eq!(apply(&mut state, &message(text)), None, "{text}");
         }
         assert_eq!(device(&state), tone);
@@ -1374,6 +1389,34 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn sound_settings_follow_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::SoundSettings);
+        assert_eq!(apply(&mut state, "PSRSTR LOW"), changed());
+        assert_eq!(apply(&mut state, "PSRSTR LOW"), None);
+        assert_eq!(apply(&mut state, "PSSP:HF"), changed());
+        assert_eq!(apply(&mut state, "PSCINEMA EQ.ON"), changed());
+        assert_eq!(apply(&mut state, "PSSURLEV HEV"), changed());
+        let settings = &state.device().sound_settings;
+        assert_eq!(settings.audio_restorer, Some(crate::AudioRestorer::Low));
+        assert_eq!(
+            settings.effect_speakers,
+            Some(crate::EffectSpeakerSelection::HeightAndFloor)
+        );
+        assert_eq!(settings.cinema_eq, Some(true));
+        assert_eq!(settings.other["SURLEV"], "HEV");
+        // Settings that have their own value are not mixed up with these.
+        assert_eq!(
+            apply(&mut state, "PSLFC ON").map(|c| c.setting),
+            Some(Setting::Lfc)
+        );
+        assert_eq!(state.device().sound_settings.other.len(), 1);
+        for line in ["PSRSTR ?", "PSRSTR", "PSSP: ?"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]
