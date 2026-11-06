@@ -49,6 +49,20 @@ impl<'a> Page<'a> {
     }
 }
 
+/// Friendly name on the page at [`zone_path`] of the main zone, trimmed.
+/// `None` if the page has no name or the name is empty.
+#[must_use]
+pub fn friendly_name(page: &Page<'_>) -> Option<String> {
+    let mut name = None;
+    page.find(&value_of("FriendlyName"), Zone::Main, &mut |value| {
+        name = value
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
+    });
+    name
+}
+
 /// Path of the status page of a zone.
 #[must_use]
 pub const fn status_path(zone: Zone) -> &'static str {
@@ -282,6 +296,21 @@ mod tests {
             Page::parse(b"<item>"),
             Err(Error::InvalidXml { .. })
         ));
+    }
+
+    #[test]
+    fn friendly_name_is_trimmed() {
+        let page = Page::parse(
+            b"<item><FriendlyName><value> DENON AVR-3313 </value></FriendlyName></item>",
+        )
+        .unwrap();
+        assert_eq!(friendly_name(&page).as_deref(), Some("DENON AVR-3313"));
+        for body in [
+            &b"<item/>"[..],
+            b"<item><FriendlyName><value> </value></FriendlyName></item>",
+        ] {
+            assert_eq!(friendly_name(&Page::parse(body).unwrap()), None);
+        }
     }
 
     #[test]

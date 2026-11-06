@@ -96,8 +96,14 @@ pub const GET_RENAME_SOURCE: Definition = query("GetRenameSource", &[]);
 /// Deleted sources. The answer has `functiondelete` with `list` elements.
 pub const GET_DELETED_SOURCE: Definition = query("GetDeletedSource", &[]);
 
-/// Friendly name. The answer has a `friendlyname` element.
-pub const GET_FRIENDLY_NAME: Definition = query("GetFriendlyName", &[]);
+/// Friendly name.
+pub const GET_FRIENDLY_NAME: Definition = query(
+    "GetFriendlyName",
+    &[Pattern::text(
+        Field::FriendlyName,
+        &[Step::Tag("friendlyname")],
+    )],
+);
 
 // Attribute that tells if an Audyssey parameter can be changed.
 const CONTROL: &str = "control";

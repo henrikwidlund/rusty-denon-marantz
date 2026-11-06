@@ -98,6 +98,13 @@ impl Error {
         matches!(self, Self::Timeout { .. })
     }
 
+    /// Returns true if the receiver could not be reached: it did not answer in
+    /// time or the connection failed. Another try can work.
+    #[must_use]
+    pub const fn is_unreachable(&self) -> bool {
+        self.is_timeout() || self.is_network()
+    }
+
     /// Returns true if the connection failed. Another try can work.
     #[must_use]
     pub const fn is_network(&self) -> bool {

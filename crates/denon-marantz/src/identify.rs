@@ -58,7 +58,7 @@ pub async fn identify_on(
             .await
         {
             Ok(info) => info,
-            Err(error) if error.is_timeout() || error.is_network() => {
+            Err(error) if error.is_unreachable() => {
                 tracing::debug!(host, port, %error, "no answer when identifying the receiver");
                 unreachable += 1;
                 last_error = Some(error);
@@ -85,9 +85,14 @@ pub async fn identify_on(
         return Err(error);
     }
     tracing::info!(host, "identified avr receiver");
+    // The port that was tried for this type, or the usual one.
+    let port = candidates
+        .iter()
+        .find(|(receiver_type, _)| *receiver_type == ReceiverType::Avr)
+        .map_or(ReceiverType::Avr.port(), |&(_, port)| port);
     Ok(Identified {
         receiver_type: ReceiverType::Avr,
-        port: ReceiverType::Avr.port(),
+        port,
         device_info: device_info.unwrap_or_default(),
     })
 }

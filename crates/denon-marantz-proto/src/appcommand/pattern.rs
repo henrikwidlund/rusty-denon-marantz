@@ -9,6 +9,8 @@ use crate::zone::Zone;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Field {
+    /// Name that the user gave the receiver.
+    FriendlyName,
     /// Mute state of a zone.
     Muted,
     /// Power state of a zone.

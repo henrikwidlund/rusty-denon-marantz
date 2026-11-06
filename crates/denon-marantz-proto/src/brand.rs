@@ -11,6 +11,15 @@ pub enum Brand {
 }
 
 impl Brand {
+    /// Name of the brand.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Denon => "Denon",
+            Self::Marantz => "Marantz",
+        }
+    }
+
     /// Finds the brand from the manufacturer name in the device information.
     ///
     /// A missing or empty name gives [`Brand::Denon`]. Any other name that does
@@ -35,6 +44,12 @@ impl Brand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brand_names() {
+        assert_eq!(Brand::Denon.name(), "Denon");
+        assert_eq!(Brand::Marantz.name(), "Marantz");
+    }
 
     #[test]
     fn brand_from_manufacturer() {

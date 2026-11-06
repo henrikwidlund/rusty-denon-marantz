@@ -30,7 +30,12 @@ tokio = { workspace = true, features = ["net", "sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "test-util"] }
+
+[[example]]
+name = "status"
+required-features = ["http"]
 
 [lints]
 workspace = true
