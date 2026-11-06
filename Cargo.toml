@@ -16,8 +16,11 @@ denon-marantz-discovery = { path = "crates/denon-marantz-discovery", version = "
 thiserror = "2"
 quick-xml = "0.42"
 proptest = "1"
+socket2 = "0.6"
 allocation-counter = "0.8"
 bytes = "1"
+http = "1"
+if-addrs = "0.15"
 http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }

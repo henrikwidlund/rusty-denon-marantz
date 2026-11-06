@@ -11,6 +11,8 @@ mod audyssey;
 mod avr;
 #[cfg(feature = "telnet")]
 mod dirac;
+#[cfg(feature = "discovery")]
+mod discovery;
 #[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
@@ -33,6 +35,8 @@ pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 pub use denon_marantz_proto::telnet::Command;
 #[cfg(feature = "telnet")]
 pub use dirac::Dirac;
+#[cfg(feature = "discovery")]
+pub use discovery::{DiscoveredReceiver, DiscoveryConfig, LocationPolicy, discover};
 #[cfg(feature = "http")]
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]

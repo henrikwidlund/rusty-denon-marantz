@@ -4,6 +4,7 @@
 //! cargo run -p denon-marantz --example discover
 //! cargo run -p denon-marantz --example discover -- --same-host
 //! cargo run -p denon-marantz --example discover -- --from 192.168.1.4
+//! cargo run -p denon-marantz --example discover -- --target 192.168.1.10:1900
 //! RUST_LOG=denon_marantz=debug cargo run -p denon-marantz --example discover
 //! ```
 //!
@@ -14,6 +15,9 @@
 //!   this.
 //! - `--from ADDRESS`: search from this local address only. The default is every
 //!   IPv4 address of the computer.
+//! - `--target ADDRESS:PORT`: send the searches to this address and not to the
+//!   multicast address, for example `192.168.1.10:1900`. A receiver answers a
+//!   search that is sent to it. This needs no multicast.
 //! - `--wait SECONDS`: time to wait for answers, default 2.5.
 //!
 //! The output has the serial number of each receiver.
@@ -41,6 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .ok_or("--from needs an IPv4 address")?;
                 config.interfaces = Some(vec![address]);
             }
+            "--target" => {
+                config.target = args
+                    .next()
+                    .and_then(|value| value.parse().ok())
+                    .ok_or("--target needs an address and a port, for example 192.168.1.10:1900")?;
+            }
             "--wait" => {
                 let seconds: f64 = args
                     .next()
@@ -53,7 +63,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let started = std::time::Instant::now();
-    let receivers = discover(&config).await?;
+    let receivers = discover(&config).await.inspect_err(|error| {
+        if error.is_network() {
+            eprintln!(
+                "Hint: on macOS, give the Local Network permission to this terminal, or use --target."
+            );
+        }
+    })?;
     println!(
         "{} receiver(s) in {:.1?}",
         receivers.len(),

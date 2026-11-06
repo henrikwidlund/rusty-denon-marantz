@@ -13,8 +13,8 @@ default = ["telnet", "http", "discovery"]
 telnet = ["http", "tokio/io-util", "tokio/macros", "tokio/rt"]
 # AppCommand XML over HTTP.
 http = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util"]
-# Find receivers with SSDP and mDNS.
-discovery = ["dep:denon-marantz-discovery"]
+# Find receivers with SSDP.
+discovery = ["http", "tokio/rt", "dep:denon-marantz-discovery", "dep:if-addrs", "dep:socket2"]
 # Full message dumps in trace logs. Can contain personal data.
 sensitive-logs = []
 
@@ -28,10 +28,16 @@ hyper-util = { workspace = true, optional = true }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "time"] }
 tracing.workspace = true
+if-addrs = { workspace = true, optional = true }
+socket2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "rt", "signal", "test-util"] }
+
+[[example]]
+name = "discover"
+required-features = ["discovery"]
 
 [[example]]
 name = "status"

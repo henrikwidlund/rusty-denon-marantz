@@ -168,10 +168,14 @@ impl Location {
             .strip_prefix('[')
             .and_then(|rest| rest.strip_suffix(']'))
             .unwrap_or(host);
-        // A port that is there but not a number up to 65535 is not accepted.
-        let port = match authority.port() {
-            Some(port) => port.as_u16(),
-            None => 80,
+        // The `http` crate drops a port that is too large, so read it here.
+        let port = match authority.as_str().rsplit_once(':') {
+            Some((_, digits))
+                if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                digits.parse().ok()?
+            }
+            _ => 80,
         };
         Some(Self {
             host: host.to_owned(),

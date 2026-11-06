@@ -2,7 +2,7 @@
 
 #![allow(dead_code)] // Each test file uses a part of this.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,7 +10,7 @@ use std::time::Duration;
 use denon_marantz::{Avr, AvrBuilder, HttpConfig, Pacing};
 use denon_marantz_proto::ReceiverType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 
 /// Short timeouts and no pacing, so that tests are quick.
@@ -377,3 +377,56 @@ async fn serve_telnet(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// A fake SSDP port
+
+/// Answers each datagram that it gets with the same datagrams. It records the
+/// datagrams.
+pub(crate) struct FakeSsdp {
+    pub(crate) addr: SocketAddrV4,
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeSsdp {
+    pub(crate) async fn start(answers: Vec<Vec<u8>>) -> Self {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, socket.local_addr().unwrap().port());
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            let mut buffer = [0_u8; 2048];
+            while let Ok((length, sender)) = socket.recv_from(&mut buffer).await {
+                seen.lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[..length]).into_owned());
+                for answer in &answers {
+                    let _ = socket.send_to(answer, sender).await;
+                }
+            }
+        });
+        Self { addr, requests }
+    }
+
+    /// The search requests that came.
+    pub(crate) fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+/// An answer to a search with this location.
+pub(crate) fn ssdp_answer(location: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: {location}\r\n\
+         ST: upnp:rootdevice\r\nUSN: uuid:1234::upnp:rootdevice\r\n\r\n"
+    )
+    .into_bytes()
+}
+
+/// The device information of a device that is not an AV receiver.
+pub(crate) const SOUND_BAR_INFO: &[u8] = b"<Device_Info><CommApiVers>0301</CommApiVers>\
+    <ModelName>Denon Home</ModelName><CategoryName>SOUND BAR</CategoryName></Device_Info>";
+
+/// The device information of an AV receiver with a category.
+pub(crate) const AV_RECEIVER_INFO: &[u8] = b"<Device_Info><CommApiVers>0301</CommApiVers>\
+    <ModelName>AVC-X3700H</ModelName><CategoryName>AV RECEIVER</CategoryName></Device_Info>";

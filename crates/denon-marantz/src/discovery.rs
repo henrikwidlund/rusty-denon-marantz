@@ -68,7 +68,8 @@ pub struct DiscoveryConfig {
     /// Local addresses to search from. `None` uses each IPv4 address of the
     /// computer, except loopback and link-local ones.
     pub interfaces: Option<Vec<Ipv4Addr>>,
-    /// Where the searches go. This is the multicast address of SSDP.
+    /// Where the searches go. This is the multicast address of SSDP. It can
+    /// also be the address of one receiver with port 1900.
     pub target: SocketAddrV4,
     /// Which locations in the answers are used.
     pub locations: LocationPolicy,
@@ -124,6 +125,13 @@ pub struct DiscoveredReceiver {
 ///
 /// A local address that cannot send is skipped. A device whose description
 /// cannot be read is skipped.
+///
+/// On macOS a program needs the Local Network permission to send multicast.
+/// Without it every send fails with "No route to host" and this returns
+/// [`Error::Network`]. Give the permission to the terminal or the app that
+/// starts the program. To search without multicast, set
+/// [`DiscoveryConfig::target`] to the address of the receiver and port 1900.
+/// A receiver answers a search that is sent to it.
 ///
 /// # Errors
 ///

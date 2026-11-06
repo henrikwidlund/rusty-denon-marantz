@@ -205,5 +205,5 @@ async fn no_addresses_to_search_from_is_an_empty_list() {
         ..config(&ssdp, &http)
     };
     assert_eq!(discover(&none).await.unwrap(), []);
-    assert!(ssdp.requests().is_empty());
+    assert_eq!(ssdp.requests(), Vec::<String>::new());
 }
