@@ -62,6 +62,11 @@ pub struct TelnetConfig {
     /// slower than commands. Then a command does not wait in the receiver
     /// behind many queries.
     pub query_interval: Duration,
+    /// Time without data from the receiver that a query waits for. The receiver
+    /// answers in order, so a command that is sent while it still answers
+    /// queries is answered late. A query does not wait longer than
+    /// one second after the last write.
+    pub query_quiet: Duration,
     /// Time after a command from the caller in which queries wait, so that the
     /// receiver answers the command first.
     pub background_pause: Duration,
@@ -78,6 +83,7 @@ impl Default for TelnetConfig {
             reconnect_max: Duration::from_secs(30),
             command_interval: Duration::from_millis(50),
             query_interval: Duration::from_millis(100),
+            query_quiet: Duration::from_millis(50),
             background_pause: Duration::from_millis(250),
         }
     }
@@ -335,6 +341,9 @@ struct Worker {
     status: watch::Sender<TelnetStatus>,
 }
 
+/// Longest time a query waits after the last write for the receiver to be quiet.
+const MAX_QUERY_WAIT: Duration = Duration::from_secs(1);
+
 /// Work that waits for a write.
 struct Queue {
     /// Lines from the caller, and the keep-alive query.
@@ -345,6 +354,8 @@ struct Queue {
     last_write: Option<Instant>,
     /// When the last line from the caller was written.
     last_user_write: Option<Instant>,
+    /// When data came from the receiver.
+    last_read: Option<Instant>,
 }
 
 impl Queue {
@@ -354,6 +365,7 @@ impl Queue {
             background,
             last_write: None,
             last_user_write: None,
+            last_read: None,
         }
     }
 
@@ -361,7 +373,8 @@ impl Queue {
     ///
     /// A line from the caller waits for the command interval after the last
     /// write. A query waits for the query interval, and for the pause after
-    /// the last line from the caller.
+    /// the last line from the caller. It also waits until the receiver is quiet,
+    /// but not longer than [`MAX_QUERY_WAIT`] after the last write.
     fn write_time(&self, config: &TelnetConfig) -> Option<Instant> {
         let after_last = |interval: Duration| {
             self.last_write
@@ -370,7 +383,11 @@ impl Queue {
         if !self.user.is_empty() {
             Some(after_last(config.command_interval))
         } else if !self.background.is_empty() {
-            let spaced = after_last(config.query_interval);
+            let mut spaced = after_last(config.query_interval);
+            if let Some(read) = self.last_read {
+                let quiet = (read + config.query_quiet).min(after_last(MAX_QUERY_WAIT));
+                spaced = spaced.max(quiet);
+            }
             let after_command = self
                 .last_user_write
                 .map(|written| written + config.background_pause);
@@ -461,6 +478,7 @@ impl Worker {
                     Ok(0) => break End::Closed,
                     Ok(count) => {
                         idle_since = Instant::now();
+                        queue.last_read = Some(idle_since);
                         asked = false;
                         decoder.decode(&buffer[..count], |text| self.handle_line(text, &mut filter));
                     }
@@ -694,6 +712,7 @@ mod tests {
         let config = TelnetConfig {
             command_interval: Duration::from_millis(50),
             query_interval: Duration::from_millis(100),
+            query_quiet: Duration::from_millis(50),
             background_pause: Duration::from_millis(250),
             ..TelnetConfig::default()
         };
@@ -718,6 +737,11 @@ mod tests {
         // If the last write is later, the interval counts from there.
         queue.last_write = Some(start + ms(400));
         assert_eq!(queue.write_time(&config), Some(start + ms(500)));
+        // A query waits until the receiver is quiet, but not for ever.
+        queue.last_read = Some(start + ms(480));
+        assert_eq!(queue.write_time(&config), Some(start + ms(530)));
+        queue.last_read = Some(start + ms(1390));
+        assert_eq!(queue.write_time(&config), Some(start + ms(1400)));
         queue.background.clear();
         assert_eq!(queue.write_time(&config), None);
     }

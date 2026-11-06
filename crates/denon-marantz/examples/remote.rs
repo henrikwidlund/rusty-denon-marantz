@@ -16,7 +16,9 @@
 //!   receiver answers the queries after a connect for several seconds. With a
 //!   wait you see how fast it answers a command when it is not busy.
 //! - `--listen SECONDS`: how long to show events after the command, default 3.
-//! - `--command-interval MS` and `--query-interval MS`: the spacing of writes.
+//! - `--command-interval MS`, `--query-interval MS` and `--query-quiet MS`: the
+//!   spacing of writes. A query also waits until the receiver sent no data for
+//!   the quiet time.
 //!
 //! Commands: power-on, power-standby, device-power-on, device-power-standby,
 //! volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
@@ -109,6 +111,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--query-interval" => {
                 config.query_interval =
                     Duration::from_millis(number(&mut args, "--query-interval")?);
+            }
+            "--query-quiet" => {
+                config.query_quiet = Duration::from_millis(number(&mut args, "--query-quiet")?);
             }
             _ => break word,
         }

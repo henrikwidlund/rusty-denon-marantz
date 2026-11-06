@@ -24,6 +24,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         reconnect_max: Duration::from_millis(100),
         command_interval: Duration::ZERO,
         query_interval: Duration::ZERO,
+        query_quiet: Duration::ZERO,
         background_pause: Duration::ZERO,
     }
 }
