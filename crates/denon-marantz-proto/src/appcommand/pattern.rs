@@ -11,6 +11,8 @@ use crate::zone::Zone;
 pub enum Field {
     /// Name that the user gave the receiver.
     FriendlyName,
+    /// Name of a zone.
+    ZoneName,
     /// Mute state of a zone.
     Muted,
     /// Power state of a zone.

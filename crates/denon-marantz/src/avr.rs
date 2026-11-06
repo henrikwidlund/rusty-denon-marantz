@@ -31,7 +31,7 @@ const DEFAULT_NAME: &str = "AVR";
 /// Queries that fill the state. The answer has one item for each, in this order.
 /// Receivers of the 2016 generation and later get [`appcommand::GET_TONE_CONTROL`]
 /// after them.
-const UPDATE_COMMANDS: [Definition; 10] = [
+const UPDATE_COMMANDS: [Definition; 12] = [
     appcommand::GET_ALL_ZONE_POWER_STATUS,
     appcommand::GET_AUTO_STANDBY,
     appcommand::GET_DIMMER,
@@ -42,6 +42,8 @@ const UPDATE_COMMANDS: [Definition; 10] = [
     appcommand::GET_SURROUND_MODE_STATUS,
     appcommand::GET_RENAME_SOURCE,
     appcommand::GET_DELETED_SOURCE,
+    appcommand::GET_ZONE_NAME,
+    appcommand::GET_FRIENDLY_NAME,
 ];
 
 /// How the state is read over HTTP.

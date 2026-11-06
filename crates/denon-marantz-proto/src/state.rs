@@ -76,6 +76,10 @@ pub enum Setting {
     Sources,
     /// The list of sound modes that the receiver offers.
     SoundModes,
+    /// Name of a zone.
+    ZoneName,
+    /// Name that the user gave the receiver.
+    FriendlyName,
 }
 
 /// A value that changed.
@@ -107,6 +111,10 @@ pub struct ZoneState {
     pub auto_standby: Option<AutoStandby>,
     /// Sleep timer.
     pub sleep: Option<Sleep>,
+    /// Name of the zone, for example `ZONE2`. Only `AppCommand` reports it,
+    /// and the receiver does not send a rename on telnet: it changes at the
+    /// next update.
+    pub name: Option<String>,
 }
 
 /// A Dirac Live filter slot. Telnet reports it.
@@ -158,6 +166,9 @@ pub struct DeviceState {
     pub sources: SourceList,
     /// The sound modes that the receiver offers. Telnet reports them.
     pub sound_modes: SoundModeList,
+    /// Name that the user gave the receiver. A receiver that has no name
+    /// reports an empty one on telnet, which does not change this value.
+    pub friendly_name: Option<String>,
 }
 
 impl DeviceState {
@@ -295,6 +306,10 @@ impl State {
                     set(&mut d.settings_menu, Some(value))
                 })
             }
+            Event::Ns => {
+                let name = parameter.strip_prefix("FRN ")?.trim();
+                self.apply_friendly_name(name)
+            }
             Event::Ps => self.apply_sound_setting(parameter),
             Event::Op => {
                 if let Some(changed) = self.device.sound_modes.apply_op(parameter) {
@@ -412,6 +427,14 @@ impl State {
                     set(&mut d.dynamic_volume, volume)
                 })
             }
+            Field::ZoneName => {
+                let name = value.map(str::trim).filter(|name| !name.is_empty());
+                self.zone_change(zone, Setting::ZoneName, |z| {
+                    set_optional_text(&mut z.name, name)
+                })
+            }
+            // An empty name does not change the value.
+            Field::FriendlyName => self.apply_friendly_name(value?.trim()),
             _ => None,
         }
     }
@@ -503,6 +526,15 @@ impl State {
             }),
             _ => None,
         }
+    }
+
+    fn apply_friendly_name(&mut self, name: &str) -> Option<Change> {
+        if name.is_empty() {
+            return None;
+        }
+        self.device_change(Setting::FriendlyName, |d| {
+            set_text(&mut d.friendly_name, name)
+        })
     }
 
     fn set_power(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
@@ -1147,6 +1179,48 @@ mod tests {
         // Telnet and HTTP fill the same entry.
         assert_eq!(apply(&mut state, "SSFUNSAT/CBL Sat"), sources());
         assert_eq!(state.device().sources.name("SAT/CBL"), Some("Sat"));
+    }
+
+    #[test]
+    fn names_follow_events_and_answers() {
+        let mut state = State::new(false);
+        // Zone names come from the AppCommand answer, one for each zone.
+        assert_eq!(
+            state.apply_field(Zone::Zone2, Field::ZoneName, Some("ZONE2 ")),
+            change(Some(Zone::Zone2), Setting::ZoneName)
+        );
+        assert_eq!(
+            state.apply_field(Zone::Zone2, Field::ZoneName, Some("ZONE2")),
+            None
+        );
+        assert_eq!(state.zone(Zone::Zone2).name.as_deref(), Some("ZONE2"));
+        assert_eq!(state.zone(Zone::Main).name, None);
+        assert_eq!(
+            state.apply_field(Zone::Zone2, Field::ZoneName, None),
+            change(Some(Zone::Zone2), Setting::ZoneName)
+        );
+        assert_eq!(state.zone(Zone::Zone2).name, None);
+        // The friendly name comes from telnet and from the answer. An empty
+        // name keeps the value.
+        assert_eq!(apply(&mut state, "NSFRN "), None);
+        assert_eq!(state.device().friendly_name, None);
+        assert_eq!(
+            apply(&mut state, "NSFRN Denon AVC-A10H   "),
+            change(None, Setting::FriendlyName)
+        );
+        assert_eq!(apply(&mut state, "NSFRN Denon AVC-A10H"), None);
+        assert_eq!(apply(&mut state, "NSFRN   "), None);
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::FriendlyName, None),
+            None
+        );
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::FriendlyName, Some("Living room")),
+            change(None, Setting::FriendlyName)
+        );
+        assert_eq!(state.device().friendly_name.as_deref(), Some("Living room"));
+        // Other `NS` lines are not names.
+        assert_eq!(apply(&mut state, "NSFNT P01"), None);
     }
 
     #[test]

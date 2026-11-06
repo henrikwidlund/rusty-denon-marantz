@@ -6,6 +6,7 @@ mod common;
 
 use common::{
     AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, avr_x_receiver, builder, config, friendly_name_answer,
+    is_friendly_name_request,
 };
 use denon_marantz::{Avr, Error, UpdateMethod};
 use denon_marantz_proto::{
@@ -84,7 +85,7 @@ async fn update_reads_all_zones_with_one_request() {
         String::from_utf8_lossy(&last.body)
             .matches("<cmd id=\"1\">")
             .count(),
-        10
+        12
     );
 
     let state = avr.snapshot();
@@ -293,9 +294,7 @@ async fn bad_answers_to_update_are_errors() {
         let fake = Fake::start(
             move |seen| match (seen.method.as_str(), seen.path.as_str()) {
                 ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-                ("POST", "/goform/AppCommand.xml")
-                    if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
-                {
+                ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
                     Reply::Body(friendly_name_answer("X"))
                 }
                 ("POST", _) => Reply::Body(answer.to_vec()),
@@ -321,7 +320,7 @@ async fn update_reports_a_receiver_that_stops_answering() {
     let fake = Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-            ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") => {
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("X"))
             }
             ("POST", _) if flag.load(Ordering::SeqCst) => Reply::Hang,
@@ -354,6 +353,17 @@ async fn update_reads_the_source_names_and_the_hidden_sources() {
 }
 
 #[tokio::test]
+async fn update_reads_the_zone_names_and_the_friendly_name() {
+    let fake = avr_x_receiver().await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    avr.update().await.unwrap();
+    let state = avr.snapshot();
+    assert_eq!(state.zone(Zone::Main).name.as_deref(), Some("MAIN ZONE"));
+    assert_eq!(state.zone(Zone::Zone2).name.as_deref(), Some("Kitchen"));
+    assert_eq!(state.device().friendly_name.as_deref(), Some("Denon AVR"));
+}
+
+#[tokio::test]
 async fn update_of_a_2016_receiver_reads_tone_control() {
     let fake = avr_x_receiver().await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
@@ -363,7 +373,7 @@ async fn update_of_a_2016_receiver_reads_tone_control() {
         String::from_utf8_lossy(&last.body)
             .matches("<cmd id=\"1\">")
             .count(),
-        11
+        13
     );
     let state = avr.snapshot();
     assert_eq!(state.device().tone_control, Some(true));

@@ -96,6 +96,12 @@ pub const GET_RENAME_SOURCE: Definition = query("GetRenameSource", &[]);
 /// Deleted sources. The answer has `functiondelete` with `list` elements.
 pub const GET_DELETED_SOURCE: Definition = query("GetDeletedSource", &[]);
 
+/// Names of all zones.
+pub const GET_ZONE_NAME: Definition = query(
+    "GetZoneName",
+    &[Pattern::text(Field::ZoneName, &[Step::ZoneTag])],
+);
+
 /// Friendly name.
 pub const GET_FRIENDLY_NAME: Definition = query(
     "GetFriendlyName",

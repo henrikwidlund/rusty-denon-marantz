@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 87] = [
+static QUERIES: [Query; 88] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -120,6 +120,7 @@ static QUERIES: [Query; 87] = [
     both("SSFUN ?"),            // Source names
     both("SSSOD ?"),            // Sources in use or hidden
     both("OPSMLALL ?"),         // Sound modes that the receiver offers
+    both("NSFRN?"),             // Friendly name
     both("PSREFLEV ?"),         // Reference Level
     both("PSDYNVOL ?"),         // Dynamic Vol.
     both("SPPR ?"),             // Speaker Preset
@@ -178,8 +179,8 @@ mod tests {
         for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert_eq!(denon.len(), 82);
-        assert_eq!(marantz.len(), 86);
+        assert_eq!(denon.len(), 83);
+        assert_eq!(marantz.len(), 87);
     }
 
     #[test]
@@ -190,9 +191,9 @@ mod tests {
     }
 
     #[test]
-    fn both_brands_ask_for_the_sources_and_sound_modes() {
+    fn both_brands_ask_for_the_sources_sound_modes_and_name() {
         for brand in BRANDS {
-            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?"] {
+            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?"] {
                 assert!(state_queries(brand).any(|query| query == wanted));
             }
         }

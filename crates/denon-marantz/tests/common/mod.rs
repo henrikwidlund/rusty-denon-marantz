@@ -191,6 +191,8 @@ pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
     <cmd><functiondelete>\
         <list><name>Media Player</name><FuncName>Media Player</FuncName><use>1</use></list>\
         <list><name>CD</name><FuncName>CD</FuncName><use>0</use></list></functiondelete></cmd>\
+    <cmd><zone1>MAIN ZONE </zone1><zone2>Kitchen</zone2></cmd>\
+    <cmd><friendlyname>Denon AVR</friendlyname></cmd>\
     </rx>";
 
 /// The answer to the update request of a 2016 receiver: the tone control item
@@ -204,6 +206,13 @@ pub(crate) fn update_answer_with_tone() -> Vec<u8> {
         <treblevalue>0</treblevalue></cmd></rx>",
     ]
     .concat()
+}
+
+/// The request that a connect sends to read the friendly name. The update
+/// request has the same command with others.
+pub(crate) fn is_friendly_name_request(body: &[u8]) -> bool {
+    let body = String::from_utf8_lossy(body);
+    body.contains("GetFriendlyName") && !body.contains("GetAllZonePowerStatus")
 }
 
 pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
@@ -221,9 +230,7 @@ pub(crate) async fn avr_x_receiver_with_info(info: &'static [u8]) -> Fake {
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
             ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
-            ("POST", "/goform/AppCommand.xml")
-                if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
-            {
+            ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("Living room"))
             }
             ("POST", "/goform/AppCommand.xml")
