@@ -7,9 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use denon_marantz::{HttpConfig, Pacing};
+use denon_marantz::{Avr, AvrBuilder, HttpConfig, Pacing};
+use denon_marantz_proto::ReceiverType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
 
 /// Short timeouts and no pacing, so that tests are quick.
 pub(crate) fn config() -> HttpConfig {
@@ -157,4 +159,192 @@ async fn read_request(socket: &mut TcpStream, buffer: &mut Vec<u8>) -> Option<Se
     let body = buffer[head_end..head_end + length].to_vec();
     buffer.drain(..head_end + length);
     Some(Seen { method, path, body })
+}
+
+// ---------------------------------------------------------------------------
+// A receiver for `Avr`
+
+pub(crate) const DESCRIPTION: &[u8] =
+    include_bytes!("../../../denon-marantz-proto/tests/data/xml/AVR-X1600H-description.xml");
+pub(crate) const AVR_X_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
+    <DeviceZones>2</DeviceZones></Device_Info>";
+/// The answer to the update request, one item for each command.
+pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
+    <cmd><zone1>ON</zone1><zone2>OFF</zone2></cmd>\
+    <cmd><list><listvalue><zone>Main</zone><value>60</value></listvalue>\
+        <listvalue><zone>Zone2</zone><value>0</value></listvalue></list></cmd>\
+    <cmd><value>2</value></cmd>\
+    <cmd><mode>1</mode></cmd>\
+    <cmd><zone1><source>MPLAY</source></zone1><zone2><source>CD</source></zone2></cmd>\
+    <cmd><zone1><volume>-36.5</volume><limit>-10</limit></zone1>\
+        <zone2><volume>--</volume><limit>OFF</limit></zone2></cmd>\
+    <cmd><zone1>off</zone1><zone2>ON</zone2></cmd>\
+    <cmd><surround>DOLBY  ATMOS</surround></cmd>\
+    </rx>";
+
+pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
+    format!("<rx><cmd><friendlyname> {name} </friendlyname></cmd></rx>").into_bytes()
+}
+
+/// An AVR-X receiver that has all the pages.
+pub(crate) async fn avr_x_receiver() -> Fake {
+    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
+        ("POST", "/goform/AppCommand.xml")
+            if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
+        {
+            Reply::Body(friendly_name_answer("Living room"))
+        }
+        ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await
+}
+
+/// The settings for an `Avr` that talks to `fake`.
+pub(crate) fn builder(fake: &Fake, receiver_type: ReceiverType) -> AvrBuilder {
+    Avr::builder("127.0.0.1")
+        .http_config(config())
+        .probes(&[(receiver_type, fake.port)])
+        .description_port(fake.port)
+}
+
+/// Waits until `condition` is true. Fails the test after two seconds.
+pub(crate) async fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
+    for _ in 0..200 {
+        if condition() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+// ---------------------------------------------------------------------------
+// A fake telnet server
+
+enum Control {
+    Send(Vec<u8>),
+    Close,
+}
+
+/// A fake telnet port. It sends and closes on command and records what the
+/// client sends. The commands go to the newest connection.
+pub(crate) struct FakeTelnet {
+    pub(crate) port: u16,
+    connections: Arc<AtomicUsize>,
+    closed_by_client: Arc<AtomicUsize>,
+    received: Arc<Mutex<Vec<u8>>>,
+    control: Arc<Mutex<Option<mpsc::UnboundedSender<Control>>>>,
+    /// Commands that came before the first connection was accepted.
+    backlog: Arc<Mutex<Vec<Control>>>,
+}
+
+impl FakeTelnet {
+    pub(crate) async fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let fake = Self {
+            port,
+            connections: Arc::new(AtomicUsize::new(0)),
+            closed_by_client: Arc::new(AtomicUsize::new(0)),
+            received: Arc::new(Mutex::new(Vec::new())),
+            control: Arc::new(Mutex::new(None)),
+            backlog: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (connections, closed, received, control, backlog) = (
+            fake.connections.clone(),
+            fake.closed_by_client.clone(),
+            fake.received.clone(),
+            fake.control.clone(),
+            fake.backlog.clone(),
+        );
+        tokio::spawn(async move {
+            loop {
+                let Ok((socket, _)) = listener.accept().await else {
+                    return;
+                };
+                connections.fetch_add(1, Ordering::SeqCst);
+                let (sender, commands) = mpsc::unbounded_channel();
+                // The lock order is the same as in `FakeTelnet::control`.
+                let mut newest = control.lock().unwrap();
+                for command in backlog.lock().unwrap().drain(..) {
+                    let _ = sender.send(command);
+                }
+                *newest = Some(sender);
+                drop(newest);
+                tokio::spawn(serve_telnet(
+                    socket,
+                    commands,
+                    received.clone(),
+                    closed.clone(),
+                ));
+            }
+        });
+        fake
+    }
+
+    /// Sends bytes to the newest connection.
+    pub(crate) fn send(&self, bytes: &[u8]) {
+        self.control(Control::Send(bytes.to_vec()));
+    }
+
+    /// Closes the newest connection from this side.
+    pub(crate) fn close(&self) {
+        self.control(Control::Close);
+    }
+
+    fn control(&self, command: Control) {
+        match self.control.lock().unwrap().as_ref() {
+            Some(sender) => {
+                let _ = sender.send(command);
+            }
+            None => self.backlog.lock().unwrap().push(command),
+        }
+    }
+
+    /// Connections that were opened.
+    pub(crate) fn connections(&self) -> usize {
+        self.connections.load(Ordering::SeqCst)
+    }
+
+    /// Connections that the client closed.
+    pub(crate) fn closed_by_client(&self) -> usize {
+        self.closed_by_client.load(Ordering::SeqCst)
+    }
+
+    /// Everything that the client sent, as text.
+    pub(crate) fn received(&self) -> String {
+        String::from_utf8_lossy(&self.received.lock().unwrap()).into_owned()
+    }
+}
+
+async fn serve_telnet(
+    mut socket: TcpStream,
+    mut control: mpsc::UnboundedReceiver<Control>,
+    received: Arc<Mutex<Vec<u8>>>,
+    closed_by_client: Arc<AtomicUsize>,
+) {
+    let mut buffer = [0_u8; 1024];
+    loop {
+        tokio::select! {
+            read = socket.read(&mut buffer) => match read {
+                Ok(0) | Err(_) => {
+                    closed_by_client.fetch_add(1, Ordering::SeqCst);
+                    return;
+                }
+                Ok(count) => received.lock().unwrap().extend_from_slice(&buffer[..count]),
+            },
+            command = control.recv() => match command {
+                Some(Control::Send(bytes)) => {
+                    if socket.write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                }
+                Some(Control::Close) | None => return,
+            },
+        }
+    }
 }

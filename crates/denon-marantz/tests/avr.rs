@@ -4,14 +4,14 @@
 
 mod common;
 
-use common::{Fake, Reply, config};
+use common::{
+    AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, avr_x_receiver, builder, config, friendly_name_answer,
+};
 use denon_marantz::{Avr, Error, UpdateMethod};
 use denon_marantz_proto::{
     AutoStandby, Brand, DimmerMode, EcoMode, Power, ReceiverType, Volume, Zone,
 };
 
-const DESCRIPTION: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVR-X1600H-description.xml");
 const OLD_STATUS: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVR-3313-formMainZone_MainZoneXmlStatus.xml"
 );
@@ -22,46 +22,9 @@ const OLD_ZONE2_STATUS: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVR-3313-formZone2_Zone2XmlStatus.xml"
 );
 
-const AVR_X_INFO: &[u8] =
-    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
-    <DeviceZones>2</DeviceZones></Device_Info>";
 const OLD_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0100</CommApiVers><ModelName>AVR-3313</ModelName>\
     <DeviceZones>2</DeviceZones></Device_Info>";
-
-/// The answer to the update request, one item for each command.
-const UPDATE_ANSWER: &[u8] = b"<rx>\
-    <cmd><zone1>ON</zone1><zone2>OFF</zone2></cmd>\
-    <cmd><list><listvalue><zone>Main</zone><value>60</value></listvalue>\
-        <listvalue><zone>Zone2</zone><value>0</value></listvalue></list></cmd>\
-    <cmd><value>2</value></cmd>\
-    <cmd><mode>1</mode></cmd>\
-    <cmd><zone1><source>MPLAY</source></zone1><zone2><source>CD</source></zone2></cmd>\
-    <cmd><zone1><volume>-36.5</volume><limit>-10</limit></zone1>\
-        <zone2><volume>--</volume><limit>OFF</limit></zone2></cmd>\
-    <cmd><zone1>off</zone1><zone2>ON</zone2></cmd>\
-    <cmd><surround>DOLBY  ATMOS</surround></cmd>\
-    </rx>";
-
-fn friendly_name_answer(name: &str) -> Vec<u8> {
-    format!("<rx><cmd><friendlyname> {name} </friendlyname></cmd></rx>").into_bytes()
-}
-
-/// An AVR-X receiver that has all the pages.
-async fn avr_x_receiver() -> Fake {
-    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
-        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-        ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
-        ("POST", "/goform/AppCommand.xml")
-            if String::from_utf8_lossy(&seen.body).contains("GetFriendlyName") =>
-        {
-            Reply::Body(friendly_name_answer("Living room"))
-        }
-        ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
-        _ => Reply::Status(404),
-    })
-    .await
-}
 
 /// An older receiver that has status pages and an error page for the rest.
 async fn old_receiver() -> Fake {
@@ -82,12 +45,7 @@ async fn old_receiver() -> Fake {
 }
 
 async fn connect(fake: &Fake, receiver_type: ReceiverType) -> Result<Avr, Error> {
-    Avr::builder("127.0.0.1")
-        .http_config(config())
-        .probes(&[(receiver_type, fake.port)])
-        .description_port(fake.port)
-        .connect()
-        .await
+    builder(fake, receiver_type).connect().await
 }
 
 #[tokio::test]

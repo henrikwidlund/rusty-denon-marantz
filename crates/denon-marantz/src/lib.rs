@@ -1,5 +1,7 @@
 //! Async client to monitor and control Denon and Marantz AV receivers.
 
+#[cfg(feature = "http")]
+mod channels;
 mod error;
 mod pacer;
 
@@ -9,6 +11,8 @@ mod avr;
 mod http;
 #[cfg(feature = "http")]
 mod identify;
+#[cfg(feature = "telnet")]
+mod telnet;
 
 pub use error::Error;
 pub use pacer::{Adaptive, Pacer, Pacing};
@@ -19,3 +23,5 @@ pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]
 pub use identify::{Identified, identify, identify_on};
+#[cfg(feature = "telnet")]
+pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};

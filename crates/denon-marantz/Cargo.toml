@@ -9,8 +9,8 @@ repository.workspace = true
 
 [features]
 default = ["telnet", "http", "discovery"]
-# Live events and commands on telnet port 23.
-telnet = []
+# Live events and commands on telnet port 23. Needs `http` to identify the receiver.
+telnet = ["http", "tokio/io-util", "tokio/macros", "tokio/rt"]
 # AppCommand XML over HTTP.
 http = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util"]
 # Find receivers with SSDP and mDNS.
@@ -31,11 +31,15 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "test-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "signal", "test-util"] }
 
 [[example]]
 name = "status"
 required-features = ["http"]
+
+[[example]]
+name = "watch"
+required-features = ["telnet"]
 
 [lints]
 workspace = true

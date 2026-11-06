@@ -5,12 +5,15 @@ use denon_marantz_proto::appcommand::{
     self, Cmd, Definition, Endpoint, Field, Response, write_body,
 };
 use denon_marantz_proto::status_page::{self, Page};
-use denon_marantz_proto::{Brand, DeviceDescription, ReceiverType, State, Zone};
-use tokio::sync::watch;
+use denon_marantz_proto::{Brand, Change, DeviceDescription, ReceiverType, State, Zone};
+use tokio::sync::{broadcast, watch};
 
+use crate::channels::Channels;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
+#[cfg(feature = "telnet")]
+use crate::telnet::{Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
@@ -75,6 +78,8 @@ pub struct AvrBuilder {
     http: HttpConfig,
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
+    #[cfg(feature = "telnet")]
+    telnet: TelnetConfig,
 }
 
 /// A receiver that is read over HTTP.
@@ -87,7 +92,9 @@ pub struct Avr {
     info: Info,
     /// The request body of [`UPDATE_COMMANDS`].
     update_body: Bytes,
-    state: watch::Sender<State>,
+    channels: Channels,
+    #[cfg(feature = "telnet")]
+    telnet: Telnet,
 }
 
 impl Avr {
@@ -99,6 +106,8 @@ impl Avr {
             http: HttpConfig::default(),
             probes: None,
             description_port: None,
+            #[cfg(feature = "telnet")]
+            telnet: TelnetConfig::default(),
         }
     }
 
@@ -111,13 +120,21 @@ impl Avr {
     /// Watches the state. It is empty until [`Avr::update`] has run.
     #[must_use]
     pub fn state(&self) -> watch::Receiver<State> {
-        self.state.subscribe()
+        self.channels.watch_state()
+    }
+
+    /// Follows each change of the state, with the zone and the value that
+    /// changed. A subscriber that is too slow loses the oldest changes and gets
+    /// [`broadcast::error::RecvError::Lagged`]. The state is still correct.
+    #[must_use]
+    pub fn changes(&self) -> broadcast::Receiver<Change> {
+        self.channels.subscribe_changes()
     }
 
     /// A copy of the state now.
     #[must_use]
     pub fn snapshot(&self) -> State {
-        self.state.borrow().clone()
+        self.channels.snapshot()
     }
 
     /// Reads the state of all zones from the receiver.
@@ -135,6 +152,46 @@ impl Avr {
         }
     }
 
+    /// Opens the telnet connection and keeps it open.
+    ///
+    /// Events from the receiver then change the state at once. If the
+    /// connection is lost, a task connects again. Does nothing if the
+    /// connection is open. A receiver allows one telnet connection, so a
+    /// remote control app can take it away; the task takes it back.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the first connection fails. Nothing keeps trying
+    /// then.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_connect(&self) -> Result<(), Error> {
+        self.telnet.connect(&self.info.host, &self.channels).await
+    }
+
+    /// Closes the telnet connection and stops the task that keeps it open.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_disconnect(&self) {
+        self.telnet.disconnect().await;
+    }
+
+    /// Watches the telnet connection. It is disconnected until
+    /// [`Avr::telnet_connect`] has worked, and while the task tries to
+    /// connect again.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub fn telnet_status(&self) -> watch::Receiver<TelnetStatus> {
+        self.telnet.watch_status()
+    }
+
+    /// Follows the events from the receiver, as they come on telnet. Repeated
+    /// events that a query causes are left out. A subscriber that is too slow
+    /// loses the oldest events and gets [`broadcast::error::RecvError::Lagged`].
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub fn events(&self) -> broadcast::Receiver<TelnetEvent> {
+        self.telnet.subscribe_events()
+    }
+
     async fn update_with_appcommand(&self) -> Result<(), Error> {
         self.http
             .post_parsed(
@@ -142,14 +199,12 @@ impl Avr {
                 self.update_body.clone(),
                 |body| {
                     let response = Response::parse(body, UPDATE_COMMANDS.len())?;
-                    self.state.send_if_modified(|state| {
-                        let mut changed = false;
+                    self.channels.modify(|state, notify| {
                         for &zone in &self.info.zones {
                             response.extract(&UPDATE_COMMANDS, zone, |field, value| {
-                                changed |= state.apply_field(zone, field, value).is_some();
+                                notify(state.apply_field(zone, field, value));
                             });
                         }
-                        changed
                     });
                     Ok(())
                 },
@@ -162,17 +217,15 @@ impl Avr {
             let status = page(&self.http, status_page::status_path(zone)).await?;
             let zone_page = page(&self.http, status_page::zone_path(zone)).await?;
             let (status, zone_page) = (parse_page(status.as_ref()), parse_page(zone_page.as_ref()));
-            self.state.send_if_modified(|state| {
-                let mut changed = false;
+            self.channels.modify(|state, notify| {
                 status_page::extract(
                     status.as_ref(),
                     zone_page.as_ref(),
                     zone,
                     &mut |field, value| {
-                        changed |= state.apply_field(zone, field, value).is_some();
+                        notify(state.apply_field(zone, field, value));
                     },
                 );
-                changed
             });
         }
         Ok(())
@@ -204,6 +257,15 @@ impl AvrBuilder {
         self
     }
 
+    /// Sets the telnet connection: port, timeouts and how soon to connect
+    /// again.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn telnet_config(mut self, config: TelnetConfig) -> Self {
+        self.telnet = config;
+        self
+    }
+
     /// Identifies the receiver and reads what it tells about itself.
     ///
     /// The state is empty until [`Avr::update`] runs.
@@ -214,6 +276,8 @@ impl AvrBuilder {
     /// unusable device description is not an error: the brand is then
     /// [`Brand::Denon`] and the model is not known.
     pub async fn connect(self) -> Result<Avr, Error> {
+        #[cfg(feature = "telnet")]
+        self.telnet.check()?;
         let Identified {
             receiver_type,
             port,
@@ -269,7 +333,9 @@ impl AvrBuilder {
             http,
             info,
             update_body,
-            state: watch::Sender::new(State::new(single_zone)),
+            channels: Channels::new(State::new(single_zone)),
+            #[cfg(feature = "telnet")]
+            telnet: Telnet::new(self.telnet),
         })
     }
 
