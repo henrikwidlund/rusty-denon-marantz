@@ -19,6 +19,8 @@ pub struct DeviceInfo<'a> {
     pub device_zones: Option<u8>,
     /// Returns true if the receiver supports Dirac Live.
     pub dirac_live: bool,
+    /// Kind of device, for example `AV RECEIVER`. Older receivers have none.
+    pub category: Option<Cow<'a, str>>,
 }
 
 /// Versions of the communication API that AVR-X receivers report.
@@ -56,6 +58,7 @@ impl<'a> DeviceInfo<'a> {
             model_name: text("ModelName"),
             device_zones: text("DeviceZones").and_then(|zones| zones.trim().parse().ok()),
             dirac_live: root.contains_descendant("DiracLive"),
+            category: text("CategoryName"),
         })
     }
 
@@ -67,7 +70,18 @@ impl<'a> DeviceInfo<'a> {
             model_name: self.model_name.map(|v| Cow::Owned(v.into_owned())),
             device_zones: self.device_zones,
             dirac_live: self.dirac_live,
+            category: self.category.map(|v| Cow::Owned(v.into_owned())),
         }
+    }
+
+    /// Returns false only if the device says that it is another kind of
+    /// device than an AV receiver, for example a speaker. A device with no
+    /// category counts as an AV receiver, because older receivers have none.
+    #[must_use]
+    pub fn is_av_receiver(&self) -> bool {
+        self.category
+            .as_deref()
+            .is_none_or(|category| category.trim().eq_ignore_ascii_case("AV RECEIVER"))
     }
 
     /// Returns true if the receiver is an AVR-X receiver.
@@ -129,6 +143,23 @@ mod tests {
     }
 
     #[test]
+    fn the_category_tells_if_it_is_an_av_receiver() {
+        let info = |category: &str| {
+            let xml = format!("<Device_Info><CategoryName>{category}</CategoryName></Device_Info>");
+            DeviceInfo::parse(xml.as_bytes()).unwrap().into_owned()
+        };
+        assert_eq!(info("AV RECEIVER").category.as_deref(), Some("AV RECEIVER"));
+        assert!(info("AV RECEIVER").is_av_receiver());
+        assert!(info(" av receiver ").is_av_receiver());
+        assert!(!info("SOUND BAR").is_av_receiver());
+        assert!(!info("").is_av_receiver() || info("").category.is_none());
+        // Older receivers have no category.
+        let none = DeviceInfo::parse(b"<Device_Info></Device_Info>").unwrap();
+        assert_eq!(none.category, None);
+        assert!(none.is_av_receiver());
+    }
+
+    #[test]
     fn only_direct_children_are_read() {
         let xml = b"<Device_Info><a><ModelName>AVR-X1</ModelName></a></Device_Info>";
         assert_eq!(DeviceInfo::parse(xml).unwrap().model_name, None);
@@ -155,6 +186,7 @@ mod tests {
             model_name: model.map(Cow::Borrowed),
             device_zones: None,
             dirac_live: false,
+            category: None,
         };
         assert!(by(Some("0210"), None).is_avr_x());
         assert!(by(Some("x0300y"), Some("Unknown")).is_avr_x());
