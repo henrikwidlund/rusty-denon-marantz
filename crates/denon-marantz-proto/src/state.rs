@@ -65,7 +65,8 @@ pub struct ZoneState {
     pub muted: Option<bool>,
     /// Selected source, as the receiver reports it.
     pub source: Option<String>,
-    /// Sound mode, as the receiver reports it, with single spaces.
+    /// Sound mode, as the receiver reports it, with single spaces. Only the
+    /// main zone has one.
     pub sound_mode: Option<String>,
     /// Auto standby time.
     pub auto_standby: Option<AutoStandby>,
@@ -142,7 +143,7 @@ impl State {
                 let source = telnet_to_display_source(parameter);
                 self.zone_change(zone?, Setting::Source, |z| set_text(&mut z.source, source))
             }
-            Event::Ms => {
+            Event::Ms if zone == Some(Zone::Main) => {
                 // Quick and smart select are not sound modes.
                 if parameter.starts_with("QUICK") || parameter.starts_with("SMART") {
                     return None;
@@ -226,6 +227,8 @@ impl State {
                     set(&mut z.auto_standby, standby)
                 })
             }
+            // Only the main zone has a sound mode.
+            Field::SoundModeRaw if zone != Zone::Main => None,
             Field::SoundModeRaw => {
                 let mode = value.map(collapse_spaces);
                 self.zone_change(zone, Setting::SoundMode, |z| {
@@ -508,6 +511,23 @@ mod tests {
         assert_eq!(
             state.zone(Zone::Main).sound_mode.as_deref(),
             Some("DOLBY AUDIO - DD+ + DSUR")
+        );
+    }
+
+    #[test]
+    fn only_the_main_zone_has_a_sound_mode() {
+        let mut state = State::new(false);
+        assert_eq!(apply(&mut state, "Z2MSSTEREO"), None);
+        for zone in [Zone::Zone2, Zone::Zone3] {
+            assert_eq!(
+                state.apply_field(zone, Field::SoundModeRaw, Some("Stereo")),
+                None
+            );
+            assert_eq!(state.zone(zone).sound_mode, None);
+        }
+        assert_eq!(
+            state.apply_field(Zone::Main, Field::SoundModeRaw, Some("Stereo")),
+            change(Some(Zone::Main), Setting::SoundMode)
         );
     }
 

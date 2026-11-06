@@ -7,7 +7,7 @@ use core::fmt;
 /// The telnet code is the volume above -80 dB: two digits for whole dB and
 /// three digits for a half step, for example `43` is -37.0 dB and `435` is
 /// -36.5 dB. [`Display`](fmt::Display) writes the telnet code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Volume(u8);
 
 impl Volume {
@@ -81,6 +81,13 @@ impl Volume {
     }
 }
 
+impl fmt::Debug for Volume {
+    /// Writes the volume in dB, for example `-36.5 dB`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.1} dB", self.db())
+    }
+}
+
 impl fmt::Display for Volume {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let whole = self.0 / 2;
@@ -105,6 +112,17 @@ mod tests {
         assert_eq!(code(-36.5), "435");
         assert_eq!(code(0.0), "80");
         assert_eq!(code(18.0), "98");
+    }
+
+    #[test]
+    fn debug_shows_db() {
+        assert_eq!(format!("{:?}", Volume::MIN), "-80.0 dB");
+        assert_eq!(format!("{:?}", Volume::MAX), "18.0 dB");
+        assert_eq!(
+            format!("{:?}", Volume::from_db_rounded(-36.5).unwrap()),
+            "-36.5 dB"
+        );
+        assert_eq!(format!("{:?}", Some(Volume::MIN)), "Some(-80.0 dB)");
     }
 
     #[test]
