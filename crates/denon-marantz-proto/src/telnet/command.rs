@@ -16,6 +16,7 @@ use crate::values::{
 use crate::video::VideoSettingValue;
 use crate::volume::Volume;
 use crate::zone::Zone;
+use crate::zone_settings::ZoneSettingValue;
 
 /// A telnet command.
 ///
@@ -75,13 +76,13 @@ pub enum Command<'a> {
     /// only when it is on. The receiver ignores this while Dynamic EQ is on,
     /// or with a Dirac Live filter such as Dirac ART.
     ToneControl(bool),
-    /// Sets the bass level.
+    /// Sets the bass level of the main zone, from -6 to +6 dB.
     SetBass(ToneLevel),
     /// Raises the bass by one step.
     BassUp,
     /// Lowers the bass by one step.
     BassDown,
-    /// Sets the treble level.
+    /// Sets the treble level of the main zone, from -6 to +6 dB.
     SetTreble(ToneLevel),
     /// Raises the treble by one step.
     TrebleUp,
@@ -113,6 +114,10 @@ pub enum Command<'a> {
     SetTrigger(Trigger, bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
+    /// Sets a setting of zone 2 or zone 3, for example the bass. The zone given
+    /// to [`Command::write_line`] chooses the zone. Returns
+    /// [`Error::UnsupportedZone`] for the main zone.
+    SetZoneSetting(ZoneSettingValue),
     /// Controls the tuner.
     Tuner(TunerCommand),
     /// Sets a video setting, for example the video processing mode.
@@ -194,14 +199,10 @@ impl Command<'_> {
             Self::SetupMenu(false) => out.push_str("MNMEN OFF"),
             Self::ToneControl(true) => out.push_str("PSTONE CTRL ON"),
             Self::ToneControl(false) => out.push_str("PSTONE CTRL OFF"),
-            Self::SetBass(level) => {
-                let _ = write!(out, "PSBAS {level}");
-            }
+            Self::SetBass(level) => push_main_tone(out, "PSBAS", level)?,
             Self::BassUp => out.push_str("PSBAS UP"),
             Self::BassDown => out.push_str("PSBAS DOWN"),
-            Self::SetTreble(level) => {
-                let _ = write!(out, "PSTRE {level}");
-            }
+            Self::SetTreble(level) => push_main_tone(out, "PSTRE", level)?,
             Self::TrebleUp => out.push_str("PSTRE UP"),
             Self::TrebleDown => out.push_str("PSTRE DOWN"),
             Self::DynamicEq(true) => out.push_str("PSDYNEQ ON"),
@@ -241,6 +242,7 @@ impl Command<'_> {
                 let _ = write!(out, "SD{}", mode.code());
             }
             Self::SetVideoSetting(value) => value.write(out),
+            Self::SetZoneSetting(value) => value.write(zone, out)?,
             Self::Tuner(command) => command.write(out)?,
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,
@@ -268,6 +270,17 @@ const fn zone_prefix(zone: Zone, main: &'static str) -> &'static str {
 fn push_zone(out: &mut String, zone: Zone, main: &'static str, rest: &str) {
     out.push_str(zone_prefix(zone, main));
     out.push_str(rest);
+}
+
+/// The main zone takes bass and treble from -6 to +6 dB only.
+fn push_main_tone(out: &mut String, name: &str, level: ToneLevel) -> Result<(), Error> {
+    if !level.is_main_range() {
+        return Err(Error::ValueOutOfRange {
+            what: "main zone bass or treble",
+        });
+    }
+    let _ = write!(out, "{name} {level}");
+    Ok(())
 }
 
 fn push_trigger(out: &mut String, trigger: Trigger, on: bool) {

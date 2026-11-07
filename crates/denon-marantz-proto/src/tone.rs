@@ -2,63 +2,67 @@
 
 use core::fmt;
 
-/// Bass or treble level from -6 dB to +6 dB in steps of 1 dB.
+/// Bass or treble level from -10 dB to +10 dB in steps of 1 dB.
 ///
-/// The telnet code is the level plus 50, from `44` to `56`: `50` is 0 dB.
+/// Zones 2 and 3 use the whole range. The main zone only accepts levels from
+/// -6 dB to +6 dB, see [`ToneLevel::MAIN_MIN`], [`ToneLevel::MAIN_MAX`] and
+/// [`ToneLevel::is_main_range`].
+///
+/// The telnet code is the level plus 50, from `40` to `60`: `50` is 0 dB.
 /// [`Display`](fmt::Display) writes the telnet code. `AppCommand` uses the
-/// steps above the lowest level, from 0 to 12.
+/// steps above -6 dB, from 0 to 12.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ToneLevel(u8);
 
 impl ToneLevel {
-    /// Lowest level, -6 dB.
+    /// Lowest level, -10 dB.
     pub const MIN: Self = Self(0);
     /// Level of 0 dB.
-    pub const ZERO: Self = Self(6);
-    /// Highest level, +6 dB.
-    pub const MAX: Self = Self(12);
+    pub const ZERO: Self = Self(10);
+    /// Highest level, +10 dB.
+    pub const MAX: Self = Self(20);
+    /// Lowest level of the main zone, -6 dB.
+    pub const MAIN_MIN: Self = Self(4);
+    /// Highest level of the main zone, +6 dB.
+    pub const MAIN_MAX: Self = Self(16);
 
     /// Telnet code of the lowest level.
-    const TELNET_MIN: u8 = 44;
+    const TELNET_MIN: u8 = 40;
+    /// Steps of the lowest `AppCommand` level above the lowest level.
+    const APP_OFFSET: u8 = 4;
 
-    /// Creates a level from steps of 1 dB above -6 dB, from 0 to 12.
-    #[must_use]
-    pub const fn from_steps(steps: u8) -> Option<Self> {
-        if steps <= Self::MAX.0 {
-            Some(Self(steps))
-        } else {
-            None
-        }
-    }
-
-    /// Creates a level from dB, from -6 to +6.
+    /// Creates a level from dB, from -10 to +10.
     #[must_use]
     pub fn from_db(db: i8) -> Option<Self> {
-        Self::from_steps(u8::try_from(i16::from(db) + 6).ok()?)
+        let steps = u8::try_from(i16::from(db) + 10).ok()?;
+        (steps <= Self::MAX.0).then_some(Self(steps))
     }
 
     /// Level in dB.
     #[must_use]
     pub fn db(self) -> i8 {
-        i8::try_from(self.0).unwrap_or(i8::MAX) - 6
+        i8::try_from(self.0).unwrap_or(i8::MAX) - 10
     }
 
-    /// Level in steps of 1 dB above -6 dB.
+    /// Returns true if the main zone accepts the level: from -6 dB to +6 dB.
     #[must_use]
-    pub const fn steps(self) -> u8 {
-        self.0
+    pub const fn is_main_range(self) -> bool {
+        self.0 >= Self::MAIN_MIN.0 && self.0 <= Self::MAIN_MAX.0
     }
 
     /// Parses the telnet code of an event, for example `50`.
     #[must_use]
     pub fn from_telnet(code: &str) -> Option<Self> {
-        Self::from_steps(parse_digits(code)?.checked_sub(Self::TELNET_MIN)?)
+        let steps = parse_digits(code)?.checked_sub(Self::TELNET_MIN)?;
+        (steps <= Self::MAX.0).then_some(Self(steps))
     }
 
-    /// Parses the steps in an `AppCommand` answer, for example `6`.
+    /// Parses the steps in an `AppCommand` answer, for example `6`. The steps
+    /// are above -6 dB, from 0 to 12.
     #[must_use]
     pub fn from_answer(text: &str) -> Option<Self> {
-        Self::from_steps(parse_digits(text)?)
+        let steps = parse_digits(text)?;
+        (steps <= 12).then_some(Self(steps + Self::APP_OFFSET))
     }
 }
 
@@ -91,36 +95,42 @@ mod tests {
 
     #[test]
     fn telnet_codes() {
-        assert_eq!(ToneLevel::from_telnet("44"), Some(ToneLevel::MIN));
+        assert_eq!(ToneLevel::from_telnet("40"), Some(ToneLevel::MIN));
+        assert_eq!(ToneLevel::from_telnet("44"), Some(ToneLevel::MAIN_MIN));
         assert_eq!(ToneLevel::from_telnet("50"), Some(ToneLevel::ZERO));
-        assert_eq!(ToneLevel::from_telnet("56"), Some(ToneLevel::MAX));
-        for bad in ["", "43", "57", "5", "abc", "+50", "0050", "5 0"] {
+        assert_eq!(ToneLevel::from_telnet("56"), Some(ToneLevel::MAIN_MAX));
+        assert_eq!(ToneLevel::from_telnet("60"), Some(ToneLevel::MAX));
+        for bad in ["", "39", "61", "5", "abc", "+50", "0050", "5 0"] {
             assert_eq!(ToneLevel::from_telnet(bad), None, "{bad:?}");
         }
-        assert_eq!(ToneLevel::MIN.to_string(), "44");
+        assert_eq!(ToneLevel::MIN.to_string(), "40");
         assert_eq!(ToneLevel::ZERO.to_string(), "50");
-        assert_eq!(ToneLevel::MAX.to_string(), "56");
+        assert_eq!(ToneLevel::MAX.to_string(), "60");
     }
 
     #[test]
     fn answers_and_db() {
-        assert_eq!(ToneLevel::from_answer("0"), Some(ToneLevel::MIN));
-        assert_eq!(ToneLevel::from_answer("12"), Some(ToneLevel::MAX));
+        assert_eq!(ToneLevel::from_answer("0"), Some(ToneLevel::MAIN_MIN));
+        assert_eq!(ToneLevel::from_answer("6"), Some(ToneLevel::ZERO));
+        assert_eq!(ToneLevel::from_answer("12"), Some(ToneLevel::MAIN_MAX));
         assert_eq!(ToneLevel::from_answer("13"), None);
         assert_eq!(ToneLevel::from_answer("-1"), None);
-        assert_eq!(ToneLevel::from_db(-6), Some(ToneLevel::MIN));
+        assert_eq!(ToneLevel::from_db(-10), Some(ToneLevel::MIN));
+        assert_eq!(ToneLevel::from_db(-6), Some(ToneLevel::MAIN_MIN));
         assert_eq!(ToneLevel::from_db(0), Some(ToneLevel::ZERO));
-        assert_eq!(ToneLevel::from_db(6), Some(ToneLevel::MAX));
-        assert_eq!(ToneLevel::from_db(7), None);
-        assert_eq!(ToneLevel::from_db(-7), None);
+        assert_eq!(ToneLevel::from_db(6), Some(ToneLevel::MAIN_MAX));
+        assert_eq!(ToneLevel::from_db(10), Some(ToneLevel::MAX));
+        assert_eq!(ToneLevel::from_db(11), None);
+        assert_eq!(ToneLevel::from_db(-11), None);
         assert_eq!(ToneLevel::from_db(i8::MIN), None);
         assert_eq!(ToneLevel::from_db(i8::MAX), None);
-        for steps in 0..=12 {
-            let level = ToneLevel::from_steps(steps).unwrap();
-            assert_eq!(ToneLevel::from_db(level.db()), Some(level));
+        for db in -10..=10 {
+            let level = ToneLevel::from_db(db).unwrap();
+            assert_eq!(level.db(), db);
             assert_eq!(ToneLevel::from_telnet(&level.to_string()), Some(level));
+            assert_eq!(level.is_main_range(), (-6..=6).contains(&db), "{db}");
         }
-        assert_eq!(format!("{:?}", ToneLevel::MAX), "+6 dB");
-        assert_eq!(format!("{:?}", ToneLevel::MIN), "-6 dB");
+        assert_eq!(format!("{:?}", ToneLevel::MAX), "+10 dB");
+        assert_eq!(format!("{:?}", ToneLevel::MIN), "-10 dB");
     }
 }

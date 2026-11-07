@@ -13,9 +13,10 @@ use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, FrontSpeakers, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset,
-    RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger, TunerBand,
-    VideoProcessingMode, Volume, Zone,
+    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReceiverType,
+    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger,
+    TunerBand, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -761,6 +762,136 @@ async fn tuner_methods_send_their_commands_and_events_fill_the_state() {
     assert_eq!(state.device().tuner.band, Some(TunerBand::Fm));
 }
 
+#[tokio::test]
+async fn zone_setting_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    zone2
+        .set_bass(ToneLevel::from_db(8).unwrap())
+        .await
+        .unwrap();
+    zone2.treble_down().await.unwrap();
+    zone2.set_left_level(2).await.unwrap();
+    zone2.set_high_pass_filter(true).await.unwrap();
+    zone2.set_channel_mode(ZoneChannelMode::Mono).await.unwrap();
+    zone2.set_hdmi_audio(ZoneHdmiAudio::Pcm).await.unwrap();
+    zone2
+        .set_volume_limit(Volume::from_db_rounded(-10.0))
+        .await
+        .unwrap();
+    zone2.set_volume_limit(None).await.unwrap();
+    zone2
+        .set_power_on_volume(PowerOnVolume::Last)
+        .await
+        .unwrap();
+    zone2.set_mute_level(MuteLevel::Minus20Db).await.unwrap();
+    zone2
+        .set_volume_mode(VolumeMode::Fixed(Volume::from_db_rounded(-70.0).unwrap()))
+        .await
+        .unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "Z2PSBAS 58",
+            "Z2PSTRE DOWN",
+            "Z2CVFL 52",
+            "Z2HPFON",
+            "Z2CSMONO",
+            "Z2HDA PCM",
+            "SSVCTZ2SLIM 070",
+            "SSVCTZ2SLIM OFF",
+            "SSVCTZ2SPON LAS",
+            "SSVCTZ2SMLV 060",
+            "SSVCTZ2SLEV 10",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn main_zone_volume_settings_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    main.set_volume_limit(Volume::from_db_rounded(-20.0))
+        .await
+        .unwrap();
+    main.set_volume_limit(None).await.unwrap();
+    main.set_power_on_volume(PowerOnVolume::Level(
+        Volume::from_db_rounded(-45.0).unwrap(),
+    ))
+    .await
+    .unwrap();
+    main.set_mute_level(MuteLevel::Minus40Db).await.unwrap();
+    main.set_volume_display(VolumeDisplay::Absolute)
+        .await
+        .unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 5).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "SSVCTZMALIM 60",
+            "SSVCTZMALIM OFF",
+            "SSVCTZMAPON 35",
+            "SSVCTZMAMLV 040",
+            "SSVCTZMADIS ABS",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn zone_setting_methods_refuse_what_the_zone_does_not_have() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    let error = main.bass_up().await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = main
+        .set_volume_mode(VolumeMode::Variable)
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    let error = zone2
+        .set_volume_display(VolumeDisplay::Absolute)
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = zone2.set_left_level(13).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let half = Volume::from_db_rounded(-9.5);
+    let error = zone2.set_volume_limit(half).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    // The main zone has its own range for the tone control.
+    let error = avr
+        .tone()
+        .set_bass(ToneLevel::from_db(8).unwrap())
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        commands_sent(&telnet).is_empty(),
+        "{:?}",
+        commands_sent(&telnet)
+    );
+}
+
+#[tokio::test]
+async fn zone_bass_up_to_10_db_fills_the_state() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    telnet.send(b"Z2PSBAS 58\rZ2PSTRE 42\r");
+    wait_until("the zone tone", || {
+        avr.snapshot().zone(Zone::Zone2).treble.is_some()
+    })
+    .await;
+    let state = avr.snapshot();
+    assert_eq!(state.zone(Zone::Zone2).bass, ToneLevel::from_db(8));
+    assert_eq!(state.zone(Zone::Zone2).treble, ToneLevel::from_db(-8));
+}
+
 /// The commands that the client sent, without the queries.
 fn commands_sent(telnet: &FakeTelnet) -> Vec<String> {
     sent(telnet)
@@ -781,7 +912,7 @@ async fn tone_events_change_the_state() {
     let state = avr.snapshot();
     assert_eq!(state.device().tone_control, Some(true));
     assert_eq!(state.zone(Zone::Main).bass, ToneLevel::from_db(3));
-    assert_eq!(state.zone(Zone::Main).treble, Some(ToneLevel::MIN));
+    assert_eq!(state.zone(Zone::Main).treble, Some(ToneLevel::MAIN_MIN));
 }
 
 #[tokio::test]
@@ -804,7 +935,7 @@ async fn tone_methods_turn_tone_control_on_first() {
     })
     .await;
     tone.bass_down().await.unwrap();
-    tone.set_treble(ToneLevel::MAX).await.unwrap();
+    tone.set_treble(ToneLevel::MAIN_MAX).await.unwrap();
     tone.set_enabled(false).await.unwrap();
     wait_until("more commands", || commands_sent(&telnet).len() >= 7).await;
     assert_eq!(

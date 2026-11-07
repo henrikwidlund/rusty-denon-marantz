@@ -1,12 +1,53 @@
 //! Typed control of one zone on telnet.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{RemoteKey, Volume, Zone};
+use denon_marantz_proto::{
+    MuteLevel, PowerOnVolume, RemoteKey, ToneLevel, Volume, VolumeDisplay, VolumeMode, Zone,
+    ZoneChannelMode, ZoneHdmiAudio, ZoneSettingValue,
+};
 
 use crate::avr::Avr;
 use crate::error::Error;
 
+/// Defines a method for each setting that has one value.
+macro_rules! setters {
+    ($( $name:ident($ty:ty) => $variant:ident, $what:literal; )+) => {
+        $(
+            #[doc = concat!(
+                "Sets ", $what, ".\n\n# Errors\n\n",
+                "See [`ZoneControl`]. A zone that does not have the setting gives ",
+                "[`Error::InvalidCommand`], and nothing is sent."
+            )]
+            pub async fn $name(&self, value: $ty) -> Result<(), Error> {
+                self.send(Command::SetZoneSetting(ZoneSettingValue::$variant(value))).await
+            }
+        )+
+    };
+}
+
+/// Defines a method for each step up or down.
+macro_rules! steps {
+    ($( $name:ident => $variant:ident, $what:literal; )+) => {
+        $(
+            #[doc = concat!(
+                $what, ". Zone 2 and zone 3 only.\n\n# Errors\n\n",
+                "See [`ZoneControl`]. The main zone gives [`Error::InvalidCommand`]."
+            )]
+            pub async fn $name(&self) -> Result<(), Error> {
+                self.send(Command::SetZoneSetting(ZoneSettingValue::$variant)).await
+            }
+        )+
+    };
+}
+
 /// Controls one zone of a receiver. Get it from [`Avr::zone`].
+///
+/// The methods for bass, treble, channel levels, high pass filter, channel
+/// mode, HDMI audio and the volume mode are for zone 2 and zone 3. The main
+/// zone has [`Avr::tone`] for bass and treble. The volume display is for the
+/// main zone. The volume limit, the power on volume and the mute level work
+/// for all zones. A method that the zone does not have sends nothing and
+/// returns [`Error::InvalidCommand`].
 ///
 /// Each method returns when the command is written, as [`Avr::send`] does.
 /// That does not mean that the receiver did it: the new value comes as an
@@ -152,6 +193,32 @@ impl<'a> ZoneControl<'a> {
     /// [`ZoneControl`].
     pub async fn press_marantz_code(&self, digits: &str) -> Result<(), Error> {
         self.send(Command::MarantzKeyCode(digits)).await
+    }
+
+    setters! {
+        set_bass(ToneLevel) => Bass, "the bass level, from -10 to +10 dB. Zone 2 and zone 3 only";
+        set_treble(ToneLevel) => Treble, "the treble level, from -10 to +10 dB. Zone 2 and zone 3 only";
+        set_left_level(i8) => LeftLevel, "the level of the left channel in whole dB, from -12 to 12. Zone 2 and zone 3 only";
+        set_right_level(i8) => RightLevel, "the level of the right channel in whole dB, from -12 to 12. Zone 2 and zone 3 only";
+        set_high_pass_filter(bool) => HighPassFilter, "the high pass filter on (`true`) or off (`false`). Zone 2 and zone 3 only";
+        set_channel_mode(ZoneChannelMode) => ChannelMode, "stereo or mono. Zone 2 and zone 3 only";
+        set_hdmi_audio(ZoneHdmiAudio) => HdmiAudio, "where the HDMI audio is decoded. Zone 2 and zone 3 only";
+        set_volume_limit(Option<Volume>) => VolumeLimit, "the volume limit in whole dB, or none with `None`. A half step is refused. A limit below the volume lowers the volume";
+        set_power_on_volume(PowerOnVolume) => PowerOnVolume, "the volume that the zone has when it is switched on. A level must be a whole dB";
+        set_mute_level(MuteLevel) => MuteLevel, "the mute level";
+        set_volume_mode(VolumeMode) => VolumeMode, "variable volume, or a fixed volume that must be a whole dB. Zone 2 and zone 3 only";
+        set_volume_display(VolumeDisplay) => VolumeDisplay, "how the volume is shown, relative to 0 dB or as an absolute number. Main zone only";
+    }
+
+    steps! {
+        bass_up => BassUp, "Raises the bass by one step";
+        bass_down => BassDown, "Lowers the bass by one step";
+        treble_up => TrebleUp, "Raises the treble by one step";
+        treble_down => TrebleDown, "Lowers the treble by one step";
+        left_level_up => LeftLevelUp, "Raises the level of the left channel by one step";
+        left_level_down => LeftLevelDown, "Lowers the level of the left channel by one step";
+        right_level_up => RightLevelUp, "Raises the level of the right channel by one step";
+        right_level_down => RightLevelDown, "Lowers the level of the right channel by one step";
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {

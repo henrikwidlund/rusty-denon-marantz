@@ -25,6 +25,12 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
+//! zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
+//! zone-treble-down, zone-left DB, zone-left-up, zone-left-down, zone-right DB, zone-right-up,
+//! zone-right-down, zone-hpf on or off, zone-channel ST or MONO, zone-hdmi-audio THR or PCM,
+//! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
+//! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
+//! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
 //! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
@@ -46,8 +52,10 @@ use std::time::Duration;
 use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, FrontSpeakers,
-    HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize,
-    SpeakerPreset, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Zone,
+    HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, PowerOnVolume,
+    ReferenceLevelOffset, RoomSize, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode,
+    VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -57,7 +65,7 @@ const USAGE: &str =
     "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
 /// Commands that the zone control has methods for.
-const ZONE_COMMANDS: [&str; 12] = [
+const ZONE_COMMANDS: [&str; 32] = [
     "power-on",
     "power-standby",
     "volume-up",
@@ -70,6 +78,26 @@ const ZONE_COMMANDS: [&str; 12] = [
     "key",
     "denon-code",
     "marantz-code",
+    "zone-bass",
+    "zone-bass-up",
+    "zone-bass-down",
+    "zone-treble",
+    "zone-treble-up",
+    "zone-treble-down",
+    "zone-left",
+    "zone-left-up",
+    "zone-left-down",
+    "zone-right",
+    "zone-right-up",
+    "zone-right-down",
+    "zone-hpf",
+    "zone-channel",
+    "zone-hdmi-audio",
+    "volume-limit",
+    "power-on-volume",
+    "mute-level",
+    "volume-mode",
+    "volume-display",
 ];
 
 /// Commands that the video control has methods for.
@@ -385,6 +413,24 @@ async fn zone_command(
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let tone = |text: &str| -> Result<ToneLevel, String> {
+        let db: i8 = text.parse().map_err(|_| "a level is whole dB")?;
+        ToneLevel::from_db(db).ok_or_else(|| "a level is from -10 to 10 dB".to_owned())
+    };
+    let whole = |text: &str| -> Result<i8, String> {
+        text.parse().map_err(|_| "a level is whole dB".to_owned())
+    };
+    let on_off = |text: &str| -> Result<bool, String> {
+        match text {
+            "on" => Ok(true),
+            "off" => Ok(false),
+            _ => Err("use on or off".to_owned()),
+        }
+    };
+    let volume = |text: &str| -> Result<Volume, String> {
+        let db: f32 = text.parse().map_err(|_| "a volume is in dB")?;
+        Volume::from_db_rounded(db).ok_or_else(|| "a volume is from -80 to 18 dB".to_owned())
+    };
     match name {
         "power-on" => zone.power_on().await?,
         "power-standby" => zone.power_standby().await?,
@@ -398,6 +444,57 @@ async fn zone_command(
         "unmute" => zone.set_mute(false).await?,
         "source" => zone.select_source(need()?).await?,
         "sound-mode" => zone.select_sound_mode(need()?).await?,
+        "zone-bass" => zone.set_bass(tone(need()?)?).await?,
+        "zone-bass-up" => zone.bass_up().await?,
+        "zone-bass-down" => zone.bass_down().await?,
+        "zone-treble" => zone.set_treble(tone(need()?)?).await?,
+        "zone-treble-up" => zone.treble_up().await?,
+        "zone-treble-down" => zone.treble_down().await?,
+        "zone-left" => zone.set_left_level(whole(need()?)?).await?,
+        "zone-left-up" => zone.left_level_up().await?,
+        "zone-left-down" => zone.left_level_down().await?,
+        "zone-right" => zone.set_right_level(whole(need()?)?).await?,
+        "zone-right-up" => zone.right_level_up().await?,
+        "zone-right-down" => zone.right_level_down().await?,
+        "zone-hpf" => zone.set_high_pass_filter(on_off(need()?)?).await?,
+        "zone-channel" => {
+            let mode = ZoneChannelMode::from_code(need()?).ok_or("channel is ST or MONO")?;
+            zone.set_channel_mode(mode).await?;
+        }
+        "zone-hdmi-audio" => {
+            let mode = ZoneHdmiAudio::from_code(need()?).ok_or("HDMI audio is THR or PCM")?;
+            zone.set_hdmi_audio(mode).await?;
+        }
+        "volume-limit" => {
+            let limit = match need()? {
+                "off" => None,
+                db => Some(volume(db)?),
+            };
+            zone.set_volume_limit(limit).await?;
+        }
+        "power-on-volume" => {
+            let setting = match need()? {
+                "muted" => PowerOnVolume::Muted,
+                "last" => PowerOnVolume::Last,
+                db => PowerOnVolume::Level(volume(db)?),
+            };
+            zone.set_power_on_volume(setting).await?;
+        }
+        "mute-level" => {
+            let level = MuteLevel::from_code(need()?).ok_or("mute level is MUT, 040 or 060")?;
+            zone.set_mute_level(level).await?;
+        }
+        "volume-mode" => {
+            let mode = match need()? {
+                "variable" => VolumeMode::Variable,
+                db => VolumeMode::Fixed(volume(db)?),
+            };
+            zone.set_volume_mode(mode).await?;
+        }
+        "volume-display" => {
+            let display = VolumeDisplay::from_code(need()?).ok_or("display is REL or ABS")?;
+            zone.set_volume_display(display).await?;
+        }
         "key" => zone.press(remote_key(need()?)?).await?,
         "denon-code" => {
             let code = need()?.parse().map_err(|_| "denon-code is a number")?;

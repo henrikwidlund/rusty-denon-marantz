@@ -1619,7 +1619,7 @@ mod tests {
         assert_eq!(tone.tone_control, Some(true));
         let main_zone = state.zone(Zone::Main).clone();
         assert_eq!(main_zone.bass, ToneLevel::from_db(3));
-        assert_eq!(main_zone.treble, Some(ToneLevel::MIN));
+        assert_eq!(main_zone.treble, Some(ToneLevel::MAIN_MIN));
         // Text that is not a value keeps the last value.
         for text in ["BAS 99", "BAS", "TRE x", "TONE CTRL MAYBE"] {
             assert_eq!(apply(&mut state, &message(text)), None, "{text}");
@@ -1631,7 +1631,7 @@ mod tests {
             state.apply_field(Zone::Main, Field::Bass, Some("12")),
             main(Setting::Bass)
         );
-        assert_eq!(state.zone(Zone::Main).bass, Some(ToneLevel::MAX));
+        assert_eq!(state.zone(Zone::Main).bass, Some(ToneLevel::MAIN_MAX));
         assert_eq!(
             state.apply_field(Zone::Main, Field::ToneControlAdjust, Some("0")),
             setting(Setting::ToneControl)

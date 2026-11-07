@@ -44,12 +44,14 @@ impl<'a> ToneControl<'a> {
         self.send(Command::ToneControl(on)).await
     }
 
-    /// Sets the bass level.
+    /// Sets the bass level. The main zone takes levels from -6 to +6 dB.
     ///
     /// # Errors
     ///
-    /// See [`ToneControl`].
+    /// Returns [`Error::ToneOutOfRange`], and sends nothing, for a level
+    /// outside that range. See also [`ToneControl`].
     pub async fn set_bass(&self, level: ToneLevel) -> Result<(), Error> {
+        check_main_range(level)?;
         self.change(Command::SetBass(level)).await
     }
 
@@ -69,7 +71,7 @@ impl<'a> ToneControl<'a> {
     ///
     /// See [`ToneControl`].
     pub async fn bass_up(&self) -> Result<(), Error> {
-        if self.bass() == Some(ToneLevel::MAX) {
+        if self.bass() == Some(ToneLevel::MAIN_MAX) {
             return Ok(());
         }
         self.change(Command::BassUp).await
@@ -81,18 +83,20 @@ impl<'a> ToneControl<'a> {
     ///
     /// See [`ToneControl`].
     pub async fn bass_down(&self) -> Result<(), Error> {
-        if self.bass() == Some(ToneLevel::MIN) {
+        if self.bass() == Some(ToneLevel::MAIN_MIN) {
             return Ok(());
         }
         self.change(Command::BassDown).await
     }
 
-    /// Sets the treble level.
+    /// Sets the treble level. The main zone takes levels from -6 to +6 dB.
     ///
     /// # Errors
     ///
-    /// See [`ToneControl`].
+    /// Returns [`Error::ToneOutOfRange`], and sends nothing, for a level
+    /// outside that range. See also [`ToneControl`].
     pub async fn set_treble(&self, level: ToneLevel) -> Result<(), Error> {
+        check_main_range(level)?;
         self.change(Command::SetTreble(level)).await
     }
 
@@ -112,7 +116,7 @@ impl<'a> ToneControl<'a> {
     ///
     /// See [`ToneControl`].
     pub async fn treble_up(&self) -> Result<(), Error> {
-        if self.treble() == Some(ToneLevel::MAX) {
+        if self.treble() == Some(ToneLevel::MAIN_MAX) {
             return Ok(());
         }
         self.change(Command::TrebleUp).await
@@ -124,7 +128,7 @@ impl<'a> ToneControl<'a> {
     ///
     /// See [`ToneControl`].
     pub async fn treble_down(&self) -> Result<(), Error> {
-        if self.treble() == Some(ToneLevel::MIN) {
+        if self.treble() == Some(ToneLevel::MAIN_MIN) {
             return Ok(());
         }
         self.change(Command::TrebleDown).await
@@ -170,5 +174,16 @@ impl<'a> ToneControl<'a> {
 }
 
 fn level_from_db(db: i8) -> Result<ToneLevel, Error> {
-    ToneLevel::from_db(db).ok_or(Error::ToneOutOfRange(db))
+    ToneLevel::from_db(db)
+        .filter(|level| level.is_main_range())
+        .ok_or(Error::ToneOutOfRange(db))
+}
+
+/// The main zone only takes levels from -6 to +6 dB.
+fn check_main_range(level: ToneLevel) -> Result<(), Error> {
+    if level.is_main_range() {
+        Ok(())
+    } else {
+        Err(Error::ToneOutOfRange(level.db()))
+    }
 }

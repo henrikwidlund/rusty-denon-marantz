@@ -22,6 +22,7 @@ mod values;
 mod video;
 mod volume;
 mod xml;
+mod zone_settings;
 
 pub mod appcommand;
 mod sound_mode_list;
@@ -59,3 +60,4 @@ pub use values::{
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};
+pub use zone_settings::ZoneSettingValue;

@@ -18,6 +18,9 @@ pub enum Error {
     /// The brand or the zone of the receiver has no such remote key.
     #[error("the receiver has no such remote key")]
     UnsupportedKey,
+    /// The setting exists for zone 2 and zone 3 only.
+    #[error("the setting is not available for this zone")]
+    UnsupportedZone,
     /// A device description is not from a supported receiver.
     #[error("the device description is not from a Denon or Marantz receiver")]
     UnsupportedDevice,
@@ -63,6 +66,7 @@ impl Error {
                 | Self::InvalidName
                 | Self::ValueOutOfRange { .. }
                 | Self::UnsupportedKey
+                | Self::UnsupportedZone
         )
     }
 }
