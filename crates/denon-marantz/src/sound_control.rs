@@ -67,6 +67,8 @@ impl<'a> SoundControl<'a> {
         set_center_width(u8) => CenterWidth, "the center width, from 0 to 7";
         set_loudness_management(bool) => LoudnessManagement, "loudness management on (`true`) or off (`false`)";
         set_speaker_virtualizer(bool) => SpeakerVirtualizer, "the speaker virtualizer on (`true`) or off (`false`)";
+        set_tactile_transducer(bool) => TactileTransducer, "the tactile transducer on (`true`) or off (`false`)";
+        set_tactile_low_pass(u16) => TactileLowPass, "the low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
         set_graphic_eq(bool) => GraphicEq, "the graphic EQ on (`true`) or off (`false`)";
         set_headphone_eq(bool) => HeadphoneEq, "the headphone EQ on (`true`) or off (`false`)";
         set_cinema_eq(bool) => CinemaEq, "the cinema EQ on (`true`) or off (`false`)";
@@ -88,6 +90,24 @@ impl<'a> SoundControl<'a> {
     pub async fn set_subwoofer_level(&self, number: u8, level: ChannelLevel) -> Result<(), Error> {
         self.send(SoundSettingValue::SubwooferLevel { number, level })
             .await
+    }
+
+    /// Raises the level of the tactile transducer by one step.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn tactile_level_up(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileLevelUp).await
+    }
+
+    /// Lowers the level of the tactile transducer by one step.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn tactile_level_down(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileLevelDown).await
     }
 
     /// Sets the audio input mode: automatic, or a forced HDMI, digital or

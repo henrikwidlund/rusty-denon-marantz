@@ -21,6 +21,7 @@ const MAX_DIMENSION: u16 = 6;
 const MAX_CENTER_WIDTH: u16 = 7;
 /// Values of the IMAX filters in Hz.
 const IMAX_HIGH_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
+const TACTILE_LOW_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
 const IMAX_LOW_PASS_HZ: [u16; 9] = [80, 90, 100, 110, 120, 150, 180, 200, 250];
 
 /// Most `other` entries that are kept. A faulty receiver cannot make the
@@ -102,6 +103,12 @@ pub struct SoundSettings {
     pub delay_time: Option<u16>,
     /// Audio delay in ms, from 0 to 500.
     pub audio_delay: Option<u16>,
+    /// The tactile transducer is on.
+    pub tactile_transducer: Option<bool>,
+    /// Level of the tactile transducer.
+    pub tactile_level: Option<ChannelLevel>,
+    /// Low pass filter of the tactile transducer in Hz.
+    pub tactile_low_pass: Option<u16>,
     /// Settings that have a name or a value that this library does not know.
     /// The key is the name without `PS`, the value is the text that follows
     /// it.
@@ -192,6 +199,9 @@ impl SoundSettings {
             "DIC" => put(&mut self.dialog_control, number(value, MAX_DIALOG_CONTROL)),
             "DEL" => put(&mut self.delay_time, number(value, MAX_DELAY_TIME)),
             "DELAY" => put(&mut self.audio_delay, number(value, MAX_AUDIO_DELAY)),
+            "TTR" => put(&mut self.tactile_transducer, on_off(value)),
+            "TTRLEV" => put(&mut self.tactile_level, ChannelLevel::from_code(value)),
+            "TTRLPF" => put(&mut self.tactile_low_pass, number(value, 999)),
             _ => None,
         }
     }
@@ -281,6 +291,15 @@ pub enum SoundSettingValue {
     CenterSpread(bool),
     /// Center width, from 0 to 7.
     CenterWidth(u8),
+    /// Tactile transducer on (`true`) or off (`false`).
+    TactileTransducer(bool),
+    /// Raises the level of the tactile transducer by one step.
+    TactileLevelUp,
+    /// Lowers the level of the tactile transducer by one step.
+    TactileLevelDown,
+    /// Low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100,
+    /// 110, 120, 150, 180, 200 or 250.
+    TactileLowPass(u16),
     /// Loudness management.
     LoudnessManagement(bool),
     /// Speaker virtualizer.
@@ -369,6 +388,16 @@ impl SoundSettingValue {
                 };
                 code(out, name, level.code())
             }
+            Self::TactileTransducer(on) => code(out, "SSTTR ", on_off_code(on)),
+            Self::TactileLevelUp => code(out, "SSTTRLEV ", "UP"),
+            Self::TactileLevelDown => code(out, "SSTTRLEV ", "DOWN"),
+            Self::TactileLowPass(hz) => hertz(
+                out,
+                "SSTTRLPF ",
+                "tactile transducer low pass filter",
+                hz,
+                &TACTILE_LOW_PASS_HZ,
+            ),
             Self::LfeLevel(v) => digits(out, "PSLFE ", "LFE level", u16::from(v), MAX_LFE_LEVEL, 2),
             Self::CenterLevel(level) => code(out, "PSCLV ", level.code()),
             Self::CenterSpread(on) => code(out, "PSCES ", on_off_code(on)),
@@ -548,6 +577,19 @@ mod tests {
     }
 
     #[test]
+    fn tactile_transducer_values() {
+        let mut settings = SoundSettings::default();
+        assert!(settings.apply("TTR", "OFF"));
+        assert!(settings.apply("TTRLEV", "50"));
+        assert!(settings.apply("TTRLPF", "080"));
+        assert_eq!(settings.tactile_transducer, Some(false));
+        assert_eq!(settings.tactile_level.map(ChannelLevel::db), Some(0.0));
+        assert_eq!(settings.tactile_low_pass, Some(80));
+        assert!(settings.apply("TTR", "ON"));
+        assert!(!settings.apply("TTR", "ON"));
+    }
+
+    #[test]
     fn numbers_and_levels() {
         let mut settings = SoundSettings::default();
         assert!(settings.apply("BSC", "10"));
@@ -688,6 +730,12 @@ mod tests {
                 "PSSWL4 50",
             ),
             (SoundSettingValue::LfeLevel(3), "PSLFE 03"),
+            (SoundSettingValue::TactileTransducer(true), "SSTTR ON"),
+            (SoundSettingValue::TactileTransducer(false), "SSTTR OFF"),
+            (SoundSettingValue::TactileLevelUp, "SSTTRLEV UP"),
+            (SoundSettingValue::TactileLevelDown, "SSTTRLEV DOWN"),
+            (SoundSettingValue::TactileLowPass(80), "SSTTRLPF 080"),
+            (SoundSettingValue::TactileLowPass(250), "SSTTRLPF 250"),
             (SoundSettingValue::CenterLevel(level(2)), "PSCLV 51"),
             (SoundSettingValue::CenterSpread(true), "PSCES ON"),
             (SoundSettingValue::CenterWidth(7), "PSCEN 07"),
@@ -719,6 +767,8 @@ mod tests {
             SoundSettingValue::SubwooferLevel { number: 0, level },
             SoundSettingValue::SubwooferLevel { number: 5, level },
             SoundSettingValue::LfeLevel(11),
+            SoundSettingValue::TactileLowPass(70),
+            SoundSettingValue::TactileLowPass(0),
             SoundSettingValue::CenterWidth(8),
             SoundSettingValue::Dimension(7),
             SoundSettingValue::BassSync(17),

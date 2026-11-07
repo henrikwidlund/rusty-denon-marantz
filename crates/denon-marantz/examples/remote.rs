@@ -25,7 +25,7 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
@@ -94,7 +94,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 17] = [
+const SOUND_COMMANDS: [&str; 21] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -112,6 +112,10 @@ const SOUND_COMMANDS: [&str; 17] = [
     "dialog-enhancer",
     "graphic-eq",
     "input-mode",
+    "tactile",
+    "tactile-up",
+    "tactile-down",
+    "tactile-lpf",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -237,6 +241,22 @@ async fn sound_command(
         "input-mode" => {
             let mode = InputMode::from_code(need()?).ok_or_else(|| unknown("input mode"))?;
             avr.sound().set_input_mode(mode).await?;
+        }
+        "tactile" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("tactile transducer").into()),
+            };
+            avr.sound().set_tactile_transducer(on).await?;
+        }
+        "tactile-up" => avr.sound().tactile_level_up().await?,
+        "tactile-down" => avr.sound().tactile_level_down().await?,
+        "tactile-lpf" => {
+            let hz = need()?
+                .parse()
+                .map_err(|_| "tactile-lpf is a number of Hz")?;
+            avr.sound().set_tactile_low_pass(hz).await?;
         }
         other => return Err(format!("unknown command {other}").into()),
     }

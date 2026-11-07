@@ -823,7 +823,26 @@ impl State {
                 setting: Setting::SpeakerLevels,
             });
         }
+        if parameter.starts_with("TTR") {
+            return self.apply_tactile_transducer(parameter);
+        }
         self.signal_change(|signal| signal.apply_ss(parameter))
+    }
+
+    /// Applies an `SS` event of the tactile transducer, for example
+    /// `TTRLEV 50`. The line `TTR END` closes the list and is ignored.
+    fn apply_tactile_transducer(&mut self, parameter: &str) -> Option<Change> {
+        let (name, value) = parameter.split_once(' ')?;
+        if value.trim() == "END" {
+            return None;
+        }
+        self.device
+            .sound_settings
+            .apply(name, value)
+            .then_some(Change {
+                zone: None,
+                setting: Setting::SoundSettings,
+            })
     }
 
     /// Applies an `SS` event like `QS1QSN Quick Select 1`. Returns `None` if
@@ -1913,6 +1932,23 @@ mod tests {
     }
 
     #[test]
+    fn tactile_transducer_follows_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::SoundSettings);
+        assert_eq!(apply(&mut state, "SSTTR OFF"), changed());
+        assert_eq!(apply(&mut state, "SSTTRLEV 50"), changed());
+        assert_eq!(apply(&mut state, "SSTTRLPF 080"), changed());
+        assert_eq!(apply(&mut state, "SSTTR END"), None);
+        assert_eq!(apply(&mut state, "SSTTR OFF"), None);
+        let settings = &state.device().sound_settings;
+        assert_eq!(settings.tactile_transducer, Some(false));
+        assert_eq!(settings.tactile_low_pass, Some(80));
+        assert!(settings.other.is_empty());
+        // The channel group answers `ON` while the transducer is off, so it stays out.
+        assert_eq!(apply(&mut state, "CVTTR ON"), None);
+    }
+
+    #[test]
     fn triggers_follow_events() {
         let mut state = State::new(false);
         let changed = || change(None, Setting::Triggers);
@@ -2075,7 +2111,11 @@ mod tests {
             apply(&mut state, "SSVCTZMALIM 60"),
             change(Some(Zone::Main), Setting::MaxVolume)
         );
-        assert_eq!(apply(&mut state, "SSTTR OFF"), None);
+        // The tactile transducer shares the event and is not mixed up with it.
+        assert_eq!(
+            apply(&mut state, "SSTTR OFF"),
+            change(None, Setting::SoundSettings)
+        );
     }
 
     #[test]

@@ -859,9 +859,12 @@ async fn sound_methods_send_their_commands() {
     sound.set_audio_delay(5).await.unwrap();
     sound.set_imax_high_pass(80).await.unwrap();
     sound.set_input_mode(InputMode::Hdmi).await.unwrap();
+    sound.set_tactile_transducer(true).await.unwrap();
+    sound.tactile_level_up().await.unwrap();
+    sound.set_tactile_low_pass(60).await.unwrap();
     let level = ChannelLevel::from_half_db(-1).unwrap();
     sound.set_subwoofer_level(2, level).await.unwrap();
-    wait_until("the commands", || commands_sent(&telnet).len() >= 8).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -872,6 +875,9 @@ async fn sound_methods_send_their_commands() {
             "PSDELAY 005",
             "PSIMAXHPF 080",
             "SDHDMI",
+            "SSTTR ON",
+            "SSTTRLEV UP",
+            "SSTTRLPF 060",
             "PSSWL2 495"
         ]
     );
