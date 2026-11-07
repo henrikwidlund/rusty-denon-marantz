@@ -28,13 +28,17 @@
 //! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off (a
 //! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
-//! right, enter, back, info, options, setup-open, setup-close, raw TEXT.
+//! right, enter, back, info, options, setup-open, setup-close, raw TEXT,
+//! key NAME (next, previous, repeat-off, repeat-one, repeat-all, random-on,
+//! random-off, page-up, page-down, rewind, fast-forward, atmos, cec-on,
+//! cec-off, digit-0 to digit-9, volume-0db, volume-minus-20db,
+//! volume-minus-40db), denon-code NUMBER, marantz-code DIGITS.
 //!
 //! The events can have personal data, for example a title that plays.
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command, TelnetConfig, ToneControl, ZoneControl};
+use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
     AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset,
     RoomSize, Zone,
@@ -47,7 +51,7 @@ const USAGE: &str =
     "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
 /// Commands that the zone control has methods for.
-const ZONE_COMMANDS: [&str; 9] = [
+const ZONE_COMMANDS: [&str; 12] = [
     "power-on",
     "power-standby",
     "volume-up",
@@ -57,6 +61,9 @@ const ZONE_COMMANDS: [&str; 9] = [
     "unmute",
     "source",
     "sound-mode",
+    "key",
+    "denon-code",
+    "marantz-code",
 ];
 
 /// Commands that the tone control has methods for.
@@ -229,9 +236,42 @@ async fn zone_command(
         "unmute" => zone.set_mute(false).await?,
         "source" => zone.select_source(need()?).await?,
         "sound-mode" => zone.select_sound_mode(need()?).await?,
+        "key" => zone.press(remote_key(need()?)?).await?,
+        "denon-code" => {
+            let code = need()?.parse().map_err(|_| "denon-code is a number")?;
+            zone.press_denon_code(code).await?;
+        }
+        "marantz-code" => zone.press_marantz_code(need()?).await?,
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
+}
+
+/// The remote key with this name.
+fn remote_key(name: &str) -> Result<RemoteKey, String> {
+    Ok(match name {
+        "next" => RemoteKey::NextTrack,
+        "previous" => RemoteKey::PreviousTrack,
+        "repeat-off" => RemoteKey::RepeatOff,
+        "repeat-one" => RemoteKey::RepeatOne,
+        "repeat-all" => RemoteKey::RepeatAll,
+        "random-on" => RemoteKey::RandomOn,
+        "random-off" => RemoteKey::RandomOff,
+        "page-up" => RemoteKey::PageUp,
+        "page-down" => RemoteKey::PageDown,
+        "rewind" => RemoteKey::Rewind,
+        "fast-forward" => RemoteKey::FastForward,
+        "atmos" => RemoteKey::DolbyAtmosToggle,
+        "cec-on" => RemoteKey::HdmiCecOn,
+        "cec-off" => RemoteKey::HdmiCecOff,
+        "volume-0db" => RemoteKey::MasterVolume0Db,
+        "volume-minus-20db" => RemoteKey::MasterVolumeMinus20Db,
+        "volume-minus-40db" => RemoteKey::MasterVolumeMinus40Db,
+        other => match other.strip_prefix("digit-").and_then(|d| d.parse().ok()) {
+            Some(digit) => RemoteKey::Digit(digit),
+            None => return Err(format!("unknown key {other}")),
+        },
+    })
 }
 
 /// The next argument as a number.

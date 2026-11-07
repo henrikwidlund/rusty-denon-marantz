@@ -5,6 +5,7 @@ use core::fmt::Write as _;
 use crate::brand::Brand;
 use crate::containment::ContainmentAmount;
 use crate::error::Error;
+use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
@@ -106,6 +107,15 @@ pub enum Command<'a> {
     AutoLipSync(bool),
     /// Sets a sound setting, for example the room size or the audio delay.
     SetSoundSetting(SoundSettingValue),
+    /// Presses a remote key that has no telnet command. See [`RemoteKey`] for
+    /// the errors.
+    RemoteKey(RemoteKey),
+    /// Presses a Denon key by its number, for example `945`. The zone gives
+    /// the category. Returns [`Error::UnsupportedKey`] for Marantz.
+    DenonKeyCode(u16),
+    /// Presses a Marantz key by the digits after `RCRC5`, for example
+    /// `2708105`. Returns [`Error::UnsupportedKey`] for Denon.
+    MarantzKeyCode(&'a str),
     /// Sends text as it is, for example a query like `PW?`.
     Raw(&'a str),
 }
@@ -215,6 +225,9 @@ impl Command<'_> {
                 out.push_str(if on { "ON" } else { "OFF" });
             }
             Self::SetSoundSetting(value) => value.write(out)?,
+            Self::RemoteKey(key) => key.write(brand, zone, out)?,
+            Self::DenonKeyCode(code) => write_denon_code(brand, zone, code, out)?,
+            Self::MarantzKeyCode(digits) => write_marantz_code(brand, digits, out)?,
             Self::Raw(text) => {
                 check_text(text)?;
                 out.push_str(text);
@@ -355,6 +368,35 @@ mod tests {
                 assert_eq!(out, expected, "{brand:?}");
             }
         }
+    }
+
+    #[test]
+    fn remote_keys_depend_on_the_brand_and_the_zone() {
+        let line = |brand, zone, command: Command<'_>| {
+            let mut out = String::new();
+            command.write_line(brand, zone, &mut out).map(|()| out)
+        };
+        let page_up = Command::RemoteKey(RemoteKey::PageUp);
+        assert_eq!(
+            line(Brand::Denon, Zone::Zone2, page_up).unwrap(),
+            "RCKSK0430945\r"
+        );
+        assert_eq!(
+            line(Brand::Marantz, Zone::Main, page_up).unwrap(),
+            "RCRC52708105\r"
+        );
+        assert_eq!(
+            line(Brand::Denon, Zone::Main, Command::DenonKeyCode(5)).unwrap(),
+            "RCKSK0410005\r"
+        );
+        assert_eq!(
+            line(Brand::Marantz, Zone::Main, Command::MarantzKeyCode("6012")).unwrap(),
+            "RCRC56012\r"
+        );
+        assert_eq!(
+            line(Brand::Marantz, Zone::Zone2, page_up),
+            Err(Error::UnsupportedKey)
+        );
     }
 
     #[test]

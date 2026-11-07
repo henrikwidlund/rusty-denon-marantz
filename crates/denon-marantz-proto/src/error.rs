@@ -15,6 +15,9 @@ pub enum Error {
         /// The setting.
         what: &'static str,
     },
+    /// The brand or the zone of the receiver has no such remote key.
+    #[error("the receiver has no such remote key")]
+    UnsupportedKey,
     /// A device description is not from a supported receiver.
     #[error("the device description is not from a Denon or Marantz receiver")]
     UnsupportedDevice,
@@ -56,7 +59,10 @@ impl Error {
     pub const fn is_invalid_input(&self) -> bool {
         matches!(
             self,
-            Self::InvalidCommandText | Self::InvalidName | Self::ValueOutOfRange { .. }
+            Self::InvalidCommandText
+                | Self::InvalidName
+                | Self::ValueOutOfRange { .. }
+                | Self::UnsupportedKey
         )
     }
 }

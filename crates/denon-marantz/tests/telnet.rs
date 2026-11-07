@@ -13,7 +13,7 @@ use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, MultiEq, Power, ReceiverType,
-    ReferenceLevelOffset, RoomSize, Setting, ToneLevel, Volume, Zone,
+    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, ToneLevel, Volume, Zone,
 };
 use tokio::time::timeout;
 
@@ -656,6 +656,26 @@ async fn zone_methods_refuse_what_cannot_work() {
         sent(&telnet).iter().all(|line| line.ends_with('?')),
         "{:?}",
         sent(&telnet)
+    );
+}
+
+#[tokio::test]
+async fn remote_keys_use_the_category_of_the_zone() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    main.press(RemoteKey::NextTrack).await.unwrap();
+    zone2.press(RemoteKey::PageUp).await.unwrap();
+    zone2.press_denon_code(5).await.unwrap();
+    let error = zone2.press(RemoteKey::HdmiCecOn).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = main.press_marantz_code("6012").await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the keys", || commands_sent(&telnet).len() >= 3).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["RCKSK0470776", "RCKSK0430945", "RCKSK0430005"]
     );
 }
 
