@@ -2,6 +2,52 @@
 
 use core::fmt;
 
+/// The volume that a zone has when it is switched on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PowerOnVolume {
+    /// The zone is muted.
+    Muted,
+    /// The zone has this volume.
+    Level(Volume),
+}
+
+impl PowerOnVolume {
+    /// Parses the value of a telnet event: `MUT` or whole dB above -80 dB,
+    /// for example `35` for -45.0 dB.
+    #[must_use]
+    pub fn from_telnet(code: &str) -> Option<Self> {
+        if code.trim() == "MUT" {
+            Some(Self::Muted)
+        } else {
+            Volume::from_whole_db_above_min(code).map(Self::Level)
+        }
+    }
+}
+
+/// How the volume of a zone is set: with the volume control, or fixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VolumeMode {
+    /// The volume control changes the volume.
+    Variable,
+    /// The volume of the zone is fixed at this level.
+    Fixed(Volume),
+}
+
+impl VolumeMode {
+    /// Parses the value of a telnet event: `VAR` or the fixed volume in whole
+    /// dB above -80 dB, for example `10` for -70.0 dB.
+    #[must_use]
+    pub fn from_telnet(code: &str) -> Option<Self> {
+        if code.trim() == "VAR" {
+            Some(Self::Variable)
+        } else {
+            Volume::from_whole_db_above_min(code).map(Self::Fixed)
+        }
+    }
+}
+
 /// Master volume from -80.0 dB to +18.0 dB in steps of 0.5 dB.
 ///
 /// The telnet code is the volume above -80 dB: two digits for whole dB and
@@ -49,6 +95,20 @@ impl Volume {
     #[must_use]
     pub const fn half_db_above_min(self) -> u8 {
         self.0
+    }
+
+    /// Parses a volume that is written as whole dB above -80 dB, with any
+    /// number of digits: `35` and `035` are -45.0 dB. Zone volume settings
+    /// use it. Returns `None` for text that is not a number, and for a number
+    /// above 98.
+    #[must_use]
+    pub fn from_whole_db_above_min(code: &str) -> Option<Self> {
+        let code = code.trim();
+        if code.is_empty() || !code.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let db: u8 = code.parse().ok()?;
+        Self::from_half_db_above_min(db.checked_mul(2)?)
     }
 
     /// Parses the volume of a telnet event.

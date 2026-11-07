@@ -131,11 +131,11 @@ impl<'a> ToneControl<'a> {
     }
 
     fn bass(self) -> Option<ToneLevel> {
-        self.avr.state().borrow().device().bass
+        self.avr.state().borrow().zone(Zone::Main).bass
     }
 
     fn treble(self) -> Option<ToneLevel> {
-        self.avr.state().borrow().device().treble
+        self.avr.state().borrow().zone(Zone::Main).treble
     }
 
     /// Sends a level command, after tone control is turned on if needed.

@@ -18,7 +18,8 @@ use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, MultiEq, Power, ReferenceLevelOffset, Sleep, ToneLevel, Volume, Zone,
+    EcoMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, ToneLevel,
+    Volume, VolumeDisplay, VolumeMode, Zone,
 };
 
 /// A value of the state.
@@ -31,6 +32,16 @@ pub enum Setting {
     Volume,
     /// Volume limit of a zone.
     MaxVolume,
+    /// The level of the left or right channel of zone 2 or 3.
+    ChannelLevels,
+    /// Variable or fixed volume of a zone.
+    VolumeMode,
+    /// The volume of a zone when it is switched on.
+    PowerOnVolume,
+    /// How far the volume goes down when a zone is muted.
+    MuteLevel,
+    /// How the receiver shows the volume.
+    VolumeDisplay,
     /// Mute of a zone.
     Muted,
     /// Selected source of a zone.
@@ -110,8 +121,27 @@ pub struct ZoneState {
     pub volume: Option<Volume>,
     /// Volume limit. `None` if there is no limit or it is not known.
     pub max_volume: Option<Volume>,
+    /// Volume when the zone is switched on. Telnet reports it.
+    pub power_on_volume: Option<PowerOnVolume>,
+    /// Variable or fixed volume. Telnet reports it for zone 2 and 3.
+    pub volume_mode: Option<VolumeMode>,
     /// Mute.
     pub muted: Option<bool>,
+    /// How far the volume goes down when the zone is muted. Telnet reports it.
+    pub mute_level: Option<MuteLevel>,
+    /// How the receiver shows the volume. Telnet reports it for the main
+    /// zone.
+    pub volume_display: Option<VolumeDisplay>,
+    /// Bass level. Telnet reports it for zone 2 and 3 when it changes.
+    pub bass: Option<ToneLevel>,
+    /// Treble level. Telnet reports it for zone 2 and 3 when it changes.
+    pub treble: Option<ToneLevel>,
+    /// Level of the left channel of zone 2 or 3. Telnet reports it when it
+    /// changes.
+    pub left_level: Option<ChannelLevel>,
+    /// Level of the right channel of zone 2 or 3. Telnet reports it when it
+    /// changes.
+    pub right_level: Option<ChannelLevel>,
     /// Selected source, as the receiver reports it.
     pub source: Option<String>,
     /// Sound mode in upper case, with single spaces. Only the main zone has one.
@@ -148,10 +178,6 @@ pub struct DeviceState {
     pub settings_menu: Option<bool>,
     /// Tone control is on. The bass and treble levels only work then.
     pub tone_control: Option<bool>,
-    /// Bass level.
-    pub bass: Option<ToneLevel>,
-    /// Treble level.
-    pub treble: Option<ToneLevel>,
     /// Audyssey MultEQ mode.
     pub multi_eq: Option<MultiEq>,
     /// Audyssey Dynamic EQ is on.
@@ -325,7 +351,14 @@ impl State {
                 let name = parameter.strip_prefix("FRN ")?.trim();
                 self.apply_friendly_name(name)
             }
-            Event::Ps => self.apply_sound_setting(parameter),
+            // Zone 2 and 3 send their own bass and treble as `PS` events.
+            Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
+            Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
+                self.apply_zone_tone(zone?, parameter)
+            }
+            Event::Cv if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
+                self.apply_zone_channel_level(zone?, parameter)
+            }
             Event::Op => self.apply_option(parameter),
             _ => None,
         }
@@ -408,11 +441,11 @@ impl State {
             }
             Field::Bass => {
                 let level = value.and_then(ToneLevel::from_answer);
-                self.device_change(Setting::Bass, |d| set(&mut d.bass, level))
+                self.zone_change(zone, Setting::Bass, |z| set(&mut z.bass, level))
             }
             Field::Treble => {
                 let level = value.and_then(ToneLevel::from_answer);
-                self.device_change(Setting::Treble, |d| set(&mut d.treble, level))
+                self.zone_change(zone, Setting::Treble, |z| set(&mut z.treble, level))
             }
             Field::MultEq => {
                 let mode = value.and_then(MultiEq::from_any);
@@ -464,11 +497,13 @@ impl State {
             }
             "BAS" => {
                 let level = ToneLevel::from_telnet(value)?;
-                self.device_change(Setting::Bass, |d| set(&mut d.bass, Some(level)))
+                self.zone_change(Zone::Main, Setting::Bass, |z| set(&mut z.bass, Some(level)))
             }
             "TRE" => {
                 let level = ToneLevel::from_telnet(value)?;
-                self.device_change(Setting::Treble, |d| set(&mut d.treble, Some(level)))
+                self.zone_change(Zone::Main, Setting::Treble, |z| {
+                    set(&mut z.treble, Some(level))
+                })
             }
             "MULTEQ" => {
                 let mode = MultiEq::from_telnet(value)?;
@@ -573,9 +608,84 @@ impl State {
         }
     }
 
+    /// Applies the bass or the treble of zone 2 or 3, for example `BAS 51`.
+    /// Other `PS` events of these zones are ignored.
+    fn apply_zone_tone(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        let (name, value) = parameter.split_once(' ')?;
+        let level = ToneLevel::from_telnet(value.trim())?;
+        match name {
+            "BAS" => self.zone_change(zone, Setting::Bass, |z| set(&mut z.bass, Some(level))),
+            "TRE" => self.zone_change(zone, Setting::Treble, |z| set(&mut z.treble, Some(level))),
+            _ => None,
+        }
+    }
+
+    /// Applies the level of the left or right channel of zone 2 or 3, for
+    /// example `FL 52`. The end of a list and other channels are ignored.
+    fn apply_zone_channel_level(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        let (name, value) = parameter.split_once(' ')?;
+        let level = ChannelLevel::from_code(value.trim())?;
+        match name {
+            "FL" => self.zone_change(zone, Setting::ChannelLevels, |z| {
+                set(&mut z.left_level, Some(level))
+            }),
+            "FR" => self.zone_change(zone, Setting::ChannelLevels, |z| {
+                set(&mut z.right_level, Some(level))
+            }),
+            _ => None,
+        }
+    }
+
+    /// Applies a volume setting of a zone, for example `LIM 070`. `LIM` is
+    /// the volume limit: whole dB above -80 dB, so `070` is -10 dB, and `OFF`
+    /// or no value means no limit. `LEV` is `VAR` for a variable volume or the
+    /// fixed volume, `PON` the volume at power on, `MLV` the mute level and
+    /// `DIS` how the volume is shown.
+    fn apply_zone_volume(&mut self, zone: Zone, kind: &str, value: &str) -> Option<Change> {
+        let value = value.trim();
+        match kind {
+            "LIM" => {
+                let limit = if matches!(value, "OFF" | "") {
+                    None
+                } else {
+                    Some(Volume::from_whole_db_above_min(value)?)
+                };
+                self.zone_change(zone, Setting::MaxVolume, |z| set(&mut z.max_volume, limit))
+            }
+            "LEV" => {
+                let mode = VolumeMode::from_telnet(value)?;
+                self.zone_change(zone, Setting::VolumeMode, |z| {
+                    set(&mut z.volume_mode, Some(mode))
+                })
+            }
+            "PON" => {
+                let volume = PowerOnVolume::from_telnet(value)?;
+                self.zone_change(zone, Setting::PowerOnVolume, |z| {
+                    set(&mut z.power_on_volume, Some(volume))
+                })
+            }
+            "MLV" => {
+                let level = MuteLevel::from_code(value)?;
+                self.zone_change(zone, Setting::MuteLevel, |z| {
+                    set(&mut z.mute_level, Some(level))
+                })
+            }
+            "DIS" => {
+                let display = VolumeDisplay::from_code(value)?;
+                self.zone_change(zone, Setting::VolumeDisplay, |z| {
+                    set(&mut z.volume_display, Some(display))
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Applies an `SS` event that is about the receiver, not a zone: sources,
     /// quick select names, auto lip sync, speaker levels and the signal.
     fn apply_device_ss(&mut self, parameter: &str) -> Option<Change> {
+        if let Some((zone, kind, value)) = zone_volume_event(parameter) {
+            return self.apply_zone_volume(zone, kind, value);
+        }
         if let Some(changed) = self.device.sources.apply_ss(parameter) {
             return changed.then_some(Change {
                 zone: None,
@@ -682,6 +792,21 @@ impl State {
 }
 
 /// `ON` and `OFF`, as telnet events have them.
+/// Splits a volume setting event, for example `VCTZ2SLIM 070`, into the zone,
+/// the kind (`LIM`) and the value. `MA` is the main zone, `2S` and `3S` are
+/// zone 2 and 3.
+fn zone_volume_event(parameter: &str) -> Option<(Zone, &str, &str)> {
+    let rest = parameter.strip_prefix("VCTZ")?;
+    let zone = match rest.get(..2)? {
+        "MA" => Zone::Main,
+        "2S" => Zone::Zone2,
+        "3S" => Zone::Zone3,
+        _ => return None,
+    };
+    let rest = rest.get(2..)?;
+    Some((zone, rest.get(..3)?, rest.get(3..)?))
+}
+
 fn on_off(text: &str) -> Option<bool> {
     match text {
         "ON" => Some(true),
@@ -888,6 +1013,168 @@ mod tests {
         assert_eq!(apply(&mut state, "MUMAYBE"), None);
         assert_eq!(state.zone(Zone::Main).volume.map(Volume::db), Some(-36.5));
         assert_eq!(state.zone(Zone::Main).muted, Some(true));
+    }
+
+    #[test]
+    fn zone_volume_limits_follow_events() {
+        let mut state = State::new(false);
+        let limit = |zone| change(Some(zone), Setting::MaxVolume);
+        assert_eq!(apply(&mut state, "SSVCTZ2SLIM 070"), limit(Zone::Zone2));
+        assert_eq!(apply(&mut state, "SSVCTZ2SLIM 070"), None);
+        assert_eq!(apply(&mut state, "SSVCTZ3SLIM 098"), limit(Zone::Zone3));
+        assert_eq!(
+            state.zone(Zone::Zone2).max_volume.map(Volume::db),
+            Some(-10.0)
+        );
+        assert_eq!(
+            state.zone(Zone::Zone3).max_volume.map(Volume::db),
+            Some(18.0)
+        );
+        assert_eq!(state.zone(Zone::Main).max_volume, None);
+        assert_eq!(apply(&mut state, "SSVCTZ2SLIM OFF"), limit(Zone::Zone2));
+        assert_eq!(state.zone(Zone::Zone2).max_volume, None);
+        // Not a value, or too high.
+        for line in [
+            "SSVCTZ2SLIM x",
+            "SSVCTZ2SLIM 099",
+            "SSVCTZ2SLIM 300",
+            "SSVCTZ3SXXX VAR",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn zone_bass_treble_and_channel_levels_follow_events() {
+        let mut state = State::new(false);
+        let tone = |zone, setting| change(Some(zone), setting);
+        // The values of zone 2 of a real receiver.
+        assert_eq!(
+            apply(&mut state, "Z2PSBAS 51"),
+            tone(Zone::Zone2, Setting::Bass)
+        );
+        assert_eq!(apply(&mut state, "Z2PSBAS 51"), None);
+        assert_eq!(
+            apply(&mut state, "Z2PSTRE 49"),
+            tone(Zone::Zone2, Setting::Treble)
+        );
+        assert_eq!(
+            apply(&mut state, "Z3PSBAS 50"),
+            tone(Zone::Zone3, Setting::Bass)
+        );
+        assert_eq!(
+            apply(&mut state, "Z2CVFL 52"),
+            tone(Zone::Zone2, Setting::ChannelLevels)
+        );
+        assert_eq!(
+            apply(&mut state, "Z2CVFR 50"),
+            tone(Zone::Zone2, Setting::ChannelLevels)
+        );
+        assert_eq!(apply(&mut state, "Z2CVFR 50"), None);
+        let zone2 = state.zone(Zone::Zone2);
+        assert_eq!(zone2.bass, ToneLevel::from_db(1));
+        assert_eq!(zone2.treble, ToneLevel::from_db(-1));
+        assert_eq!(zone2.left_level.map(ChannelLevel::db), Some(2.0));
+        assert_eq!(zone2.right_level.map(ChannelLevel::db), Some(0.0));
+        assert_eq!(state.zone(Zone::Zone3).bass, ToneLevel::from_db(0));
+        // The main zone and the receiver values are not changed.
+        assert_eq!(state.zone(Zone::Main).bass, None);
+        // Other text.
+        for line in [
+            "Z2PSBAS x",
+            "Z2PSDRC OFF",
+            "Z2CVSW 50",
+            "Z2CVEND",
+            "Z2CVFL 99",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn sound_events_of_other_zones_are_not_the_receiver_values() {
+        let mut state = State::new(false);
+        assert_eq!(
+            apply(&mut state, "PSBAS 52"),
+            change(Some(Zone::Main), Setting::Bass)
+        );
+        // Zone 2 and zone 3 have their own bass and treble. Other sound
+        // events of these zones are not kept.
+        for line in ["Z2PSBAS 44", "Z3PSBAS 44", "Z2PSTRE 44"] {
+            assert!(apply(&mut state, line).is_some(), "{line}");
+        }
+        assert_eq!(apply(&mut state, "Z2PSRSTR LOW"), None);
+        assert_eq!(state.zone(Zone::Main).bass, ToneLevel::from_db(2));
+        assert_eq!(state.zone(Zone::Main).treble, None);
+        assert_eq!(state.device().sound_settings.audio_restorer, None);
+    }
+
+    #[test]
+    fn zone_volume_settings_follow_events() {
+        let mut state = State::new(false);
+        let changed = |zone, setting| change(Some(zone), setting);
+        // The values of a real receiver.
+        assert_eq!(
+            apply(&mut state, "SSVCTZMAPON 35"),
+            changed(Zone::Main, Setting::PowerOnVolume)
+        );
+        assert_eq!(apply(&mut state, "SSVCTZMAPON 35"), None);
+        assert_eq!(
+            apply(&mut state, "SSVCTZ2SPON MUT"),
+            changed(Zone::Zone2, Setting::PowerOnVolume)
+        );
+        assert_eq!(
+            apply(&mut state, "SSVCTZMAMLV MUT"),
+            changed(Zone::Main, Setting::MuteLevel)
+        );
+        assert_eq!(
+            apply(&mut state, "SSVCTZMAMLV 060"),
+            changed(Zone::Main, Setting::MuteLevel)
+        );
+        assert_eq!(
+            apply(&mut state, "SSVCTZMADIS REL"),
+            changed(Zone::Main, Setting::VolumeDisplay)
+        );
+        let main = state.zone(Zone::Main);
+        assert_eq!(
+            main.power_on_volume,
+            Volume::from_db_rounded(-45.0).map(PowerOnVolume::Level)
+        );
+        assert_eq!(main.mute_level, Some(MuteLevel::Minus20Db));
+        assert_eq!(main.volume_display, Some(VolumeDisplay::Relative));
+        assert_eq!(
+            state.zone(Zone::Zone2).power_on_volume,
+            Some(PowerOnVolume::Muted)
+        );
+        // Zone 2: variable, and fixed at -70 dB and at -79 dB.
+        let mode = |zone| change(Some(zone), Setting::VolumeMode);
+        assert_eq!(apply(&mut state, "SSVCTZ2SLEV VAR"), mode(Zone::Zone2));
+        assert_eq!(apply(&mut state, "SSVCTZ2SLEV VAR"), None);
+        assert_eq!(apply(&mut state, "SSVCTZ2SLEV 10"), mode(Zone::Zone2));
+        assert_eq!(
+            state.zone(Zone::Zone2).volume_mode,
+            Volume::from_db_rounded(-70.0).map(VolumeMode::Fixed)
+        );
+        assert_eq!(apply(&mut state, "SSVCTZ2SLEV 01"), mode(Zone::Zone2));
+        assert_eq!(apply(&mut state, "SSVCTZ2SLEV VAR"), mode(Zone::Zone2));
+        assert_eq!(
+            state.zone(Zone::Zone2).volume_mode,
+            Some(VolumeMode::Variable)
+        );
+        // A value that is not known keeps the last value.
+        for line in [
+            "SSVCTZMAMLV 123",
+            "SSVCTZMAPON x",
+            "SSVCTZMADIS ???",
+            "SSVCTZ2SLEV x",
+            "SSVCTZXXPON 1",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(
+            state.zone(Zone::Main).mute_level,
+            Some(MuteLevel::Minus20Db)
+        );
     }
 
     #[test]
@@ -1106,29 +1393,26 @@ mod tests {
             setting(Setting::ToneControl)
         );
         assert_eq!(apply(&mut state, &message("TONE CTRL ON")), None);
-        assert_eq!(
-            apply(&mut state, &message("BAS 53")),
-            setting(Setting::Bass)
-        );
-        assert_eq!(
-            apply(&mut state, &message("TRE 44")),
-            setting(Setting::Treble)
-        );
+        let main = |setting| change(Some(Zone::Main), setting);
+        assert_eq!(apply(&mut state, &message("BAS 53")), main(Setting::Bass));
+        assert_eq!(apply(&mut state, &message("TRE 44")), main(Setting::Treble));
         let tone = device(&state);
         assert_eq!(tone.tone_control, Some(true));
-        assert_eq!(tone.bass, ToneLevel::from_db(3));
-        assert_eq!(tone.treble, Some(ToneLevel::MIN));
+        let main_zone = state.zone(Zone::Main).clone();
+        assert_eq!(main_zone.bass, ToneLevel::from_db(3));
+        assert_eq!(main_zone.treble, Some(ToneLevel::MIN));
         // Text that is not a value keeps the last value.
         for text in ["BAS 99", "BAS", "TRE x", "TONE CTRL MAYBE"] {
             assert_eq!(apply(&mut state, &message(text)), None, "{text}");
         }
         assert_eq!(device(&state), tone);
+        assert_eq!(state.zone(Zone::Main), &main_zone);
         // An answer has the steps above the lowest level.
         assert_eq!(
             state.apply_field(Zone::Main, Field::Bass, Some("12")),
-            setting(Setting::Bass)
+            main(Setting::Bass)
         );
-        assert_eq!(state.device().bass, Some(ToneLevel::MAX));
+        assert_eq!(state.zone(Zone::Main).bass, Some(ToneLevel::MAX));
         assert_eq!(
             state.apply_field(Zone::Main, Field::ToneControlAdjust, Some("0")),
             setting(Setting::ToneControl)
@@ -1136,9 +1420,9 @@ mod tests {
         assert_eq!(state.device().tone_control, Some(false));
         assert_eq!(
             state.apply_field(Zone::Main, Field::Treble, Some("13")),
-            setting(Setting::Treble)
+            main(Setting::Treble)
         );
-        assert_eq!(state.device().treble, None);
+        assert_eq!(state.zone(Zone::Main).treble, None);
     }
 
     #[test]

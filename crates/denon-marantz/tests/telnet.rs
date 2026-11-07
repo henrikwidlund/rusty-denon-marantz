@@ -673,13 +673,13 @@ async fn tone_events_change_the_state() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     telnet.send(b"PSTONE CTRL ON\rPSBAS 53\rPSTRE 44\r");
     wait_until("the tone values", || {
-        avr.snapshot().device().treble.is_some()
+        avr.snapshot().zone(Zone::Main).treble.is_some()
     })
     .await;
     let state = avr.snapshot();
     assert_eq!(state.device().tone_control, Some(true));
-    assert_eq!(state.device().bass, ToneLevel::from_db(3));
-    assert_eq!(state.device().treble, Some(ToneLevel::MIN));
+    assert_eq!(state.zone(Zone::Main).bass, ToneLevel::from_db(3));
+    assert_eq!(state.zone(Zone::Main).treble, Some(ToneLevel::MIN));
 }
 
 #[tokio::test]
@@ -717,7 +717,7 @@ async fn tone_steps_stop_at_the_ends() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     telnet.send(b"PSTONE CTRL ON\rPSBAS 56\rPSTRE 44\r");
     wait_until("the tone values", || {
-        avr.snapshot().device().treble.is_some()
+        avr.snapshot().zone(Zone::Main).treble.is_some()
     })
     .await;
     let tone = avr.tone();

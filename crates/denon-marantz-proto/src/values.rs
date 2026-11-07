@@ -234,6 +234,23 @@ code_enum! {
 }
 
 code_enum! {
+    /// How far the volume goes down when a zone is muted.
+    pub enum MuteLevel {
+        Full = "MUT", "Full";
+        Minus40Db = "040", "-40 dB";
+        Minus20Db = "060", "-20 dB";
+    }
+}
+
+code_enum! {
+    /// How the receiver shows the volume.
+    pub enum VolumeDisplay {
+        Relative = "REL", "Relative";
+        Absolute = "ABS", "Absolute";
+    }
+}
+
+code_enum! {
     /// Room size.
     pub enum RoomSize {
         Small = "S", "S";

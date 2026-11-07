@@ -378,8 +378,8 @@ async fn update_of_a_2016_receiver_reads_tone_control() {
     );
     let state = avr.snapshot();
     assert_eq!(state.device().tone_control, Some(true));
-    assert_eq!(state.device().bass, ToneLevel::from_db(3));
-    assert_eq!(state.device().treble, Some(ToneLevel::MIN));
+    assert_eq!(state.zone(Zone::Main).bass, ToneLevel::from_db(3));
+    assert_eq!(state.zone(Zone::Main).treble, Some(ToneLevel::MIN));
     // The other values are still read.
     assert_eq!(state.zone(Zone::Main).power, Some(Power::On));
 }
