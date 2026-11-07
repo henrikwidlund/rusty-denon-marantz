@@ -18,8 +18,8 @@ use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, ToneLevel,
-    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    EcoMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
+    ToneLevel, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -100,6 +100,10 @@ pub enum Setting {
     FriendlyName,
     /// Auto lip sync of the receiver is on.
     AutoLipSync,
+    /// The remote control lock of the receiver.
+    RemoteLock,
+    /// The panel lock of the receiver.
+    PanelLock,
     /// The name of a quick select.
     QuickSelectNames,
     /// The level of a speaker channel.
@@ -223,6 +227,10 @@ pub struct DeviceState {
     pub friendly_name: Option<String>,
     /// Auto lip sync is on. Telnet reports it on a Denon receiver.
     pub auto_lip_sync: Option<bool>,
+    /// The remote control is locked. Telnet reports it, also when it changes.
+    pub remote_lock: Option<bool>,
+    /// What the panel lock locks. Telnet reports it, also when it changes.
+    pub panel_lock: Option<PanelLock>,
     /// Names of the quick selects. The first is quick select 1. A quick
     /// select with no name, or that the receiver has not reported, is `None`.
     /// Telnet reports them on a Denon receiver.
@@ -348,6 +356,7 @@ impl State {
                     set(&mut z.max_volume, limit)
                 })
             }
+            Event::Sy if parameter.contains("LOCK") => self.apply_lock(parameter),
             Event::Sy => self.signal_change(|signal| signal.apply_sy(parameter)),
             Event::Dim => {
                 let value = DimmerMode::from_telnet(parameter.get(1..)?)?;
@@ -588,6 +597,25 @@ impl State {
             return self.apply_auto_lip_sync(value);
         }
         self.apply_dirac_slot(parameter)
+    }
+
+    /// Applies a lock event: `REMOTE LOCK ON`, `PANEL LOCK ON` (the panel),
+    /// `PANEL+V LOCK ON` (the panel and the master volume) and `PANEL LOCK OFF`.
+    /// Other lock events are ignored.
+    fn apply_lock(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(value) = parameter.strip_prefix("REMOTE LOCK ") {
+            let on = on_off(value.trim())?;
+            return self.device_change(Setting::RemoteLock, |d| set(&mut d.remote_lock, Some(on)));
+        }
+        let (name, value) = parameter.split_once(" LOCK ")?;
+        let on = on_off(value.trim())?;
+        let lock = match (name, on) {
+            ("PANEL" | "PANEL+V", false) => PanelLock::Off,
+            ("PANEL", true) => PanelLock::Panel,
+            ("PANEL+V", true) => PanelLock::PanelAndVolume,
+            _ => return None,
+        };
+        self.device_change(Setting::PanelLock, |d| set(&mut d.panel_lock, Some(lock)))
     }
 
     /// Applies the value of an auto lip sync event, `ON` or `OFF`. Text that
@@ -1713,6 +1741,48 @@ mod tests {
         assert_eq!(state.device().friendly_name.as_deref(), Some("Living room"));
         // Other `NS` lines are not names.
         assert_eq!(apply(&mut state, "NSFNT P01"), None);
+    }
+
+    #[test]
+    fn locks_follow_events() {
+        let mut state = State::new(false);
+        let lock = |setting| change(None, setting);
+        // The events of a real receiver.
+        assert_eq!(
+            apply(&mut state, "SYREMOTE LOCK OFF"),
+            lock(Setting::RemoteLock)
+        );
+        assert_eq!(apply(&mut state, "SYREMOTE LOCK OFF"), None);
+        assert_eq!(
+            apply(&mut state, "SYPANEL+V LOCK ON"),
+            lock(Setting::PanelLock)
+        );
+        assert_eq!(state.device().panel_lock, Some(PanelLock::PanelAndVolume));
+        assert_eq!(
+            apply(&mut state, "SYPANEL LOCK OFF"),
+            lock(Setting::PanelLock)
+        );
+        assert_eq!(state.device().panel_lock, Some(PanelLock::Off));
+        assert_eq!(
+            apply(&mut state, "SYPANEL LOCK ON"),
+            lock(Setting::PanelLock)
+        );
+        assert_eq!(state.device().panel_lock, Some(PanelLock::Panel));
+        assert_eq!(
+            apply(&mut state, "SYREMOTE LOCK ON"),
+            lock(Setting::RemoteLock)
+        );
+        assert_eq!(state.device().remote_lock, Some(true));
+        // Other text keeps the values.
+        for line in [
+            "SYMNLOCK OFF",
+            "SYREMOTE LOCK ?",
+            "SYPANEL LOCK x",
+            "SYPANEL+V LOCK",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state.device().panel_lock, Some(PanelLock::Panel));
     }
 
     #[test]

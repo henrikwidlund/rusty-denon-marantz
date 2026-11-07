@@ -46,9 +46,9 @@ pub use values::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, ColorSpace,
     DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume,
     EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
-    ImaxMode, ImaxSubwooferOutput, Mdax, MultiEq, MuteLevel, PictureMode, PixelDepth, Power,
-    ReferenceLevelOffset, RoomSize, SurroundLevelCompensation, VideoProcessingMode, VolumeDisplay,
-    ZoneChannelMode, ZoneHdmiAudio,
+    ImaxMode, ImaxSubwooferOutput, Mdax, MultiEq, MuteLevel, PanelLock, PictureMode, PixelDepth,
+    Power, ReferenceLevelOffset, RoomSize, SurroundLevelCompensation, VideoProcessingMode,
+    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};

@@ -349,6 +349,18 @@ code_enum! {
     }
 }
 
+/// What the panel lock locks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum PanelLock {
+    /// Nothing is locked.
+    Off,
+    /// The buttons on the panel are locked, but not the master volume.
+    Panel,
+    /// The buttons on the panel and the master volume are locked.
+    PanelAndVolume,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
