@@ -3,8 +3,8 @@
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter, DialogEnhancerLevel,
-    Drc, EffectSpeakerSelection, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax,
-    RoomSize, SoundSettingValue, SurroundLevelCompensation, Zone,
+    Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput,
+    InputMode, Mdax, RoomSize, SoundSettingValue, SpeakerPreset, SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -67,6 +67,8 @@ impl<'a> SoundControl<'a> {
         set_center_width(u8) => CenterWidth, "the center width, from 0 to 7";
         set_loudness_management(bool) => LoudnessManagement, "loudness management on (`true`) or off (`false`)";
         set_speaker_virtualizer(bool) => SpeakerVirtualizer, "the speaker virtualizer on (`true`) or off (`false`)";
+        set_front_speakers(FrontSpeakers) => FrontSpeakers, "the front speaker output. The receiver needs \"Amp assign = Front B\" in its setup";
+        set_speaker_preset(SpeakerPreset) => SpeakerPreset, "the speaker preset";
         set_tactile_transducer(bool) => TactileTransducer, "the tactile transducer on (`true`) or off (`false`)";
         set_tactile_low_pass(u16) => TactileLowPass, "the low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
         set_graphic_eq(bool) => GraphicEq, "the graphic EQ on (`true`) or off (`false`)";

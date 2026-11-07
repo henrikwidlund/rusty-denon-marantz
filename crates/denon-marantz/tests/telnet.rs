@@ -12,9 +12,10 @@ use common::{
 use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker};
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, HdmiAudioDecode, HdmiOutput,
-    HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset, RemoteKey,
-    RoomSize, Setting, ToneLevel, Trigger, VideoProcessingMode, Volume, Zone,
+    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, FrontSpeakers, HdmiAudioDecode,
+    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset,
+    RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger, VideoProcessingMode, Volume,
+    Zone,
 };
 use tokio::time::timeout;
 
@@ -860,11 +861,13 @@ async fn sound_methods_send_their_commands() {
     sound.set_imax_high_pass(80).await.unwrap();
     sound.set_input_mode(InputMode::Hdmi).await.unwrap();
     sound.set_tactile_transducer(true).await.unwrap();
+    sound.set_front_speakers(FrontSpeakers::B).await.unwrap();
+    sound.set_speaker_preset(SpeakerPreset::Two).await.unwrap();
     sound.tactile_level_up().await.unwrap();
     sound.set_tactile_low_pass(60).await.unwrap();
     let level = ChannelLevel::from_half_db(-1).unwrap();
     sound.set_subwoofer_level(2, level).await.unwrap();
-    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 13).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -876,6 +879,8 @@ async fn sound_methods_send_their_commands() {
             "PSIMAXHPF 080",
             "SDHDMI",
             "SSTTR ON",
+            "PSFRONT SPB",
+            "SPPR 2",
             "SSTTRLEV UP",
             "SSTTRLPF 060",
             "PSSWL2 495"

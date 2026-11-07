@@ -20,7 +20,8 @@ use crate::video::VideoSettings;
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
     EcoMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
-    ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    SpeakerPreset, ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -113,6 +114,8 @@ pub enum Setting {
     SoundSettings,
     /// A trigger output of the receiver is on or off.
     Triggers,
+    /// The speaker preset of the receiver.
+    SpeakerPreset,
     /// A video setting such as the video processing mode or the HDMI output.
     VideoSettings,
 }
@@ -246,6 +249,8 @@ pub struct DeviceState {
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
+    /// The speaker preset. Telnet reports it.
+    pub speaker_preset: Option<SpeakerPreset>,
     /// Each trigger output is on. The first is trigger 1. Telnet reports them.
     pub triggers: [Option<bool>; 3],
     /// The video settings, for example the video processing mode. Telnet
@@ -399,6 +404,7 @@ impl State {
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
             Event::Tr => self.apply_trigger(parameter),
+            Event::Sp => self.apply_speaker_preset(parameter),
             Event::Vs if zone == Some(Zone::Main) => self.apply_video_setting(parameter),
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
@@ -596,6 +602,14 @@ impl State {
                 })
             }
         }
+    }
+
+    /// Applies an `SP` event, for example `PR 1`.
+    fn apply_speaker_preset(&mut self, parameter: &str) -> Option<Change> {
+        let preset = SpeakerPreset::from_code(parameter.strip_prefix("PR ")?.trim())?;
+        self.device_change(Setting::SpeakerPreset, |d| {
+            set(&mut d.speaker_preset, Some(preset))
+        })
     }
 
     /// Applies a `TR` event, for example `1 ON`.
@@ -1946,6 +1960,19 @@ mod tests {
         assert!(settings.other.is_empty());
         // The channel group answers `ON` while the transducer is off, so it stays out.
         assert_eq!(apply(&mut state, "CVTTR ON"), None);
+    }
+
+    #[test]
+    fn speaker_preset_follows_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::SpeakerPreset);
+        assert_eq!(apply(&mut state, "SPPR 1"), changed());
+        assert_eq!(apply(&mut state, "SPPR 1"), None);
+        assert_eq!(apply(&mut state, "SPPR 2"), changed());
+        assert_eq!(state.device().speaker_preset, Some(SpeakerPreset::Two));
+        for line in ["SPPR 3", "SPPR ?", "SPXX 1"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]

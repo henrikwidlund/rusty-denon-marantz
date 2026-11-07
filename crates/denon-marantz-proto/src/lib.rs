@@ -48,10 +48,11 @@ pub use tone::ToneLevel;
 pub use values::{
     AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
-    DynamicVolume, EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination,
-    ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel, PanelLock,
-    PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SurroundLevelCompensation,
-    Trigger, VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
+    Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel,
+    PanelLock, PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SpeakerPreset,
+    SurroundLevelCompensation, Trigger, VideoProcessingMode, VideoResolution, VolumeDisplay,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};

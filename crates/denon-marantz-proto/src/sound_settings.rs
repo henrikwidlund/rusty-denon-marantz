@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 use crate::error::Error;
 use crate::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter, DialogEnhancerLevel,
-    Drc, EffectSpeakerSelection, ImaxAudio, ImaxMode, ImaxSubwooferOutput, Mdax, RoomSize,
-    SurroundLevelCompensation,
+    Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, Mdax,
+    RoomSize, SpeakerPreset, SurroundLevelCompensation,
 };
 
 /// Highest value of each number, as the receiver accepts it.
@@ -103,6 +103,8 @@ pub struct SoundSettings {
     pub delay_time: Option<u16>,
     /// Audio delay in ms, from 0 to 500.
     pub audio_delay: Option<u16>,
+    /// Front speaker output. Receivers with "Amp assign = Front B" only.
+    pub front_speakers: Option<FrontSpeakers>,
     /// The tactile transducer is on.
     pub tactile_transducer: Option<bool>,
     /// Level of the tactile transducer.
@@ -199,6 +201,7 @@ impl SoundSettings {
             "DIC" => put(&mut self.dialog_control, number(value, MAX_DIALOG_CONTROL)),
             "DEL" => put(&mut self.delay_time, number(value, MAX_DELAY_TIME)),
             "DELAY" => put(&mut self.audio_delay, number(value, MAX_AUDIO_DELAY)),
+            "FRONT" => put(&mut self.front_speakers, FrontSpeakers::from_code(value)),
             "TTR" => put(&mut self.tactile_transducer, on_off(value)),
             "TTRLEV" => put(&mut self.tactile_level, ChannelLevel::from_code(value)),
             "TTRLPF" => put(&mut self.tactile_low_pass, number(value, 999)),
@@ -291,6 +294,10 @@ pub enum SoundSettingValue {
     CenterSpread(bool),
     /// Center width, from 0 to 7.
     CenterWidth(u8),
+    /// Front speaker output.
+    FrontSpeakers(FrontSpeakers),
+    /// Speaker preset.
+    SpeakerPreset(SpeakerPreset),
     /// Tactile transducer on (`true`) or off (`false`).
     TactileTransducer(bool),
     /// Raises the level of the tactile transducer by one step.
@@ -388,6 +395,9 @@ impl SoundSettingValue {
                 };
                 code(out, name, level.code())
             }
+            Self::FrontSpeakers(v) => code(out, "PSFRONT ", v.code()),
+            Self::Panorama(on) => code(out, "PSPAN ", on_off_code(on)),
+            Self::SpeakerPreset(v) => code(out, "SPPR ", v.code()),
             Self::TactileTransducer(on) => code(out, "SSTTR ", on_off_code(on)),
             Self::TactileLevelUp => code(out, "SSTTRLEV ", "UP"),
             Self::TactileLevelDown => code(out, "SSTTRLEV ", "DOWN"),
@@ -416,7 +426,6 @@ impl SoundSettingValue {
             // No space before the value.
             Self::CinemaEq(on) => code(out, "PSCINEMA EQ.", on_off_code(on)),
             Self::NeuralX(on) => code(out, "PSNEURAL ", on_off_code(on)),
-            Self::Panorama(on) => code(out, "PSPAN ", on_off_code(on)),
             Self::Dimension(v) => {
                 digits(out, "PSDIM ", "dimension", u16::from(v), MAX_DIMENSION, 2)
             }
@@ -577,6 +586,14 @@ mod tests {
     }
 
     #[test]
+    fn front_speakers() {
+        let mut settings = SoundSettings::default();
+        assert!(settings.apply("FRONT", "SPA"));
+        assert!(settings.apply("FRONT", "A+B"));
+        assert_eq!(settings.front_speakers, Some(FrontSpeakers::Both));
+    }
+
+    #[test]
     fn tactile_transducer_values() {
         let mut settings = SoundSettings::default();
         assert!(settings.apply("TTR", "OFF"));
@@ -660,6 +677,37 @@ mod tests {
     }
 
     #[test]
+    fn front_speaker_preset_and_tactile_texts() {
+        let text = |value: SoundSettingValue| {
+            let mut out = String::new();
+            value.write(&mut out).map(|()| out)
+        };
+        let cases = [
+            (SoundSettingValue::TactileTransducer(true), "SSTTR ON"),
+            (SoundSettingValue::TactileTransducer(false), "SSTTR OFF"),
+            (
+                SoundSettingValue::FrontSpeakers(FrontSpeakers::Both),
+                "PSFRONT A+B",
+            ),
+            (
+                SoundSettingValue::FrontSpeakers(FrontSpeakers::B),
+                "PSFRONT SPB",
+            ),
+            (
+                SoundSettingValue::SpeakerPreset(SpeakerPreset::Two),
+                "SPPR 2",
+            ),
+            (SoundSettingValue::TactileLevelUp, "SSTTRLEV UP"),
+            (SoundSettingValue::TactileLevelDown, "SSTTRLEV DOWN"),
+            (SoundSettingValue::TactileLowPass(80), "SSTTRLPF 080"),
+            (SoundSettingValue::TactileLowPass(250), "SSTTRLPF 250"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
+        }
+    }
+
+    #[test]
     fn setter_texts() {
         let level = |half_db| ChannelLevel::from_half_db(half_db).unwrap();
         let text = |value: SoundSettingValue| {
@@ -730,12 +778,6 @@ mod tests {
                 "PSSWL4 50",
             ),
             (SoundSettingValue::LfeLevel(3), "PSLFE 03"),
-            (SoundSettingValue::TactileTransducer(true), "SSTTR ON"),
-            (SoundSettingValue::TactileTransducer(false), "SSTTR OFF"),
-            (SoundSettingValue::TactileLevelUp, "SSTTRLEV UP"),
-            (SoundSettingValue::TactileLevelDown, "SSTTRLEV DOWN"),
-            (SoundSettingValue::TactileLowPass(80), "SSTTRLPF 080"),
-            (SoundSettingValue::TactileLowPass(250), "SSTTRLPF 250"),
             (SoundSettingValue::CenterLevel(level(2)), "PSCLV 51"),
             (SoundSettingValue::CenterSpread(true), "PSCES ON"),
             (SoundSettingValue::CenterWidth(7), "PSCEN 07"),

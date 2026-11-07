@@ -25,7 +25,7 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
@@ -43,9 +43,9 @@ use std::time::Duration;
 
 use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize, Trigger,
-    VideoProcessingMode, VideoResolution, Zone,
+    AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, FrontSpeakers,
+    HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize,
+    SpeakerPreset, Trigger, VideoProcessingMode, VideoResolution, Zone,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -94,7 +94,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 21] = [
+const SOUND_COMMANDS: [&str; 24] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -116,6 +116,9 @@ const SOUND_COMMANDS: [&str; 21] = [
     "tactile-up",
     "tactile-down",
     "tactile-lpf",
+    "front-speakers",
+    "panorama",
+    "speaker-preset",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -249,6 +252,22 @@ async fn sound_command(
                 _ => return Err(unknown("tactile transducer").into()),
             };
             avr.sound().set_tactile_transducer(on).await?;
+        }
+        "front-speakers" => {
+            let speakers = FrontSpeakers::from_code(need()?).ok_or_else(|| unknown("speakers"))?;
+            avr.sound().set_front_speakers(speakers).await?;
+        }
+        "panorama" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("panorama").into()),
+            };
+            avr.sound().set_panorama(on).await?;
+        }
+        "speaker-preset" => {
+            let preset = SpeakerPreset::from_code(need()?).ok_or_else(|| unknown("preset"))?;
+            avr.sound().set_speaker_preset(preset).await?;
         }
         "tactile-up" => avr.sound().tactile_level_up().await?,
         "tactile-down" => avr.sound().tactile_level_down().await?,

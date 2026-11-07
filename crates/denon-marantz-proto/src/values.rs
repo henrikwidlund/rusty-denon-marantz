@@ -110,6 +110,24 @@ code_enum! {
 }
 
 code_enum! {
+    /// Front speaker output. The receiver needs "Amp assign = Front B" in its
+    /// setup.
+    pub enum FrontSpeakers {
+        A = "SPA", "Speaker A";
+        B = "SPB", "Speaker B";
+        Both = "A+B", "Speakers A and B";
+    }
+}
+
+code_enum! {
+    /// Speaker preset of the receiver.
+    pub enum SpeakerPreset {
+        One = "1", "Preset 1";
+        Two = "2", "Preset 2";
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -481,6 +499,7 @@ mod tests {
             EffectSpeakerSelection,
             HdmiAudioDecode,
             HdmiOutput,
+            FrontSpeakers,
             Illumination,
             InputMode,
             Mdax,
@@ -488,6 +507,7 @@ mod tests {
             PixelDepth,
             Power,
             RoomSize,
+            SpeakerPreset,
             VideoProcessingMode,
             VideoResolution,
         );
