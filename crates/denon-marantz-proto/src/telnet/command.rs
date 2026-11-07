@@ -10,6 +10,7 @@ use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
 use crate::values::{DiracFilter, DynamicVolume, InputMode, MultiEq, ReferenceLevelOffset};
+use crate::video::VideoSettingValue;
 use crate::volume::Volume;
 use crate::zone::Zone;
 
@@ -107,6 +108,8 @@ pub enum Command<'a> {
     AutoLipSync(bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
+    /// Sets a video setting, for example the video processing mode.
+    SetVideoSetting(VideoSettingValue),
     /// Sets a sound setting, for example the room size or the audio delay.
     SetSoundSetting(SoundSettingValue),
     /// Presses a remote key that has no telnet command. See [`RemoteKey`] for
@@ -230,6 +233,7 @@ impl Command<'_> {
                 out.push_str("SD");
                 out.push_str(mode.code());
             }
+            Self::SetVideoSetting(value) => value.write(out),
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,
             Self::DenonKeyCode(code) => write_denon_code(brand, zone, code, out)?,
@@ -433,6 +437,10 @@ mod tests {
             (Command::SetInputMode(InputMode::Hdmi), "SDHDMI\r"),
             (Command::SetInputMode(InputMode::Digital), "SDDIGITAL\r"),
             (Command::SetInputMode(InputMode::Analog), "SDANALOG\r"),
+            (
+                Command::SetVideoSetting(VideoSettingValue::VerticalStretch(true)),
+                "VSVST ON\r",
+            ),
             (Command::Play, "NS9A\r"),
             (Command::Pause, "NS9B\r"),
             (Command::Stop, "NS9C\r"),

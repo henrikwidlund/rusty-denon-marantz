@@ -25,6 +25,8 @@ use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]
 use crate::tone_control::ToneControl;
 #[cfg(feature = "telnet")]
+use crate::video_control::VideoControl;
+#[cfg(feature = "telnet")]
 use crate::zone_control::ZoneControl;
 
 /// Name of a receiver that has none.
@@ -259,6 +261,13 @@ impl Avr {
     #[must_use]
     pub const fn sound(&self) -> SoundControl<'_> {
         SoundControl::new(self)
+    }
+
+    /// Controls the video settings on telnet with typed methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn video(&self) -> VideoControl<'_> {
+        VideoControl::new(self)
     }
 
     /// Controls Dirac Live on telnet with typed methods.

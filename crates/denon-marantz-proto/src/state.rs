@@ -16,6 +16,7 @@ use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
+use crate::video::VideoSettings;
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
     EcoMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
@@ -110,6 +111,8 @@ pub enum Setting {
     SpeakerLevels,
     /// A sound setting such as the audio restorer or the room size.
     SoundSettings,
+    /// A video setting such as the video processing mode or the HDMI output.
+    VideoSettings,
 }
 
 /// A value that changed.
@@ -241,6 +244,9 @@ pub struct DeviceState {
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
+    /// The video settings, for example the video processing mode. Telnet
+    /// reports them.
+    pub video_settings: VideoSettings,
 }
 
 impl DeviceState {
@@ -382,6 +388,7 @@ impl State {
             }
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
+            Event::Vs if zone == Some(Zone::Main) => self.apply_video_setting(parameter),
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
             }
@@ -578,6 +585,15 @@ impl State {
                 })
             }
         }
+    }
+
+    /// Applies a `VS` event of the main zone.
+    fn apply_video_setting(&mut self, parameter: &str) -> Option<Change> {
+        let changed = self.device.video_settings.apply(parameter)?;
+        changed.then_some(Change {
+            zone: None,
+            setting: Setting::VideoSettings,
+        })
     }
 
     /// Applies an `OP` event: the list of sound modes, the audio channels,
@@ -1435,7 +1451,7 @@ mod tests {
         let before = state.clone();
         for line in [
             "NSE1Hello",
-            "VSMONI1",
+            "VSXYZ",
             "CVFL 50",
             "TR1 ON",
             "SYHDMIDIAGERR NO",
@@ -1873,6 +1889,28 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn video_settings_follow_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::VideoSettings);
+        assert_eq!(apply(&mut state, "VSVPMBYP"), changed());
+        assert_eq!(apply(&mut state, "VSVPMBYP"), None);
+        assert_eq!(apply(&mut state, "VSMONI1"), changed());
+        assert_eq!(apply(&mut state, "VSAUDIO AMP"), changed());
+        assert_eq!(apply(&mut state, "VSSCHOFF"), changed());
+        let video = &state.device().video_settings;
+        assert_eq!(
+            video.processing_mode,
+            Some(crate::VideoProcessingMode::Bypass)
+        );
+        assert_eq!(video.hdmi_output, Some(crate::HdmiOutput::Hdmi1));
+        assert_eq!(video.hdmi_audio, Some(crate::HdmiAudioDecode::Amp));
+        assert_eq!(video.hdmi_upscaler, Some(crate::HdmiUpscaler::Off));
+        for line in ["VSVPM ?", "VSXYZ", "VSVPMXX"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]

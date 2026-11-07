@@ -12,8 +12,9 @@ use common::{
 use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker};
 use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, InputMode, MultiEq, Power,
-    ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, ToneLevel, Volume, Zone,
+    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, HdmiAudioDecode, HdmiOutput,
+    HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset, RemoteKey,
+    RoomSize, Setting, ToneLevel, VideoProcessingMode, Volume, Zone,
 };
 use tokio::time::timeout;
 
@@ -677,6 +678,34 @@ async fn remote_keys_use_the_category_of_the_zone() {
         commands_sent(&telnet),
         ["RCKSK0470776", "RCKSK0430945", "RCKSK0430005"]
     );
+}
+
+#[tokio::test]
+async fn video_methods_send_their_commands_and_events_fill_the_state() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let video = avr.video();
+    video
+        .set_processing_mode(VideoProcessingMode::Movie)
+        .await
+        .unwrap();
+    video.set_hdmi_output(HdmiOutput::Hdmi2).await.unwrap();
+    video.set_hdmi_audio(HdmiAudioDecode::Tv).await.unwrap();
+    video.set_vertical_stretch(true).await.unwrap();
+    video.set_hdmi_upscaler(HdmiUpscaler::Off).await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 5).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["VSVPMMOVI", "VSMONI2", "VSAUDIO TV", "VSVST ON", "VSSCHOFF"]
+    );
+    telnet.send(b"VSVPMBYP\rVSAUDIO AMP\r");
+    wait_until("the video values", || {
+        avr.snapshot().device().video_settings.hdmi_audio.is_some()
+    })
+    .await;
+    let video = avr.snapshot().device().video_settings;
+    assert_eq!(video.processing_mode, Some(VideoProcessingMode::Bypass));
+    assert_eq!(video.hdmi_audio, Some(HdmiAudioDecode::Amp));
 }
 
 /// The commands that the client sent, without the queries.

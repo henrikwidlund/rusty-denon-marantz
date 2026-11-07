@@ -18,6 +18,7 @@ mod state;
 mod text;
 mod tone;
 mod values;
+mod video;
 mod volume;
 mod xml;
 
@@ -45,12 +46,13 @@ pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use values::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode, ColorSpace,
-    DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicVolume,
-    EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
-    ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel, PanelLock, PictureMode,
-    PixelDepth, Power, ReferenceLevelOffset, RoomSize, SurroundLevelCompensation,
-    VideoProcessingMode, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
+    ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
+    DynamicVolume, EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination,
+    ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel, PanelLock,
+    PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SurroundLevelCompensation,
+    VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
+pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};

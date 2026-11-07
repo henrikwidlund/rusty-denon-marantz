@@ -25,7 +25,10 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG) (a
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG),
+//! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
+//! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
+//! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
 //! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, raw TEXT,
@@ -40,8 +43,9 @@ use std::time::Duration;
 
 use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
-    AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, InputMode, MultiEq,
-    ReferenceLevelOffset, RoomSize, Zone,
+    AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, HdmiAudioDecode,
+    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize,
+    VideoProcessingMode, VideoResolution, Zone,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -64,6 +68,17 @@ const ZONE_COMMANDS: [&str; 12] = [
     "key",
     "denon-code",
     "marantz-code",
+];
+
+/// Commands that the video control has methods for.
+const VIDEO_COMMANDS: [&str; 7] = [
+    "video-mode",
+    "hdmi-output",
+    "hdmi-audio",
+    "aspect",
+    "vertical-stretch",
+    "resolution",
+    "upscaler",
 ];
 
 /// Commands that the tone control has methods for.
@@ -221,6 +236,54 @@ async fn sound_command(
     Ok(())
 }
 
+/// Runs a command with the methods of the video control.
+async fn video_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let video = avr.video();
+    match name {
+        "video-mode" => {
+            let mode = VideoProcessingMode::from_code(need()?).ok_or_else(|| unknown("mode"))?;
+            video.set_processing_mode(mode).await?;
+        }
+        "hdmi-output" => {
+            let output = HdmiOutput::from_code(need()?).ok_or_else(|| unknown("output"))?;
+            video.set_hdmi_output(output).await?;
+        }
+        "hdmi-audio" => {
+            let decode = HdmiAudioDecode::from_code(need()?).ok_or_else(|| unknown("audio"))?;
+            video.set_hdmi_audio(decode).await?;
+        }
+        "aspect" => {
+            let aspect = AspectRatio::from_code(need()?).ok_or_else(|| unknown("aspect"))?;
+            video.set_aspect_ratio(aspect).await?;
+        }
+        "vertical-stretch" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("vertical stretch").into()),
+            };
+            video.set_vertical_stretch(on).await?;
+        }
+        "resolution" => {
+            let resolution =
+                VideoResolution::from_code(need()?).ok_or_else(|| unknown("resolution"))?;
+            video.set_resolution(resolution).await?;
+        }
+        "upscaler" => {
+            let upscaler = HdmiUpscaler::from_code(need()?).ok_or_else(|| unknown("upscaler"))?;
+            video.set_hdmi_upscaler(upscaler).await?;
+        }
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
+}
+
 /// Runs a command with the methods of the zone control.
 async fn zone_command(
     zone: ZoneControl<'_>,
@@ -325,7 +388,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argument = args.next();
     // A command that is not known is refused before the connect.
     let typed = |commands: &[&str]| commands.contains(&name.as_str());
-    let other = if typed(&ZONE_COMMANDS) || typed(&TONE_COMMANDS) || typed(&SOUND_COMMANDS) {
+    let other = if typed(&ZONE_COMMANDS)
+        || typed(&TONE_COMMANDS)
+        || typed(&SOUND_COMMANDS)
+        || typed(&VIDEO_COMMANDS)
+    {
         None
     } else {
         Some(command(&name, argument.as_deref())?)
@@ -360,6 +427,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(command) => avr.send(zone, command).await?,
         None if typed(&SOUND_COMMANDS) => {
             sound_command(&avr, &name, argument.as_deref()).await?;
+        }
+        None if typed(&VIDEO_COMMANDS) => {
+            video_command(&avr, &name, argument.as_deref()).await?;
         }
         None if typed(&TONE_COMMANDS) => {
             tone_command(avr.tone(), &name, argument.as_deref()).await?;

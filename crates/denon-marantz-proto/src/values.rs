@@ -87,6 +87,29 @@ code_enum! {
 }
 
 code_enum! {
+    /// Aspect ratio of the picture. Older receivers only.
+    pub enum AspectRatio {
+        Normal = "NRM", "Normal (4:3)";
+        Full = "FUL", "Full (16:9)";
+    }
+}
+
+code_enum! {
+    /// Output resolution of the video conversion.
+    pub enum VideoResolution {
+        Auto = "AUTO", "Auto";
+        P480 = "48P", "480p/576p";
+        I1080 = "10I", "1080i";
+        P720 = "72P", "720p";
+        P1080 = "10P", "1080p";
+        P1080At24 = "10P24", "1080p 24 Hz";
+        K4 = "4K", "4K 24/60/50";
+        K4Fast = "4KF", "4K 60/50";
+        K8 = "8K", "8K";
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -410,6 +433,7 @@ mod tests {
     #[test]
     fn single_code_enums_round_trip() {
         round_trip!(
+            AspectRatio,
             AudioRestorer,
             Auro3dMode,
             AuroMatic3dPreset,
@@ -431,6 +455,7 @@ mod tests {
             Power,
             RoomSize,
             VideoProcessingMode,
+            VideoResolution,
         );
     }
 

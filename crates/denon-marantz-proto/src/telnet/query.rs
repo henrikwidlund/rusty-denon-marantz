@@ -63,7 +63,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
         .map(|query| query.text)
 }
 
-static QUERIES: [Query; 101] = [
+static QUERIES: [Query; 105] = [
     both("SI?"),                // Select INPUT source
     both("MV?"),                // MASTER VOLUME
     both("MU?"),                // Mute
@@ -143,6 +143,10 @@ static QUERIES: [Query; 101] = [
     both("Z2STBY?"),            // Auto Standby
     both("Z3STBY?"),            // Auto Standby
     both("VSVPM ?"),            // Video Process
+    both("VSASP ?"),            // Aspect Ratio
+    both("VSVST ?"),            // Vertical Stretch
+    both("VSSC ?"),             // Analog to HDMI Resolution
+    both("VSSCH ?"),            // HDMI Upscaler
     both("PSLFE ?"),            // LFE Level
     both("PSBSC ?"),            // Bass Sync
     both("PSDEH ?"),            // Dialog Enhancer
@@ -193,8 +197,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 96);
-        assert_eq!(marantz.len(), 97);
+        assert_eq!(denon.len(), 100);
+        assert_eq!(marantz.len(), 101);
     }
 
     #[test]
