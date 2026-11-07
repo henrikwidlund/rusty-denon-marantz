@@ -9,7 +9,9 @@ use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
-use crate::values::{DiracFilter, DynamicVolume, InputMode, MultiEq, ReferenceLevelOffset};
+use crate::values::{
+    DiracFilter, DynamicVolume, InputMode, MultiEq, ReferenceLevelOffset, Trigger,
+};
 use crate::video::VideoSettingValue;
 use crate::volume::Volume;
 use crate::zone::Zone;
@@ -106,6 +108,8 @@ pub enum Command<'a> {
     /// Turns Auto Lip Sync on (`true`) or off (`false`). The text depends on
     /// the brand.
     AutoLipSync(bool),
+    /// Turns a trigger output on (`true`) or off (`false`).
+    SetTrigger(Trigger, bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
     /// Sets a video setting, for example the video processing mode.
@@ -229,9 +233,9 @@ impl Command<'_> {
                 });
                 out.push_str(if on { "ON" } else { "OFF" });
             }
+            Self::SetTrigger(trigger, on) => push_trigger(out, trigger, on),
             Self::SetInputMode(mode) => {
-                out.push_str("SD");
-                out.push_str(mode.code());
+                let _ = write!(out, "SD{}", mode.code());
             }
             Self::SetVideoSetting(value) => value.write(out),
             Self::SetSoundSetting(value) => value.write(out)?,
@@ -260,6 +264,15 @@ const fn zone_prefix(zone: Zone, main: &'static str) -> &'static str {
 fn push_zone(out: &mut String, zone: Zone, main: &'static str, rest: &str) {
     out.push_str(zone_prefix(zone, main));
     out.push_str(rest);
+}
+
+fn push_trigger(out: &mut String, trigger: Trigger, on: bool) {
+    let _ = write!(
+        out,
+        "TR{} {}",
+        trigger.number(),
+        if on { "ON" } else { "OFF" }
+    );
 }
 
 fn check_text(text: &str) -> Result<(), Error> {
@@ -433,6 +446,8 @@ mod tests {
             (Command::SelectSoundMode("MOVIE"), "MSMOVIE\r"),
             (Command::AllZoneStereo(true), "MNZST ON\r"),
             (Command::AllZoneStereo(false), "MNZST OFF\r"),
+            (Command::SetTrigger(Trigger::One, true), "TR1 ON\r"),
+            (Command::SetTrigger(Trigger::Three, false), "TR3 OFF\r"),
             (Command::SetInputMode(InputMode::Auto), "SDAUTO\r"),
             (Command::SetInputMode(InputMode::Hdmi), "SDHDMI\r"),
             (Command::SetInputMode(InputMode::Digital), "SDDIGITAL\r"),

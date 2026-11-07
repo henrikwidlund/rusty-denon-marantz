@@ -20,7 +20,7 @@ use crate::video::VideoSettings;
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
     EcoMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
-    ToneLevel, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -111,6 +111,8 @@ pub enum Setting {
     SpeakerLevels,
     /// A sound setting such as the audio restorer or the room size.
     SoundSettings,
+    /// A trigger output of the receiver is on or off.
+    Triggers,
     /// A video setting such as the video processing mode or the HDMI output.
     VideoSettings,
 }
@@ -244,12 +246,20 @@ pub struct DeviceState {
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
+    /// Each trigger output is on. The first is trigger 1. Telnet reports them.
+    pub triggers: [Option<bool>; 3],
     /// The video settings, for example the video processing mode. Telnet
     /// reports them.
     pub video_settings: VideoSettings,
 }
 
 impl DeviceState {
+    /// Whether the trigger output is on, if the receiver has reported it.
+    #[must_use]
+    pub const fn trigger(&self, trigger: Trigger) -> Option<bool> {
+        self.triggers[trigger.number() as usize - 1]
+    }
+
     /// The Dirac Live filter of the slot with this name, if the state knows
     /// one. Upper and lower case are the same. A slot that has no filter is
     /// not used. If two slots have the name, the first one is used.
@@ -388,6 +398,7 @@ impl State {
             }
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
+            Event::Tr => self.apply_trigger(parameter),
             Event::Vs if zone == Some(Zone::Main) => self.apply_video_setting(parameter),
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
@@ -585,6 +596,16 @@ impl State {
                 })
             }
         }
+    }
+
+    /// Applies a `TR` event, for example `1 ON`.
+    fn apply_trigger(&mut self, parameter: &str) -> Option<Change> {
+        let (number, value) = parameter.split_at_checked(1)?;
+        let trigger = Trigger::from_number(number.parse().ok()?)?;
+        let on = on_off(value.trim())?;
+        self.device_change(Setting::Triggers, |d| {
+            set(&mut d.triggers[usize::from(trigger.number()) - 1], Some(on))
+        })
     }
 
     /// Applies a `VS` event of the main zone.
@@ -1453,7 +1474,7 @@ mod tests {
             "NSE1Hello",
             "VSXYZ",
             "CVFL 50",
-            "TR1 ON",
+            "TR4 ON",
             "SYHDMIDIAGERR NO",
         ] {
             assert_eq!(apply(&mut state, line), None, "{line}");
@@ -1889,6 +1910,21 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn triggers_follow_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::Triggers);
+        assert_eq!(apply(&mut state, "TR1 ON"), changed());
+        assert_eq!(apply(&mut state, "TR1 ON"), None);
+        assert_eq!(apply(&mut state, "TR3 OFF"), changed());
+        assert_eq!(state.device().trigger(Trigger::One), Some(true));
+        assert_eq!(state.device().trigger(Trigger::Two), None);
+        assert_eq!(state.device().trigger(Trigger::Three), Some(false));
+        for line in ["TR?", "TR4 ON", "TR0 ON", "TR1 MAYBE", "TRX ON"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]

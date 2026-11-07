@@ -383,6 +383,40 @@ code_enum! {
     }
 }
 
+/// A trigger output of the receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Trigger {
+    /// Trigger output 1.
+    One,
+    /// Trigger output 2.
+    Two,
+    /// Trigger output 3.
+    Three,
+}
+
+impl Trigger {
+    /// All trigger outputs.
+    pub const ALL: [Self; 3] = [Self::One, Self::Two, Self::Three];
+
+    /// Number of the output, from 1 to 3.
+    #[must_use]
+    pub const fn number(self) -> u8 {
+        self as u8 + 1
+    }
+
+    /// The output with this number. `None` for a number that is not from 1 to 3.
+    #[must_use]
+    pub const fn from_number(number: u8) -> Option<Self> {
+        match number {
+            1 => Some(Self::One),
+            2 => Some(Self::Two),
+            3 => Some(Self::Three),
+            _ => None,
+        }
+    }
+}
+
 /// What the panel lock locks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]

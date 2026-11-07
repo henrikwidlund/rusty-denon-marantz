@@ -51,7 +51,7 @@ pub use values::{
     DynamicVolume, EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination,
     ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel, PanelLock,
     PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SurroundLevelCompensation,
-    VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    Trigger, VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};

@@ -1,6 +1,8 @@
 //! A receiver: identification, state and updates over HTTP.
 
 use bytes::Bytes;
+#[cfg(feature = "telnet")]
+use denon_marantz_proto::Trigger;
 use denon_marantz_proto::appcommand::{
     self, Cmd, Definition, Endpoint, Field, Response, write_body,
 };
@@ -225,6 +227,19 @@ impl Avr {
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet
             .send(telnet::encode(self.info.brand, zone, &command)?)
+            .await
+    }
+
+    /// Turns a trigger output on (`true`) or off (`false`). The outputs
+    /// switch other equipment. A receiver has up to three, and some models
+    /// have fewer.
+    ///
+    /// # Errors
+    ///
+    /// See [`Avr::send`].
+    #[cfg(feature = "telnet")]
+    pub async fn set_trigger(&self, trigger: Trigger, on: bool) -> Result<(), Error> {
+        self.send(Zone::Main, Command::SetTrigger(trigger, on))
             .await
     }
 

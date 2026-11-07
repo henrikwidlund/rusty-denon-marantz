@@ -14,7 +14,7 @@ use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, HdmiAudioDecode, HdmiOutput,
     HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset, RemoteKey,
-    RoomSize, Setting, ToneLevel, VideoProcessingMode, Volume, Zone,
+    RoomSize, Setting, ToneLevel, Trigger, VideoProcessingMode, Volume, Zone,
 };
 use tokio::time::timeout;
 
@@ -706,6 +706,24 @@ async fn video_methods_send_their_commands_and_events_fill_the_state() {
     let video = avr.snapshot().device().video_settings;
     assert_eq!(video.processing_mode, Some(VideoProcessingMode::Bypass));
     assert_eq!(video.hdmi_audio, Some(HdmiAudioDecode::Amp));
+}
+
+#[tokio::test]
+async fn triggers_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    avr.set_trigger(Trigger::Two, true).await.unwrap();
+    avr.set_trigger(Trigger::One, false).await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
+    assert_eq!(commands_sent(&telnet), ["TR2 ON", "TR1 OFF"]);
+    telnet.send(b"TR2 ON\rTR3 OFF\r");
+    wait_until("the trigger values", || {
+        avr.snapshot().device().trigger(Trigger::Three).is_some()
+    })
+    .await;
+    let state = avr.snapshot();
+    assert_eq!(state.device().trigger(Trigger::Two), Some(true));
+    assert_eq!(state.device().trigger(Trigger::Three), Some(false));
 }
 
 /// The commands that the client sent, without the queries.

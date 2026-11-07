@@ -31,7 +31,7 @@
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
 //! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
-//! right, enter, back, info, options, setup-open, setup-close, raw TEXT,
+//! right, enter, back, info, options, setup-open, setup-close, trigger-on N, trigger-off N (N is 1 to 3), raw TEXT,
 //! key NAME (next, previous, repeat-off, repeat-one, repeat-all, random-on,
 //! random-off, page-up, page-down, rewind, fast-forward, atmos, cec-on,
 //! cec-off, digit-0 to digit-9, volume-0db, volume-minus-20db,
@@ -44,7 +44,7 @@ use std::time::Duration;
 use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize,
+    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize, Trigger,
     VideoProcessingMode, VideoResolution, Zone,
 };
 use tokio::sync::broadcast::error::RecvError;
@@ -134,6 +134,13 @@ fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, Str
         "options" => Command::Options,
         "setup-open" => Command::SetupMenu(true),
         "setup-close" => Command::SetupMenu(false),
+        "trigger-on" | "trigger-off" => {
+            let number: u8 = argument
+                .and_then(|text| text.parse().ok())
+                .ok_or("trigger needs a number from 1 to 3")?;
+            let trigger = Trigger::from_number(number).ok_or("trigger is from 1 to 3")?;
+            Command::SetTrigger(trigger, name == "trigger-on")
+        }
         "raw" => Command::Raw(argument.ok_or("raw needs an argument")?),
         other => return Err(format!("unknown command {other}")),
     })
