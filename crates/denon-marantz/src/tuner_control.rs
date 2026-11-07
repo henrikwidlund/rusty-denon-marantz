@@ -1,7 +1,7 @@
 //! Typed control of the tuner on telnet.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{TunerBand, TunerCommand, TunerMode, Zone};
+use denon_marantz_proto::{TUNER_QUERIES, TunerBand, TunerCommand, TunerMode, Zone};
 
 use crate::avr::Avr;
 use crate::error::Error;
@@ -98,15 +98,16 @@ impl<'a> TunerControl<'a> {
     }
 
     /// Asks the receiver for the frequency, the preset and the tuning mode.
-    /// The answers fill the tuner state. Without it the state fills when
-    /// the receiver reports a change. The receiver answers for the tuner
-    /// source only.
+    /// The answers fill the tuner state. The connection also asks once when
+    /// the source changes to the tuner. Call this again to follow changes
+    /// that the receiver does not report, for example the station name. The
+    /// receiver answers for the tuner source only.
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
     pub async fn refresh(&self) -> Result<(), Error> {
-        for query in ["TFAN?", "TPAN?", "TMAN?"] {
+        for query in TUNER_QUERIES {
             self.avr.send(Zone::Main, Command::Raw(query)).await?;
         }
         Ok(())

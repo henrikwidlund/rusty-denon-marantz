@@ -9,8 +9,10 @@ use std::time::Duration;
 use common::{
     AVR_X_DIRAC_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info, builder, wait_until,
 };
-use denon_marantz::{Avr, Command, Error, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker};
-use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
+use denon_marantz::{
+    Avr, Command, Error, QueryGroup, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
+};
+use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, FrontSpeakers, HdmiAudioDecode,
     HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReceiverType,
@@ -34,6 +36,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
         background_pause: Duration::ZERO,
+        query_groups: QueryGroup::DEFAULT_ORDER,
     }
 }
 
@@ -368,6 +371,64 @@ async fn the_queries_that_fill_the_state_are_sent_after_a_connect() {
         .collect();
     wait_until("all queries", || sent(&telnet).len() >= expected.len()).await;
     assert_eq!(sent(&telnet), expected);
+}
+
+#[tokio::test]
+async fn the_connection_fetches_the_chosen_groups_in_the_chosen_order() {
+    static CHOSEN: [QueryGroup; 2] = [QueryGroup::Signal, QueryGroup::Core];
+    let telnet = FakeTelnet::start().await;
+    let config = TelnetConfig {
+        query_groups: &CHOSEN,
+        ..telnet_config(telnet.port)
+    };
+    let (_avr, _http) = connected(config).await;
+    let expected: Vec<String> = std::iter::once("ZM?")
+        .chain(group_queries(Brand::Denon, QueryGroup::Signal))
+        .chain(group_queries(Brand::Denon, QueryGroup::Core))
+        .map(str::to_owned)
+        .collect();
+    wait_until("the chosen queries", || {
+        sent(&telnet).len() >= expected.len()
+    })
+    .await;
+    // Nothing else follows.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(sent(&telnet), expected);
+}
+
+#[tokio::test]
+async fn a_group_that_was_left_out_can_be_fetched_later() {
+    static CHOSEN: [QueryGroup; 1] = [QueryGroup::Core];
+    let telnet = FakeTelnet::start().await;
+    let config = TelnetConfig {
+        query_groups: &CHOSEN,
+        ..telnet_config(telnet.port)
+    };
+    let (avr, _http) = connected(config).await;
+    let core = 1 + group_queries(Brand::Denon, QueryGroup::Core).count();
+    wait_until("the core queries", || sent(&telnet).len() >= core).await;
+    avr.telnet_refresh_group(QueryGroup::Names).await.unwrap();
+    let names: Vec<String> = group_queries(Brand::Denon, QueryGroup::Names)
+        .map(str::to_owned)
+        .collect();
+    wait_until("the names queries", || {
+        sent(&telnet).len() >= core + names.len()
+    })
+    .await;
+    assert_eq!(sent(&telnet)[core..], names);
+}
+
+#[tokio::test]
+async fn the_tuner_state_is_asked_for_when_the_source_changes_to_the_tuner() {
+    let telnet = FakeTelnet::start().await;
+    let (_avr, _http) = connected(telnet_config(telnet.port)).await;
+    let count = 1 + state_queries(Brand::Denon).count();
+    wait_until("all queries", || sent(&telnet).len() >= count).await;
+    telnet.send(b"SITUNER\r");
+    wait_until("the tuner queries", || {
+        sent(&telnet).ends_with(&["TFAN?".to_owned(), "TPAN?".to_owned(), "TMAN?".to_owned()])
+    })
+    .await;
 }
 
 #[tokio::test]

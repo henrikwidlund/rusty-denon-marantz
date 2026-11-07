@@ -8,7 +8,7 @@ use denon_marantz_proto::appcommand::{
 };
 use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
-use denon_marantz_proto::telnet::Command;
+use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{Brand, Change, DeviceDescription, ReceiverType, State, Zone};
 use tokio::sync::{broadcast, watch};
 
@@ -318,6 +318,20 @@ impl Avr {
     #[cfg(feature = "telnet")]
     pub async fn telnet_refresh(&self) -> Result<(), Error> {
         self.telnet.refresh().await
+    }
+
+    /// Asks the receiver on telnet for one group of values, for example the
+    /// signal information. The answers are events, and events that repeat the
+    /// last value are shown again. A group that the connection does not fetch
+    /// at connect (see [`TelnetConfig::query_groups`]) stays empty until this
+    /// is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotConnected`] if the telnet connection is not open.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_refresh_group(&self, group: QueryGroup) -> Result<(), Error> {
+        self.telnet.refresh_group(group).await
     }
 
     /// Follows the events from the receiver, as they come on telnet. Repeated

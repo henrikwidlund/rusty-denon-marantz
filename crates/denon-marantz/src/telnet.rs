@@ -15,9 +15,9 @@ use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
     Command, DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder,
-    MAIN_ZONE_POWER_QUERY, Message, state_queries,
+    MAIN_ZONE_POWER_QUERY, Message, QueryGroup, group_queries, queries,
 };
-use denon_marantz_proto::{Brand, Zone};
+use denon_marantz_proto::{Brand, TUNER_QUERIES, Zone};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -70,6 +70,12 @@ pub struct TelnetConfig {
     /// Time after a command from the caller in which queries wait, so that the
     /// receiver answers the command first.
     pub background_pause: Duration,
+    /// The groups of queries that fill the state after a connect, in the order
+    /// that they are sent. A group that is left out stays empty until the
+    /// receiver reports a change, or until it is fetched with
+    /// [`Avr::telnet_refresh_group`](crate::Avr::telnet_refresh_group). The
+    /// default is [`QueryGroup::DEFAULT_ORDER`].
+    pub query_groups: &'static [QueryGroup],
 }
 
 impl Default for TelnetConfig {
@@ -82,9 +88,10 @@ impl Default for TelnetConfig {
             reconnect_min: Duration::from_millis(500),
             reconnect_max: Duration::from_secs(30),
             command_interval: Duration::from_millis(50),
-            query_interval: Duration::from_millis(100),
+            query_interval: Duration::from_millis(50),
             query_quiet: Duration::from_millis(50),
             background_pause: Duration::from_millis(250),
+            query_groups: QueryGroup::DEFAULT_ORDER,
         }
     }
 }
@@ -152,6 +159,8 @@ enum Request {
     Send(Outgoing),
     /// Ask the receiver for its state again.
     Refresh,
+    /// Ask the receiver for one group of values.
+    RefreshGroup(QueryGroup),
 }
 
 /// The telnet connection of one receiver.
@@ -180,6 +189,8 @@ struct Queries {
     /// A receiver with only the main zone reports its power on the device
     /// power event.
     single_zone: bool,
+    /// The groups that the connection fetches, in this order.
+    groups: &'static [QueryGroup],
 }
 
 impl Queries {
@@ -190,7 +201,7 @@ impl Queries {
             MAIN_ZONE_POWER_QUERY
         };
         std::iter::once(power)
-            .chain(state_queries(self.brand))
+            .chain(queries(self.brand, self.groups))
             .collect()
     }
 }
@@ -199,7 +210,11 @@ impl Telnet {
     pub(crate) fn new(config: TelnetConfig, brand: Brand, single_zone: bool) -> Self {
         Self {
             config,
-            queries: Queries { brand, single_zone },
+            queries: Queries {
+                brand,
+                single_zone,
+                groups: config.query_groups,
+            },
             events: broadcast::Sender::new(EVENT_CAPACITY),
             status: watch::Sender::new(TelnetStatus::Disconnected),
             task: Mutex::new(None),
@@ -265,6 +280,11 @@ impl Telnet {
     /// Asks the task to query the state of the receiver again.
     pub(crate) async fn refresh(&self) -> Result<(), Error> {
         self.request(Request::Refresh).await
+    }
+
+    /// Asks the task to query one group of values.
+    pub(crate) async fn refresh_group(&self, group: QueryGroup) -> Result<(), Error> {
+        self.request(Request::RefreshGroup(group)).await
     }
 
     /// Passes a request to the task. A request is refused while there is no
@@ -480,7 +500,15 @@ impl Worker {
                         idle_since = Instant::now();
                         queue.last_read = Some(idle_since);
                         asked = false;
-                        decoder.decode(&buffer[..count], |text| self.handle_line(text, &mut filter));
+                        let mut tuner = false;
+                        decoder.decode(&buffer[..count], |text| {
+                            // The source of the main zone changed to the tuner.
+                            tuner |= text == "SITUNER";
+                            self.handle_line(text, &mut filter);
+                        });
+                        if tuner {
+                            queue.background.extend(TUNER_QUERIES);
+                        }
                     }
                     Err(error) => break End::Failed(error),
                 },
@@ -489,6 +517,10 @@ impl Worker {
                     Some(Request::Refresh) => {
                         filter.clear();
                         queue.background = self.queries.all();
+                    }
+                    Some(Request::RefreshGroup(group)) => {
+                        filter.clear();
+                        queue.background.extend(group_queries(self.queries.brand, group));
                     }
                     None => break End::Shutdown,
                 },
@@ -694,17 +726,25 @@ mod tests {
         let multi = Queries {
             brand: Brand::Denon,
             single_zone: false,
+            groups: QueryGroup::DEFAULT_ORDER,
         }
         .all();
         assert_eq!(multi.front(), Some(&"ZM?"));
         let single = Queries {
             brand: Brand::Marantz,
             single_zone: true,
+            groups: QueryGroup::DEFAULT_ORDER,
         }
         .all();
         assert_eq!(single.front(), Some(&"PW?"));
-        assert_eq!(multi.len(), 1 + state_queries(Brand::Denon).count());
-        assert_eq!(single.len(), 1 + state_queries(Brand::Marantz).count());
+        assert_eq!(
+            multi.len(),
+            1 + queries(Brand::Denon, QueryGroup::DEFAULT_ORDER).count()
+        );
+        assert_eq!(
+            single.len(),
+            1 + queries(Brand::Marantz, QueryGroup::DEFAULT_ORDER).count()
+        );
     }
 
     #[tokio::test(start_paused = true)]

@@ -47,7 +47,7 @@ pub use sound_settings::{SoundSettingValue, SoundSettings};
 pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
-pub use tuner::{TunerCommand, TunerFrequency, TunerState};
+pub use tuner::{TUNER_QUERIES, TunerCommand, TunerFrequency, TunerState};
 pub use values::{
     AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,

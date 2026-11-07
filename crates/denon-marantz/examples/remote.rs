@@ -16,6 +16,9 @@
 //!   receiver answers the queries after a connect for several seconds. With a
 //!   wait you see how fast it answers a command when it is not busy.
 //! - `--listen SECONDS`: how long to show events after the command, default 3.
+//! - `--groups LIST`: the query groups that the connect fetches, in this order,
+//!   for example `core,signal`. The groups are core, names, toggles, signal,
+//!   device, sound and zones. The default is all of them.
 //! - `--command-interval MS`, `--query-interval MS` and `--query-quiet MS`: the
 //!   spacing of writes. A query also waits until the receiver sent no data for
 //!   the quiet time.
@@ -49,7 +52,7 @@
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
+use denon_marantz::{Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, FrontSpeakers,
     HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, PowerOnVolume,
@@ -533,6 +536,21 @@ fn remote_key(name: &str) -> Result<RemoteKey, String> {
     })
 }
 
+/// The query groups in a comma separated list, for example `core,signal`.
+fn groups(names: &str) -> Result<Vec<QueryGroup>, String> {
+    names
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            QueryGroup::ALL
+                .iter()
+                .copied()
+                .find(|group| group.label().eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("unknown group {name}"))
+        })
+        .collect()
+}
+
 /// The next argument as a number.
 fn number(args: &mut impl Iterator<Item = String>, option: &str) -> Result<u64, String> {
     args.next()
@@ -572,6 +590,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--query-quiet" => {
                 config.query_quiet = Duration::from_millis(number(&mut args, "--query-quiet")?);
+            }
+            "--groups" => {
+                let names = args.next().ok_or("--groups needs a list")?;
+                config.query_groups = Box::leak(groups(&names)?.into_boxed_slice());
             }
             _ => break word,
         }

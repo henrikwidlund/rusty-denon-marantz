@@ -40,7 +40,7 @@ pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 #[cfg(feature = "telnet")]
 pub use denon_marantz_proto::RemoteKey;
 #[cfg(feature = "telnet")]
-pub use denon_marantz_proto::telnet::Command;
+pub use denon_marantz_proto::telnet::{Command, QueryGroup};
 #[cfg(feature = "telnet")]
 pub use dirac::Dirac;
 #[cfg(feature = "discovery")]

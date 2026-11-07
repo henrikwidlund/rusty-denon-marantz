@@ -6,6 +6,10 @@ use core::fmt::Write as _;
 use crate::error::Error;
 use crate::values::{TunerBand, TunerMode};
 
+/// Queries for the frequency, the preset and the tuning mode. A receiver
+/// answers them for the tuner source only.
+pub const TUNER_QUERIES: [&str; 3] = ["TFAN?", "TPAN?", "TMAN?"];
+
 /// Highest preset number of the tuner.
 const MAX_PRESET: u8 = 56;
 
