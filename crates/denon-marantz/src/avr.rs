@@ -27,6 +27,8 @@ use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]
 use crate::tone_control::ToneControl;
 #[cfg(feature = "telnet")]
+use crate::tuner_control::TunerControl;
+#[cfg(feature = "telnet")]
 use crate::video_control::VideoControl;
 #[cfg(feature = "telnet")]
 use crate::zone_control::ZoneControl;
@@ -276,6 +278,13 @@ impl Avr {
     #[must_use]
     pub const fn sound(&self) -> SoundControl<'_> {
         SoundControl::new(self)
+    }
+
+    /// Controls the tuner on telnet with typed methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn tuner(&self) -> TunerControl<'_> {
+        TunerControl::new(self)
     }
 
     /// Controls the video settings on telnet with typed methods.

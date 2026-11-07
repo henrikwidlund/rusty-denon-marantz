@@ -14,8 +14,8 @@ use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, FrontSpeakers, HdmiAudioDecode,
     HdmiOutput, HdmiUpscaler, InputMode, MultiEq, Power, ReceiverType, ReferenceLevelOffset,
-    RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger, VideoProcessingMode, Volume,
-    Zone,
+    RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger, TunerBand,
+    VideoProcessingMode, Volume, Zone,
 };
 use tokio::time::timeout;
 
@@ -725,6 +725,40 @@ async fn triggers_are_sent_and_read() {
     let state = avr.snapshot();
     assert_eq!(state.device().trigger(Trigger::Two), Some(true));
     assert_eq!(state.device().trigger(Trigger::Three), Some(false));
+}
+
+#[tokio::test]
+async fn tuner_methods_send_their_commands_and_events_fill_the_state() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tuner = avr.tuner();
+    tuner.set_band(TunerBand::Fm).await.unwrap();
+    tuner.frequency_up().await.unwrap();
+    tuner.set_preset(3).await.unwrap();
+    tuner.store_preset(12).await.unwrap();
+    let error = tuner.set_preset(57).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["TMANFM", "TFANUP", "TPAN03", "TPANMEM12"]
+    );
+    tuner.refresh().await.unwrap();
+    wait_until("the queries", || {
+        sent(&telnet).contains(&"TMAN?".to_owned())
+    })
+    .await;
+    let lines = sent(&telnet);
+    let first = lines.iter().position(|line| line == "TFAN?").unwrap();
+    assert_eq!(lines[first..first + 3], ["TFAN?", "TPAN?", "TMAN?"]);
+    telnet.send(b"TFAN008750\rTPAN05\r");
+    wait_until("the tuner values", || {
+        avr.snapshot().device().tuner.preset.is_some()
+    })
+    .await;
+    let state = avr.snapshot();
+    assert_eq!(state.device().tuner.preset, Some(5));
+    assert_eq!(state.device().tuner.band, Some(TunerBand::Fm));
 }
 
 /// The commands that the client sent, without the queries.

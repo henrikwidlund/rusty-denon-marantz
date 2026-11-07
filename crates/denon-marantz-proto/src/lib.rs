@@ -17,6 +17,7 @@ mod sound_settings;
 mod state;
 mod text;
 mod tone;
+mod tuner;
 mod values;
 mod video;
 mod volume;
@@ -45,14 +46,15 @@ pub use sound_settings::{SoundSettingValue, SoundSettings};
 pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
+pub use tuner::{TunerCommand, TunerFrequency, TunerState};
 pub use values::{
     AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
     DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
     Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel,
     PanelLock, PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SpeakerPreset,
-    SurroundLevelCompensation, Trigger, VideoProcessingMode, VideoResolution, VolumeDisplay,
-    ZoneChannelMode, ZoneHdmiAudio,
+    SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
+    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};

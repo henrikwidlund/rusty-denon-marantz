@@ -26,6 +26,8 @@
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
 //! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
+//! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
+//! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
@@ -45,7 +47,7 @@ use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneCont
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, FrontSpeakers,
     HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, ReferenceLevelOffset, RoomSize,
-    SpeakerPreset, Trigger, VideoProcessingMode, VideoResolution, Zone,
+    SpeakerPreset, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Zone,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -79,6 +81,18 @@ const VIDEO_COMMANDS: [&str; 7] = [
     "vertical-stretch",
     "resolution",
     "upscaler",
+];
+
+/// Commands that the tuner control has methods for.
+const TUNER_COMMANDS: [&str; 8] = [
+    "tuner-up",
+    "tuner-down",
+    "tuner-band",
+    "tuner-mode",
+    "tuner-preset-up",
+    "tuner-preset-down",
+    "tuner-preset",
+    "tuner-store",
 ];
 
 /// Commands that the tone control has methods for.
@@ -282,6 +296,40 @@ async fn sound_command(
     Ok(())
 }
 
+/// Runs a command with the methods of the tuner control.
+async fn tuner_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let number = || -> Result<u8, String> {
+        need()?
+            .parse()
+            .map_err(|_| format!("{name} needs a preset number"))
+    };
+    let tuner = avr.tuner();
+    match name {
+        "tuner-up" => tuner.frequency_up().await?,
+        "tuner-down" => tuner.frequency_down().await?,
+        "tuner-band" => {
+            let band = TunerBand::from_code(need()?).ok_or_else(|| unknown("band"))?;
+            tuner.set_band(band).await?;
+        }
+        "tuner-mode" => {
+            let mode = TunerMode::from_code(need()?).ok_or_else(|| unknown("mode"))?;
+            tuner.set_mode(mode).await?;
+        }
+        "tuner-preset-up" => tuner.preset_up().await?,
+        "tuner-preset-down" => tuner.preset_down().await?,
+        "tuner-preset" => tuner.set_preset(number()?).await?,
+        "tuner-store" => tuner.store_preset(number()?).await?,
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
+}
+
 /// Runs a command with the methods of the video control.
 async fn video_command(
     avr: &Avr,
@@ -438,6 +486,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         || typed(&TONE_COMMANDS)
         || typed(&SOUND_COMMANDS)
         || typed(&VIDEO_COMMANDS)
+        || typed(&TUNER_COMMANDS)
     {
         None
     } else {
@@ -473,6 +522,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(command) => avr.send(zone, command).await?,
         None if typed(&SOUND_COMMANDS) => {
             sound_command(&avr, &name, argument.as_deref()).await?;
+        }
+        None if typed(&TUNER_COMMANDS) => {
+            tuner_command(&avr, &name, argument.as_deref()).await?;
         }
         None if typed(&VIDEO_COMMANDS) => {
             video_command(&avr, &name, argument.as_deref()).await?;

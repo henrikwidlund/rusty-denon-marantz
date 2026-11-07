@@ -16,6 +16,7 @@ use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::telnet::{Event, Message};
+use crate::tuner::TunerState;
 use crate::video::VideoSettings;
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
@@ -116,6 +117,8 @@ pub enum Setting {
     Triggers,
     /// The speaker preset of the receiver.
     SpeakerPreset,
+    /// The band, mode, frequency, preset or station of the tuner.
+    Tuner,
     /// A video setting such as the video processing mode or the HDMI output.
     VideoSettings,
 }
@@ -249,6 +252,8 @@ pub struct DeviceState {
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
+    /// What the tuner reports. Telnet reports it for the tuner source.
+    pub tuner: TunerState,
     /// The speaker preset. Telnet reports it.
     pub speaker_preset: Option<SpeakerPreset>,
     /// Each trigger output is on. The first is trigger 1. Telnet reports them.
@@ -405,6 +410,9 @@ impl State {
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
             Event::Tr => self.apply_trigger(parameter),
             Event::Sp => self.apply_speaker_preset(parameter),
+            Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
+            Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
+            Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
             Event::Vs if zone == Some(Zone::Main) => self.apply_video_setting(parameter),
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
@@ -602,6 +610,18 @@ impl State {
                 })
             }
         }
+    }
+
+    /// Applies a tuner event. `apply` says if the text is a value and if it
+    /// changed the tuner state.
+    fn apply_tuner(
+        &mut self,
+        apply: impl FnOnce(&mut TunerState) -> Option<bool>,
+    ) -> Option<Change> {
+        apply(&mut self.device.tuner)?.then_some(Change {
+            zone: None,
+            setting: Setting::Tuner,
+        })
     }
 
     /// Applies an `SP` event, for example `PR 1`.
@@ -1960,6 +1980,28 @@ mod tests {
         assert!(settings.other.is_empty());
         // The channel group answers `ON` while the transducer is off, so it stays out.
         assert_eq!(apply(&mut state, "CVTTR ON"), None);
+    }
+
+    #[test]
+    fn tuner_follows_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::Tuner);
+        assert_eq!(apply(&mut state, "TFAN008750"), changed());
+        assert_eq!(apply(&mut state, "TFAN008750"), None);
+        assert_eq!(apply(&mut state, "TPAN05"), changed());
+        assert_eq!(apply(&mut state, "TMANAUTO"), changed());
+        assert_eq!(apply(&mut state, "TFANNAMEBBC_R2__"), changed());
+        let tuner = &state.device().tuner;
+        assert_eq!(
+            tuner.frequency.map(|f| f.to_string()).as_deref(),
+            Some("87.50 MHz")
+        );
+        assert_eq!(tuner.preset, Some(5));
+        assert_eq!(tuner.mode, Some(crate::TunerMode::Auto));
+        assert_eq!(tuner.station_name.as_deref(), Some("BBC R2"));
+        for line in ["TFANUP", "TPANDOWN", "TMAN?", "TFAN?"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]

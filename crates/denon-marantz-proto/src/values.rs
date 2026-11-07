@@ -128,6 +128,23 @@ code_enum! {
 }
 
 code_enum! {
+    /// Band of the tuner.
+    pub enum TunerBand {
+        Am = "AM", "AM";
+        Fm = "FM", "FM";
+        Dab = "DAB", "DAB";
+    }
+}
+
+code_enum! {
+    /// Tuning mode of the tuner.
+    pub enum TunerMode {
+        Auto = "AUTO", "Automatic";
+        Manual = "MANUAL", "Manual";
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -508,6 +525,8 @@ mod tests {
             Power,
             RoomSize,
             SpeakerPreset,
+            TunerBand,
+            TunerMode,
             VideoProcessingMode,
             VideoResolution,
         );

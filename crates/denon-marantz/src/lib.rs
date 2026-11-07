@@ -24,6 +24,8 @@ mod telnet;
 #[cfg(feature = "telnet")]
 mod tone_control;
 #[cfg(feature = "telnet")]
+mod tuner_control;
+#[cfg(feature = "telnet")]
 mod video_control;
 #[cfg(feature = "telnet")]
 mod zone_control;
@@ -53,6 +55,8 @@ pub use sound_control::SoundControl;
 pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "telnet")]
 pub use tone_control::ToneControl;
+#[cfg(feature = "telnet")]
+pub use tuner_control::TunerControl;
 #[cfg(feature = "telnet")]
 pub use video_control::VideoControl;
 #[cfg(feature = "telnet")]

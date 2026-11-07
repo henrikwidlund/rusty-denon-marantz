@@ -9,6 +9,7 @@ use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
+use crate::tuner::TunerCommand;
 use crate::values::{
     DiracFilter, DynamicVolume, InputMode, MultiEq, ReferenceLevelOffset, Trigger,
 };
@@ -112,6 +113,8 @@ pub enum Command<'a> {
     SetTrigger(Trigger, bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
+    /// Controls the tuner.
+    Tuner(TunerCommand),
     /// Sets a video setting, for example the video processing mode.
     SetVideoSetting(VideoSettingValue),
     /// Sets a sound setting, for example the room size or the audio delay.
@@ -238,6 +241,7 @@ impl Command<'_> {
                 let _ = write!(out, "SD{}", mode.code());
             }
             Self::SetVideoSetting(value) => value.write(out),
+            Self::Tuner(command) => command.write(out)?,
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,
             Self::DenonKeyCode(code) => write_denon_code(brand, zone, code, out)?,
