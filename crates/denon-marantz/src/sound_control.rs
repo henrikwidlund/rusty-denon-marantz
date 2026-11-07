@@ -3,8 +3,8 @@
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
     AudioRestorer, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter, DialogEnhancerLevel,
-    Drc, EffectSpeakerSelection, ImaxAudio, ImaxMode, ImaxSubwooferOutput, Mdax, RoomSize,
-    SoundSettingValue, SurroundLevelCompensation, Zone,
+    Drc, EffectSpeakerSelection, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax,
+    RoomSize, SoundSettingValue, SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -88,6 +88,17 @@ impl<'a> SoundControl<'a> {
     pub async fn set_subwoofer_level(&self, number: u8, level: ChannelLevel) -> Result<(), Error> {
         self.send(SoundSettingValue::SubwooferLevel { number, level })
             .await
+    }
+
+    /// Sets the audio input mode: automatic, or a forced HDMI, digital or
+    /// analog input. The receiver does not report the mode back, so the state
+    /// does not have it.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn set_input_mode(&self, mode: InputMode) -> Result<(), Error> {
+        self.avr.send(Zone::Main, Command::SetInputMode(mode)).await
     }
 
     async fn send(&self, value: SoundSettingValue) -> Result<(), Error> {

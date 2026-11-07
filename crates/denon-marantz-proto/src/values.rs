@@ -76,6 +76,17 @@ code_enum! {
 }
 
 code_enum! {
+    /// Audio input mode of the main zone. The receiver also has a state with
+    /// no input, but it only reports that and cannot be set.
+    pub enum InputMode {
+        Auto = "AUTO", "Auto";
+        Hdmi = "HDMI", "HDMI";
+        Digital = "DIGITAL", "Digital";
+        Analog = "ANALOG", "Analog";
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -413,6 +424,7 @@ mod tests {
             HdmiAudioDecode,
             HdmiOutput,
             Illumination,
+            InputMode,
             Mdax,
             PictureMode,
             PixelDepth,

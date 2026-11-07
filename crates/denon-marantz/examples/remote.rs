@@ -25,7 +25,7 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off (a
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG) (a
 //! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, raw TEXT,
@@ -40,8 +40,8 @@ use std::time::Duration;
 
 use denon_marantz::{Avr, Command, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
-    AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset,
-    RoomSize, Zone,
+    AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, InputMode, MultiEq,
+    ReferenceLevelOffset, RoomSize, Zone,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -79,7 +79,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 16] = [
+const SOUND_COMMANDS: [&str; 17] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -96,6 +96,7 @@ const SOUND_COMMANDS: [&str; 16] = [
     "audio-restorer",
     "dialog-enhancer",
     "graphic-eq",
+    "input-mode",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -210,6 +211,10 @@ async fn sound_command(
                 _ => return Err(unknown("graphic EQ").into()),
             };
             avr.sound().set_graphic_eq(on).await?;
+        }
+        "input-mode" => {
+            let mode = InputMode::from_code(need()?).ok_or_else(|| unknown("input mode"))?;
+            avr.sound().set_input_mode(mode).await?;
         }
         other => return Err(format!("unknown command {other}").into()),
     }

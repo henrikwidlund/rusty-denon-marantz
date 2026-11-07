@@ -9,7 +9,7 @@ use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
 use crate::tone::ToneLevel;
-use crate::values::{DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset};
+use crate::values::{DiracFilter, DynamicVolume, InputMode, MultiEq, ReferenceLevelOffset};
 use crate::volume::Volume;
 use crate::zone::Zone;
 
@@ -105,6 +105,8 @@ pub enum Command<'a> {
     /// Turns Auto Lip Sync on (`true`) or off (`false`). The text depends on
     /// the brand.
     AutoLipSync(bool),
+    /// Sets the audio input mode of the main zone.
+    SetInputMode(InputMode),
     /// Sets a sound setting, for example the room size or the audio delay.
     SetSoundSetting(SoundSettingValue),
     /// Presses a remote key that has no telnet command. See [`RemoteKey`] for
@@ -223,6 +225,10 @@ impl Command<'_> {
                     Brand::Marantz => "SSHOSALS ",
                 });
                 out.push_str(if on { "ON" } else { "OFF" });
+            }
+            Self::SetInputMode(mode) => {
+                out.push_str("SD");
+                out.push_str(mode.code());
             }
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,
@@ -423,6 +429,10 @@ mod tests {
             (Command::SelectSoundMode("MOVIE"), "MSMOVIE\r"),
             (Command::AllZoneStereo(true), "MNZST ON\r"),
             (Command::AllZoneStereo(false), "MNZST OFF\r"),
+            (Command::SetInputMode(InputMode::Auto), "SDAUTO\r"),
+            (Command::SetInputMode(InputMode::Hdmi), "SDHDMI\r"),
+            (Command::SetInputMode(InputMode::Digital), "SDDIGITAL\r"),
+            (Command::SetInputMode(InputMode::Analog), "SDANALOG\r"),
             (Command::Play, "NS9A\r"),
             (Command::Pause, "NS9B\r"),
             (Command::Stop, "NS9C\r"),
