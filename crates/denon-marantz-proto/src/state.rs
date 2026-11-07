@@ -19,7 +19,7 @@ use crate::telnet::{Event, Message};
 use crate::{
     AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
     EcoMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, ToneLevel,
-    Volume, VolumeDisplay, VolumeMode, Zone,
+    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -32,6 +32,12 @@ pub enum Setting {
     Volume,
     /// Volume limit of a zone.
     MaxVolume,
+    /// The high pass filter of zone 2 or 3.
+    HighPassFilter,
+    /// Stereo or mono in zone 2 or 3.
+    ChannelMode,
+    /// The HDMI audio of zone 2 or 3.
+    ZoneHdmiAudio,
     /// The level of the left or right channel of zone 2 or 3.
     ChannelLevels,
     /// Variable or fixed volume of a zone.
@@ -121,17 +127,28 @@ pub struct ZoneState {
     pub volume: Option<Volume>,
     /// Volume limit. `None` if there is no limit or it is not known.
     pub max_volume: Option<Volume>,
-    /// Volume when the zone is switched on. Telnet reports it.
+    /// Volume when the zone is switched on. The main zone calls it power on
+    /// level. Telnet reports it, and a change in the web interface or the app
+    /// also comes as an event. A change in the menu of the receiver does not.
     pub power_on_volume: Option<PowerOnVolume>,
     /// Variable or fixed volume. Telnet reports it for zone 2 and 3.
     pub volume_mode: Option<VolumeMode>,
     /// Mute.
     pub muted: Option<bool>,
-    /// How far the volume goes down when the zone is muted. Telnet reports it.
+    /// How far the volume goes down when the zone is muted. Telnet reports
+    /// it, and a change in the web interface or the app also comes as an
+    /// event. A change in the menu of the receiver does not.
     pub mute_level: Option<MuteLevel>,
     /// How the receiver shows the volume. Telnet reports it for the main
     /// zone.
     pub volume_display: Option<VolumeDisplay>,
+    /// High pass filter is on. Telnet reports it for zone 2 and 3 when it
+    /// changes.
+    pub high_pass_filter: Option<bool>,
+    /// Stereo or mono. Telnet reports it for zone 2 and 3 when it changes.
+    pub channel_mode: Option<ZoneChannelMode>,
+    /// HDMI audio of zone 2 and 3. Telnet reports it when it changes.
+    pub hdmi_audio: Option<ZoneHdmiAudio>,
     /// Bass level. Telnet reports it for zone 2 and 3 when it changes.
     pub bass: Option<ToneLevel>,
     /// Treble level. Telnet reports it for zone 2 and 3 when it changes.
@@ -277,7 +294,10 @@ impl State {
         match message.event {
             Event::Zm if !self.single_zone => self.set_power(zone?, parameter),
             Event::Pw if self.single_zone => self.set_power(Zone::Main, parameter),
-            Event::Z2 | Event::Z3 => self.set_power(zone?, parameter),
+            Event::Z2 | Event::Z3 => self.apply_zone_event(zone?, parameter),
+            Event::Hd if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
+                self.apply_zone_hdmi_audio(zone?, parameter)
+            }
             Event::Mv => {
                 let value = Volume::from_telnet(parameter)?;
                 self.zone_change(zone?, Setting::Volume, |z| set(&mut z.volume, Some(value)))
@@ -606,6 +626,33 @@ impl State {
             }),
             _ => None,
         }
+    }
+
+    /// Applies an event of zone 2 or 3 that starts with the zone: the power,
+    /// `HPFON` and `HPFOFF` for the high pass filter, and `CSST` and `CSMONO`
+    /// for stereo or mono.
+    fn apply_zone_event(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        if let Some(value) = parameter.strip_prefix("HPF") {
+            let on = on_off(value.trim())?;
+            self.zone_change(zone, Setting::HighPassFilter, |z| {
+                set(&mut z.high_pass_filter, Some(on))
+            })
+        } else if let Some(value) = parameter.strip_prefix("CS") {
+            let mode = ZoneChannelMode::from_code(value.trim())?;
+            self.zone_change(zone, Setting::ChannelMode, |z| {
+                set(&mut z.channel_mode, Some(mode))
+            })
+        } else {
+            self.set_power(zone, parameter)
+        }
+    }
+
+    /// Applies the HDMI audio of zone 2 or 3, for example `A PCM`.
+    fn apply_zone_hdmi_audio(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        let audio = ZoneHdmiAudio::from_code(parameter.strip_prefix('A')?.trim())?;
+        self.zone_change(zone, Setting::ZoneHdmiAudio, |z| {
+            set(&mut z.hdmi_audio, Some(audio))
+        })
     }
 
     /// Applies the bass or the treble of zone 2 or 3, for example `BAS 51`.
@@ -1110,6 +1157,51 @@ mod tests {
     }
 
     #[test]
+    fn zone_filter_channel_and_hdmi_audio_follow_events() {
+        let mut state = State::new(false);
+        let changed = |zone, setting| change(Some(zone), setting);
+        // The events of zone 2 of a real receiver.
+        assert_eq!(
+            apply(&mut state, "Z2HPFON"),
+            changed(Zone::Zone2, Setting::HighPassFilter)
+        );
+        assert_eq!(apply(&mut state, "Z2HPFON"), None);
+        assert_eq!(
+            apply(&mut state, "Z2CSMONO"),
+            changed(Zone::Zone2, Setting::ChannelMode)
+        );
+        assert_eq!(
+            apply(&mut state, "Z2HDA PCM"),
+            changed(Zone::Zone2, Setting::ZoneHdmiAudio)
+        );
+        let zone2 = state.zone(Zone::Zone2);
+        assert_eq!(zone2.high_pass_filter, Some(true));
+        assert_eq!(zone2.channel_mode, Some(ZoneChannelMode::Mono));
+        assert_eq!(zone2.hdmi_audio, Some(ZoneHdmiAudio::Pcm));
+        assert_eq!(
+            apply(&mut state, "Z2HPFOFF"),
+            changed(Zone::Zone2, Setting::HighPassFilter)
+        );
+        assert_eq!(
+            apply(&mut state, "Z3CSST"),
+            changed(Zone::Zone3, Setting::ChannelMode)
+        );
+        assert_eq!(
+            apply(&mut state, "Z3HDA THR"),
+            changed(Zone::Zone3, Setting::ZoneHdmiAudio)
+        );
+        assert_eq!(state.zone(Zone::Zone2).high_pass_filter, Some(false));
+        // The power of the zone still works, and other text changes nothing.
+        assert_eq!(
+            apply(&mut state, "Z2ON"),
+            changed(Zone::Zone2, Setting::Power)
+        );
+        for line in ["Z2HPFX", "Z2CSXX", "Z2HDA X", "Z2HDB PCM", "Z2HPF"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
     fn zone_volume_settings_follow_events() {
         let mut state = State::new(false);
         let changed = |zone, setting| change(Some(zone), setting);
@@ -1145,6 +1237,15 @@ mod tests {
         assert_eq!(
             state.zone(Zone::Zone2).power_on_volume,
             Some(PowerOnVolume::Muted)
+        );
+        // The main zone can use the last volume.
+        assert_eq!(
+            apply(&mut state, "SSVCTZMAPON LAS"),
+            changed(Zone::Main, Setting::PowerOnVolume)
+        );
+        assert_eq!(
+            state.zone(Zone::Main).power_on_volume,
+            Some(PowerOnVolume::Last)
         );
         // Zone 2: variable, and fixed at -70 dB and at -79 dB.
         let mode = |zone| change(Some(zone), Setting::VolumeMode);

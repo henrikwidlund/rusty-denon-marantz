@@ -8,19 +8,21 @@ use core::fmt;
 pub enum PowerOnVolume {
     /// The zone is muted.
     Muted,
+    /// The zone has the volume that it had when it was switched off.
+    Last,
     /// The zone has this volume.
     Level(Volume),
 }
 
 impl PowerOnVolume {
-    /// Parses the value of a telnet event: `MUT` or whole dB above -80 dB,
-    /// for example `35` for -45.0 dB.
+    /// Parses the value of a telnet event: `MUT`, `LAS` or whole dB above
+    /// -80 dB, for example `35` for -45.0 dB.
     #[must_use]
     pub fn from_telnet(code: &str) -> Option<Self> {
-        if code.trim() == "MUT" {
-            Some(Self::Muted)
-        } else {
-            Volume::from_whole_db_above_min(code).map(Self::Level)
+        match code.trim() {
+            "MUT" => Some(Self::Muted),
+            "LAS" => Some(Self::Last),
+            code => Volume::from_whole_db_above_min(code).map(Self::Level),
         }
     }
 }

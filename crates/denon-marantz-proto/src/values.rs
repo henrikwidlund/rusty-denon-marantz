@@ -251,6 +251,22 @@ code_enum! {
 }
 
 code_enum! {
+    /// Channel mode of zone 2 or 3.
+    pub enum ZoneChannelMode {
+        Stereo = "ST", "Stereo";
+        Mono = "MONO", "Mono";
+    }
+}
+
+code_enum! {
+    /// HDMI audio of zone 2 or 3.
+    pub enum ZoneHdmiAudio {
+        Through = "THR", "Through";
+        Pcm = "PCM", "PCM";
+    }
+}
+
+code_enum! {
     /// Room size.
     pub enum RoomSize {
         Small = "S", "S";

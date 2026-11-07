@@ -48,6 +48,7 @@ pub use values::{
     EcoMode, EffectSpeakerSelection, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
     ImaxMode, ImaxSubwooferOutput, Mdax, MultiEq, MuteLevel, PictureMode, PixelDepth, Power,
     ReferenceLevelOffset, RoomSize, SurroundLevelCompensation, VideoProcessingMode, VolumeDisplay,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};
