@@ -14,11 +14,12 @@ use denon_marantz::{
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, AutoStandby, Brand, ChannelLevel, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq,
-    MuteLevel, PanelLock, Power, PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey,
-    RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode,
-    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, ChannelLevel, DimmerMode, DiracFilter,
+    DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination,
+    InputMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReceiverType,
+    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger,
+    TunerBand, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1004,6 +1005,48 @@ async fn device_methods_send_their_commands() {
             "MSLEFT",
         ]
     );
+}
+
+#[tokio::test]
+async fn bluetooth_and_quick_select_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let device = avr.device();
+    device.set_bluetooth_transmitter(true).await.unwrap();
+    device
+        .set_bluetooth_output(BluetoothOutputMode::BluetoothOnly)
+        .await
+        .unwrap();
+    // The illumination is for Marantz receivers.
+    let error = device
+        .set_illumination(Illumination::Dim)
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let main = avr.zone(Zone::Main).unwrap();
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    main.select_quick_select(3).await.unwrap();
+    zone2.store_quick_select(2).await.unwrap();
+    let error = main.select_quick_select(6).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["BTTX ON", "BTTX BT", "MSQUICK3", "Z2QUICK2 MEMORY"]
+    );
+    telnet.send(b"BTTX OFF\rBTTX SP\rMSQUICK1\rZ2QUICK4\r");
+    wait_until("the values", || {
+        avr.snapshot().zone(Zone::Zone2).quick_select.is_some()
+    })
+    .await;
+    let state = avr.snapshot();
+    assert_eq!(state.device().bluetooth_transmitter, Some(false));
+    assert_eq!(
+        state.device().bluetooth_output,
+        Some(BluetoothOutputMode::BluetoothAndSpeakers)
+    );
+    assert_eq!(state.zone(Zone::Main).quick_select, Some(1));
+    assert_eq!(state.zone(Zone::Zone2).quick_select, Some(4));
 }
 
 #[tokio::test]

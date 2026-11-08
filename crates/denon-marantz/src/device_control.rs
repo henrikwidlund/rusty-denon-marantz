@@ -5,7 +5,9 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{DeviceSettingValue, DimmerMode, EcoMode, PanelLock, Zone};
+use denon_marantz_proto::{
+    BluetoothOutputMode, DeviceSettingValue, DimmerMode, EcoMode, Illumination, PanelLock, Zone,
+};
 use tokio::time::Instant;
 
 use crate::avr::Avr;
@@ -118,6 +120,47 @@ impl<'a> DeviceControl<'a> {
     /// See [`DeviceControl`].
     pub async fn set_panel_lock(&self, lock: PanelLock) -> Result<(), Error> {
         self.send(DeviceSettingValue::PanelLock(lock)).await
+    }
+
+    /// Turns the Bluetooth transmitter on (`true`) or off (`false`).
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn set_bluetooth_transmitter(&self, on: bool) -> Result<(), Error> {
+        self.send(DeviceSettingValue::BluetoothTransmitter(on))
+            .await
+    }
+
+    /// Sets where the sound goes when the Bluetooth transmitter is on:
+    /// Bluetooth and the speakers, or Bluetooth only.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn set_bluetooth_output(&self, mode: BluetoothOutputMode) -> Result<(), Error> {
+        self.send(DeviceSettingValue::BluetoothOutput(mode)).await
+    }
+
+    /// Sets the brightness of the illumination. Marantz receivers only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, on a Denon
+    /// receiver. See also [`DeviceControl`].
+    pub async fn set_illumination(&self, mode: Illumination) -> Result<(), Error> {
+        self.send(DeviceSettingValue::Illumination(mode)).await
+    }
+
+    /// Goes to the next brightness of the illumination: auto, bright, dim,
+    /// dark, off. Marantz receivers only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, on a Denon
+    /// receiver. See also [`DeviceControl`].
+    pub async fn illumination_next(&self) -> Result<(), Error> {
+        self.send(DeviceSettingValue::IlluminationNext).await
     }
 
     /// Opens or closes the channel level menu on the screen.

@@ -2,6 +2,7 @@
 
 use core::fmt::Write as _;
 
+use crate::brand::Brand;
 use crate::error::Error;
 use crate::sleep::Sleep;
 use crate::tone::ToneLevel;
@@ -67,6 +68,10 @@ pub enum ZoneSettingValue {
     AutoStandby(AutoStandby),
     /// Sleep timer.
     Sleep(Sleep),
+    /// Calls quick select 1 to 5. Marantz receivers call it smart select.
+    QuickSelect(u8),
+    /// Stores the current settings in quick select 1 to 5.
+    StoreQuickSelect(u8),
 }
 
 impl ZoneSettingValue {
@@ -77,17 +82,23 @@ impl ZoneSettingValue {
     /// Returns [`Error::UnsupportedZone`] for the main zone, and
     /// [`Error::ValueOutOfRange`] for a level that the receiver does not take.
     /// `out` is not changed then.
-    pub(crate) fn write(self, zone: Zone, out: &mut String) -> Result<(), Error> {
+    pub(crate) fn write(self, brand: Brand, zone: Zone, out: &mut String) -> Result<(), Error> {
         let start = out.len();
-        let result = self.write_text(zone, out);
+        let result = self.write_text(brand, zone, out);
         if result.is_err() {
             out.truncate(start);
         }
         result
     }
 
-    fn write_text(self, zone: Zone, out: &mut String) -> Result<(), Error> {
+    fn write_text(self, brand: Brand, zone: Zone, out: &mut String) -> Result<(), Error> {
         match self {
+            Self::QuickSelect(number) => {
+                return write_quick_select(brand, zone, number, false, out);
+            }
+            Self::StoreQuickSelect(number) => {
+                return write_quick_select(brand, zone, number, true, out);
+            }
             Self::AutoStandby(standby) => return write_auto_standby(zone, standby, out),
             Self::Sleep(sleep) => {
                 let _ = write!(out, "{}SLP{sleep}", zone_start(zone));
@@ -125,7 +136,10 @@ impl ZoneSettingValue {
             | Self::MuteLevel(_)
             | Self::VolumeMode(_)
             | Self::VolumeDisplay(_) => return self.write_volume_setting(zone, out),
-            Self::AutoStandby(_) | Self::Sleep(_) => return Err(Error::UnsupportedZone),
+            Self::AutoStandby(_)
+            | Self::Sleep(_)
+            | Self::QuickSelect(_)
+            | Self::StoreQuickSelect(_) => return Err(Error::UnsupportedZone),
         }
         Ok(())
     }
@@ -175,6 +189,36 @@ const fn zone_start(zone: Zone) -> &'static str {
         Zone::Zone2 => "Z2",
         Zone::Zone3 => "Z3",
     }
+}
+
+/// Quick select 1 to 5 of a zone. A Denon receiver calls it `QUICK`, a Marantz
+/// receiver `SMART`.
+fn write_quick_select(
+    brand: Brand,
+    zone: Zone,
+    number: u8,
+    store: bool,
+    out: &mut String,
+) -> Result<(), Error> {
+    if !(1..=5).contains(&number) {
+        return Err(Error::ValueOutOfRange {
+            what: "quick select",
+        });
+    }
+    let (main, name) = match brand {
+        Brand::Denon => ("MS", "QUICK"),
+        Brand::Marantz => ("MS", "SMART"),
+    };
+    let start = match zone {
+        Zone::Main => main,
+        Zone::Zone2 => "Z2",
+        Zone::Zone3 => "Z3",
+    };
+    let _ = write!(out, "{start}{name}{number}");
+    if store {
+        out.push_str(" MEMORY");
+    }
+    Ok(())
 }
 
 /// The main zone takes minutes, the other zones take hours.
@@ -242,7 +286,7 @@ mod tests {
 
     fn text(value: ZoneSettingValue, zone: Zone) -> Result<String, Error> {
         let mut out = String::new();
-        value.write(zone, &mut out).map(|()| out)
+        value.write(Brand::Denon, zone, &mut out).map(|()| out)
     }
 
     fn volume(db: f32) -> Volume {
@@ -456,6 +500,71 @@ mod tests {
     }
 
     #[test]
+    fn quick_select_depends_on_the_brand_and_the_zone() {
+        let write = |brand, zone, value: ZoneSettingValue| {
+            let mut out = String::new();
+            value.write(brand, zone, &mut out).map(|()| out)
+        };
+        let cases = [
+            (
+                Brand::Denon,
+                Zone::Main,
+                ZoneSettingValue::QuickSelect(1),
+                "MSQUICK1",
+            ),
+            (
+                Brand::Denon,
+                Zone::Zone2,
+                ZoneSettingValue::QuickSelect(5),
+                "Z2QUICK5",
+            ),
+            (
+                Brand::Denon,
+                Zone::Zone3,
+                ZoneSettingValue::StoreQuickSelect(3),
+                "Z3QUICK3 MEMORY",
+            ),
+            (
+                Brand::Denon,
+                Zone::Main,
+                ZoneSettingValue::StoreQuickSelect(2),
+                "MSQUICK2 MEMORY",
+            ),
+            (
+                Brand::Marantz,
+                Zone::Main,
+                ZoneSettingValue::QuickSelect(4),
+                "MSSMART4",
+            ),
+            (
+                Brand::Marantz,
+                Zone::Zone2,
+                ZoneSettingValue::StoreQuickSelect(1),
+                "Z2SMART1 MEMORY",
+            ),
+        ];
+        for (brand, zone, value, expected) in cases {
+            assert_eq!(
+                write(brand, zone, value).as_deref(),
+                Ok(expected),
+                "{value:?}"
+            );
+        }
+        for number in [0, 6] {
+            assert_eq!(
+                write(
+                    Brand::Denon,
+                    Zone::Main,
+                    ZoneSettingValue::QuickSelect(number)
+                ),
+                Err(Error::ValueOutOfRange {
+                    what: "quick select"
+                })
+            );
+        }
+    }
+
+    #[test]
     fn the_volume_display_is_for_the_main_zone_only() {
         let display = ZoneSettingValue::VolumeDisplay(VolumeDisplay::Relative);
         assert_eq!(text(display, Zone::Zone2), Err(Error::UnsupportedZone));
@@ -479,7 +588,7 @@ mod tests {
         let mut out = String::from("x");
         assert!(
             ZoneSettingValue::LeftLevel(13)
-                .write(Zone::Zone2, &mut out)
+                .write(Brand::Denon, Zone::Zone2, &mut out)
                 .is_err()
         );
         assert_eq!(out, "x");

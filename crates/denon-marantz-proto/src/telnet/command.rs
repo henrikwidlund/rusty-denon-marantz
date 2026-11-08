@@ -246,7 +246,7 @@ impl Command<'_> {
             }
             Self::SetVideoSetting(value) => value.write(out),
             Self::SetDeviceSetting(value) => value.write(brand, out)?,
-            Self::SetZoneSetting(value) => value.write(zone, out)?,
+            Self::SetZoneSetting(value) => value.write(brand, zone, out)?,
             Self::Tuner(command) => command.write(out)?,
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,

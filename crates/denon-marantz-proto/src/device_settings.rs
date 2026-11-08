@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::brand::Brand;
 use crate::error::Error;
-use crate::values::{DimmerMode, EcoMode, PanelLock};
+use crate::values::{BluetoothOutputMode, DimmerMode, EcoMode, Illumination, PanelLock};
 
 /// A setting of the whole receiver, with the value to set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +21,15 @@ pub enum DeviceSettingValue {
     /// Locks the panel buttons, with or without the master volume, or
     /// unlocks them.
     PanelLock(PanelLock),
+    /// Turns the Bluetooth transmitter on (`true`) or off (`false`).
+    BluetoothTransmitter(bool),
+    /// Sets where the sound goes when the Bluetooth transmitter is on.
+    BluetoothOutput(BluetoothOutputMode),
+    /// Sets the brightness of the illumination. Marantz receivers only.
+    Illumination(Illumination),
+    /// Goes to the next brightness of the illumination: auto, bright, dim,
+    /// dark, off. Marantz receivers only.
+    IlluminationNext,
     /// Opens or closes the channel level menu on the screen.
     ChannelLevelMenu,
     /// Shows the status of the receiver on the screen, like the status button.
@@ -38,9 +47,15 @@ impl DeviceSettingValue {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::UnsupportedKey`] for the status on a Marantz receiver.
+    /// Returns [`Error::UnsupportedKey`] for the status on a Marantz receiver,
+    /// and for the illumination on a Denon receiver.
     pub(crate) fn write(self, brand: Brand, out: &mut String) -> Result<(), Error> {
-        if self == Self::Status && brand != Brand::Denon {
+        let wrong_brand = match self {
+            Self::Status => brand != Brand::Denon,
+            Self::Illumination(_) | Self::IlluminationNext => brand != Brand::Marantz,
+            _ => false,
+        };
+        if wrong_brand {
             return Err(Error::UnsupportedKey);
         }
         // Writing to a `String` cannot fail.
@@ -52,6 +67,10 @@ impl DeviceSettingValue {
             Self::PanelLock(PanelLock::Off) => write!(out, "SYPANEL LOCK OFF"),
             Self::PanelLock(PanelLock::Panel) => write!(out, "SYPANEL LOCK ON"),
             Self::PanelLock(PanelLock::PanelAndVolume) => write!(out, "SYPANEL+V LOCK ON"),
+            Self::BluetoothTransmitter(on) => write!(out, "BTTX {}", on_off(on)),
+            Self::BluetoothOutput(mode) => write!(out, "BTTX {}", mode.code()),
+            Self::Illumination(mode) => write!(out, "ILB {}", mode.code()),
+            Self::IlluminationNext => write!(out, "ILB SEL"),
             Self::ChannelLevelMenu => write!(out, "MNCHL"),
             Self::Status => write!(out, "RCSHP0230030"),
             Self::RestartNetwork => write!(out, "NSRBT"),
@@ -94,6 +113,16 @@ mod tests {
                 DeviceSettingValue::PanelLock(PanelLock::PanelAndVolume),
                 "SYPANEL+V LOCK ON",
             ),
+            (DeviceSettingValue::BluetoothTransmitter(true), "BTTX ON"),
+            (DeviceSettingValue::BluetoothTransmitter(false), "BTTX OFF"),
+            (
+                DeviceSettingValue::BluetoothOutput(BluetoothOutputMode::BluetoothAndSpeakers),
+                "BTTX SP",
+            ),
+            (
+                DeviceSettingValue::BluetoothOutput(BluetoothOutputMode::BluetoothOnly),
+                "BTTX BT",
+            ),
             (DeviceSettingValue::ChannelLevelMenu, "MNCHL"),
             (DeviceSettingValue::Status, "RCSHP0230030"),
             (DeviceSettingValue::RestartNetwork, "NSRBT"),
@@ -104,6 +133,30 @@ mod tests {
             value.write(Brand::Denon, &mut out).unwrap();
             assert_eq!(out, expected, "{value:?}");
         }
+    }
+
+    #[test]
+    fn the_illumination_is_for_marantz_only() {
+        let mut out = String::new();
+        for value in [
+            DeviceSettingValue::Illumination(Illumination::Auto),
+            DeviceSettingValue::IlluminationNext,
+        ] {
+            assert_eq!(
+                value.write(Brand::Denon, &mut out),
+                Err(Error::UnsupportedKey)
+            );
+        }
+        assert_eq!(out, "");
+        DeviceSettingValue::Illumination(Illumination::Bright)
+            .write(Brand::Marantz, &mut out)
+            .unwrap();
+        assert_eq!(out, "ILB BRI");
+        out.clear();
+        DeviceSettingValue::IlluminationNext
+            .write(Brand::Marantz, &mut out)
+            .unwrap();
+        assert_eq!(out, "ILB SEL");
     }
 
     #[test]

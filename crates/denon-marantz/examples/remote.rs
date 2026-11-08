@@ -32,7 +32,8 @@
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
 //! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
-//! panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
+//! bluetooth on or off, bluetooth-output SP or BT, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
+//! illumination-next, quick-select N, quick-select-store N (N is 1 to 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
 //! sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
 //! sleep off or MINUTES, zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
 //! zone-treble-down, zone-left DB, zone-left-up, zone-left-down, zone-right DB, zone-right-up,
@@ -60,11 +61,11 @@ use std::time::Duration;
 
 use denon_marantz::{Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, AutoStandby, DialogEnhancerLevel, DimmerMode, DiracFilter,
-    DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode,
-    MultiEq, MuteLevel, PanelLock, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep,
-    SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
-    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, DialogEnhancerLevel, DimmerMode,
+    DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
+    Illumination, InputMode, MultiEq, MuteLevel, PanelLock, PowerOnVolume, ReferenceLevelOffset,
+    RoomSize, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
+    VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -74,7 +75,7 @@ const USAGE: &str =
     "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
 /// Commands that the zone control has methods for.
-const ZONE_COMMANDS: [&str; 36] = [
+const ZONE_COMMANDS: [&str; 38] = [
     "power-on",
     "power-standby",
     "volume-up",
@@ -111,6 +112,8 @@ const ZONE_COMMANDS: [&str; 36] = [
     "sleep",
     "sound-mode-next",
     "sound-mode-previous",
+    "quick-select",
+    "quick-select-store",
 ];
 
 /// Commands that the video control has methods for.
@@ -125,12 +128,16 @@ const VIDEO_COMMANDS: [&str; 7] = [
 ];
 
 /// Commands that the device control has methods for.
-const DEVICE_COMMANDS: [&str; 8] = [
+const DEVICE_COMMANDS: [&str; 12] = [
     "dimmer",
     "dimmer-next",
     "eco",
     "remote-lock",
     "panel-lock",
+    "bluetooth",
+    "bluetooth-output",
+    "illumination",
+    "illumination-next",
     "channel-level-menu",
     "show-status",
     "restart-network",
@@ -381,6 +388,21 @@ async fn device_command(
             };
             device.set_panel_lock(lock).await?;
         }
+        "bluetooth" => match need()? {
+            "on" => device.set_bluetooth_transmitter(true).await?,
+            "off" => device.set_bluetooth_transmitter(false).await?,
+            _ => return Err("use on or off".into()),
+        },
+        "bluetooth-output" => {
+            let mode = BluetoothOutputMode::from_code(need()?).ok_or("output is SP or BT")?;
+            device.set_bluetooth_output(mode).await?;
+        }
+        "illumination" => {
+            let mode = Illumination::from_code(need()?)
+                .ok_or("illumination is AUTO, BRI, DIM, DAR or OFF")?;
+            device.set_illumination(mode).await?;
+        }
+        "illumination-next" => device.illumination_next().await?,
         "channel-level-menu" => device.channel_level_menu().await?,
         "show-status" => device.show_status().await?,
         "restart-network" => device.restart_network().await?,
@@ -478,6 +500,10 @@ async fn zone_command(
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let digit = |text: &str| -> Result<u8, String> {
+        text.parse()
+            .map_err(|_| "a quick select is a number from 1 to 5".to_owned())
+    };
     match name {
         "power-on" => zone.power_on().await?,
         "power-standby" => zone.power_standby().await?,
@@ -491,6 +517,8 @@ async fn zone_command(
         "unmute" => zone.set_mute(false).await?,
         "source" => zone.select_source(need()?).await?,
         "sound-mode" => zone.select_sound_mode(need()?).await?,
+        "quick-select" => zone.select_quick_select(digit(need()?)?).await?,
+        "quick-select-store" => zone.store_quick_select(digit(need()?)?).await?,
         "sound-mode-next" => zone.sound_mode_next().await?,
         "sound-mode-previous" => zone.sound_mode_previous().await?,
         "key" => zone.press(remote_key(need()?)?).await?,

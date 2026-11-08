@@ -146,6 +146,34 @@ impl<'a> ZoneControl<'a> {
         self.send(Command::SelectSource(name)).await
     }
 
+    /// Calls quick select 1 to 5 of the zone. A Marantz receiver calls it
+    /// smart select.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// that is not from 1 to 5. See also [`ZoneControl`].
+    pub async fn select_quick_select(&self, number: u8) -> Result<(), Error> {
+        self.send(Command::SetZoneSetting(ZoneSettingValue::QuickSelect(
+            number,
+        )))
+        .await
+    }
+
+    /// Stores the current settings of the zone in quick select 1 to 5. This
+    /// replaces what the quick select had.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// that is not from 1 to 5. See also [`ZoneControl`].
+    pub async fn store_quick_select(&self, number: u8) -> Result<(), Error> {
+        self.send(Command::SetZoneSetting(ZoneSettingValue::StoreQuickSelect(
+            number,
+        )))
+        .await
+    }
+
     /// Selects the next sound mode of the list of the receiver. Main zone
     /// only.
     ///

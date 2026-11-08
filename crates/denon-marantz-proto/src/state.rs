@@ -19,10 +19,10 @@ use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
 use crate::{
-    AutoStandby, Channel, ChannelLevel, ContainmentAmount, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
-    SpeakerPreset, ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
-    ZoneHdmiAudio,
+    AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DimmerMode,
+    DiracFilter, DynamicVolume, EcoMode, Illumination, MultiEq, MuteLevel, PanelLock, Power,
+    PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel, Trigger, Volume,
+    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -115,6 +115,12 @@ pub enum Setting {
     SoundSettings,
     /// A trigger output of the receiver is on or off.
     Triggers,
+    /// The Bluetooth transmitter or its output mode.
+    Bluetooth,
+    /// The illumination of a Marantz receiver.
+    Illumination,
+    /// The quick select (smart select on Marantz) of a zone.
+    QuickSelect,
     /// The speaker preset of the receiver.
     SpeakerPreset,
     /// The band, mode, frequency, preset or station of the tuner.
@@ -164,6 +170,9 @@ pub struct ZoneState {
     pub channel_mode: Option<ZoneChannelMode>,
     /// HDMI audio of zone 2 and 3. Telnet reports it when it changes.
     pub hdmi_audio: Option<ZoneHdmiAudio>,
+    /// The quick select of the zone, from 1 to 5, or 0 for none. A Marantz
+    /// receiver calls it smart select. Telnet reports it.
+    pub quick_select: Option<u8>,
     /// Bass level. Telnet reports it for zone 2 and 3 when it changes.
     pub bass: Option<ToneLevel>,
     /// Treble level. Telnet reports it for zone 2 and 3 when it changes.
@@ -242,6 +251,14 @@ pub struct DeviceState {
     pub remote_lock: Option<bool>,
     /// What the panel lock locks. Telnet reports it, also when it changes.
     pub panel_lock: Option<PanelLock>,
+    /// The Bluetooth transmitter is on. Telnet reports it.
+    pub bluetooth_transmitter: Option<bool>,
+    /// Where the sound goes when the Bluetooth transmitter is on. Telnet
+    /// reports it.
+    pub bluetooth_output: Option<BluetoothOutputMode>,
+    /// Brightness of the illumination. Marantz receivers only. Telnet reports
+    /// it.
+    pub illumination: Option<Illumination>,
     /// Names of the quick selects. The first is quick select 1. A quick
     /// select with no name, or that the receiver has not reported, is `None`.
     /// Telnet reports them on a Denon receiver.
@@ -351,7 +368,7 @@ impl State {
             Event::Ms if zone == Some(Zone::Main) => {
                 // Quick and smart select are not sound modes.
                 if parameter.starts_with("QUICK") || parameter.starts_with("SMART") {
-                    return None;
+                    return self.apply_quick_select(Zone::Main, parameter);
                 }
                 let mode = normalize_sound_mode(parameter);
                 self.zone_change(zone?, Setting::SoundMode, |z| {
@@ -409,6 +426,8 @@ impl State {
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
             Event::Tr => self.apply_trigger(parameter),
+            Event::Bt => self.apply_bluetooth(parameter),
+            Event::Ilb => self.apply_illumination(parameter),
             Event::Sp => self.apply_speaker_preset(parameter),
             Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
             Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
@@ -632,6 +651,41 @@ impl State {
         })
     }
 
+    /// Applies the quick select of a zone, for example `QUICK3` or `SMART0`.
+    fn apply_quick_select(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        let number: u8 = parameter
+            .get(5..)?
+            .trim()
+            .parse()
+            .ok()
+            .filter(|n| *n <= 5)?;
+        self.zone_change(zone, Setting::QuickSelect, |z| {
+            set(&mut z.quick_select, Some(number))
+        })
+    }
+
+    /// Applies an `ILB` event, for example ` AUTO`.
+    fn apply_illumination(&mut self, parameter: &str) -> Option<Change> {
+        let mode = Illumination::from_code(parameter.trim())?;
+        self.device_change(Setting::Illumination, |d| {
+            set(&mut d.illumination, Some(mode))
+        })
+    }
+
+    /// Applies a `BT` event: `TX ON`, `TX OFF`, `TX SP` or `TX BT`.
+    fn apply_bluetooth(&mut self, parameter: &str) -> Option<Change> {
+        let value = parameter.strip_prefix("TX ")?.trim();
+        if let Some(on) = on_off(value) {
+            return self.device_change(Setting::Bluetooth, |d| {
+                set(&mut d.bluetooth_transmitter, Some(on))
+            });
+        }
+        let mode = BluetoothOutputMode::from_code(value)?;
+        self.device_change(Setting::Bluetooth, |d| {
+            set(&mut d.bluetooth_output, Some(mode))
+        })
+    }
+
     /// Applies a `TR` event, for example `1 ON`.
     fn apply_trigger(&mut self, parameter: &str) -> Option<Change> {
         let (number, value) = parameter.split_at_checked(1)?;
@@ -741,6 +795,8 @@ impl State {
             self.zone_change(zone, Setting::ChannelMode, |z| {
                 set(&mut z.channel_mode, Some(mode))
             })
+        } else if parameter.starts_with("QUICK") || parameter.starts_with("SMART") {
+            self.apply_quick_select(zone, parameter)
         } else {
             self.set_power(zone, parameter)
         }
@@ -1446,8 +1502,10 @@ mod tests {
             state.zone(Zone::Main).sound_mode.as_deref(),
             Some("DOLBY AUDIO - DD+ + DSUR")
         );
-        assert_eq!(apply(&mut state, "MSQUICK1"), None);
-        assert_eq!(apply(&mut state, "MSSMART2"), None);
+        // Quick and smart select change the quick select, not the sound mode.
+        let quick = |zone| change(Some(zone), Setting::QuickSelect);
+        assert_eq!(apply(&mut state, "MSQUICK1"), quick(Zone::Main));
+        assert_eq!(apply(&mut state, "MSSMART2"), quick(Zone::Main));
         assert_eq!(apply(&mut state, "MSDOLBY AUDIO - DD+ + DSUR"), None);
         assert_eq!(
             state.zone(Zone::Main).sound_mode.as_deref(),
@@ -2013,6 +2071,47 @@ mod tests {
         assert_eq!(apply(&mut state, "SPPR 2"), changed());
         assert_eq!(state.device().speaker_preset, Some(SpeakerPreset::Two));
         for line in ["SPPR 3", "SPPR ?", "SPXX 1"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn bluetooth_illumination_and_quick_select_follow_events() {
+        let mut state = State::new(false);
+        let changed = |setting| change(None, setting);
+        assert_eq!(apply(&mut state, "BTTX OFF"), changed(Setting::Bluetooth));
+        assert_eq!(apply(&mut state, "BTTX OFF"), None);
+        assert_eq!(apply(&mut state, "BTTX SP"), changed(Setting::Bluetooth));
+        assert_eq!(state.device().bluetooth_transmitter, Some(false));
+        assert_eq!(
+            state.device().bluetooth_output,
+            Some(BluetoothOutputMode::BluetoothAndSpeakers)
+        );
+        assert_eq!(apply(&mut state, "ILB BRI"), changed(Setting::Illumination));
+        assert_eq!(state.device().illumination, Some(Illumination::Bright));
+        assert_eq!(
+            apply(&mut state, "MSQUICK3"),
+            change(Some(Zone::Main), Setting::QuickSelect)
+        );
+        assert_eq!(state.zone(Zone::Main).quick_select, Some(3));
+        assert_eq!(
+            apply(&mut state, "MSQUICK0"),
+            change(Some(Zone::Main), Setting::QuickSelect)
+        );
+        assert_eq!(state.zone(Zone::Main).quick_select, Some(0));
+        assert_eq!(
+            apply(&mut state, "Z2SMART2"),
+            change(Some(Zone::Zone2), Setting::QuickSelect)
+        );
+        assert_eq!(state.zone(Zone::Zone2).quick_select, Some(2));
+        for line in [
+            "BTTX ?",
+            "BTTX MAYBE",
+            "ILB ?",
+            "MSQUICK9",
+            "MSQUICK",
+            "Z3QUICKX",
+        ] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
     }
