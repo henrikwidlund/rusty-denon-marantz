@@ -16,6 +16,9 @@
 //!   receiver answers the queries after a connect for several seconds. With a
 //!   wait you see how fast it answers a command when it is not busy.
 //! - `--listen SECONDS`: how long to show events after the command, default 3.
+//! - `--batch`: no command on the command line. The example keeps one connection and reads
+//!   lines from the standard input, each `[--zone 2|3] COMMAND [ARGUMENT]`. After each line it prints
+//!   `done N`. With `--groups ""` the connect asks for no state, so a test starts at once.
 //! - `--groups LIST`: the query groups that the connect fetches, in this order,
 //!   for example `core,signal`. The groups are core, names, toggles, signal,
 //!   device, sound and zones. The default is all of them.
@@ -28,7 +31,10 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
+//! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
+//! panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
+//! sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
+//! sleep off or MINUTES, zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
 //! zone-treble-down, zone-left DB, zone-left-up, zone-left-down, zone-right DB, zone-right-up,
 //! zone-right-down, zone-hpf on or off, zone-channel ST or MONO, zone-hdmi-audio THR or PCM,
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
@@ -54,11 +60,11 @@ use std::time::Duration;
 
 use denon_marantz::{Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, DialogEnhancerLevel, DiracFilter, DynamicVolume, FrontSpeakers,
-    HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, PowerOnVolume,
-    ReferenceLevelOffset, RoomSize, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode,
-    VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
-    ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AutoStandby, DialogEnhancerLevel, DimmerMode, DiracFilter,
+    DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode,
+    MultiEq, MuteLevel, PanelLock, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep,
+    SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
+    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -68,7 +74,7 @@ const USAGE: &str =
     "usage: remote <host> [options] <command> [argument]  (see the top of the example file)";
 
 /// Commands that the zone control has methods for.
-const ZONE_COMMANDS: [&str; 32] = [
+const ZONE_COMMANDS: [&str; 36] = [
     "power-on",
     "power-standby",
     "volume-up",
@@ -101,6 +107,10 @@ const ZONE_COMMANDS: [&str; 32] = [
     "mute-level",
     "volume-mode",
     "volume-display",
+    "auto-standby",
+    "sleep",
+    "sound-mode-next",
+    "sound-mode-previous",
 ];
 
 /// Commands that the video control has methods for.
@@ -112,6 +122,18 @@ const VIDEO_COMMANDS: [&str; 7] = [
     "vertical-stretch",
     "resolution",
     "upscaler",
+];
+
+/// Commands that the device control has methods for.
+const DEVICE_COMMANDS: [&str; 8] = [
+    "dimmer",
+    "dimmer-next",
+    "eco",
+    "remote-lock",
+    "panel-lock",
+    "channel-level-menu",
+    "show-status",
+    "restart-network",
 ];
 
 /// Commands that the tuner control has methods for.
@@ -327,6 +349,46 @@ async fn sound_command(
     Ok(())
 }
 
+/// Runs a command with the methods of the device control.
+async fn device_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let device = avr.device();
+    match name {
+        "dimmer" => {
+            let mode = DimmerMode::from_telnet(need()?).ok_or("dimmer is BRI, DIM, DAR or OFF")?;
+            device.set_dimmer(mode).await?;
+        }
+        "dimmer-next" => device.dimmer_next().await?,
+        "eco" => {
+            let mode = EcoMode::from_telnet(need()?).ok_or("eco is ON, AUTO or OFF")?;
+            device.set_eco_mode(mode).await?;
+        }
+        "remote-lock" => match need()? {
+            "on" => device.set_remote_lock(true).await?,
+            "off" => device.set_remote_lock(false).await?,
+            _ => return Err("use on or off".into()),
+        },
+        "panel-lock" => {
+            let lock = match need()? {
+                "off" => PanelLock::Off,
+                "panel" => PanelLock::Panel,
+                "panel-volume" => PanelLock::PanelAndVolume,
+                _ => return Err("use off, panel or panel-volume".into()),
+            };
+            device.set_panel_lock(lock).await?;
+        }
+        "channel-level-menu" => device.channel_level_menu().await?,
+        "show-status" => device.show_status().await?,
+        "restart-network" => device.restart_network().await?,
+        other => return Err(format!("unknown command {other}").into()),
+    }
+    Ok(())
+}
+
 /// Runs a command with the methods of the tuner control.
 async fn tuner_command(
     avr: &Avr,
@@ -416,6 +478,39 @@ async fn zone_command(
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    match name {
+        "power-on" => zone.power_on().await?,
+        "power-standby" => zone.power_standby().await?,
+        "volume-up" => zone.volume_up().await?,
+        "volume-down" => zone.volume_down().await?,
+        "volume" => {
+            let db: f32 = need()?.parse().map_err(|_| "volume is a number in dB")?;
+            zone.set_volume_db(db).await?;
+        }
+        "mute" => zone.set_mute(true).await?,
+        "unmute" => zone.set_mute(false).await?,
+        "source" => zone.select_source(need()?).await?,
+        "sound-mode" => zone.select_sound_mode(need()?).await?,
+        "sound-mode-next" => zone.sound_mode_next().await?,
+        "sound-mode-previous" => zone.sound_mode_previous().await?,
+        "key" => zone.press(remote_key(need()?)?).await?,
+        "denon-code" => {
+            let code = need()?.parse().map_err(|_| "denon-code is a number")?;
+            zone.press_denon_code(code).await?;
+        }
+        "marantz-code" => zone.press_marantz_code(need()?).await?,
+        other => return zone_setting_command(zone, other, argument).await,
+    }
+    Ok(())
+}
+
+/// Runs a command with the zone setting methods of the zone control.
+async fn zone_setting_command(
+    zone: ZoneControl<'_>,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
     let tone = |text: &str| -> Result<ToneLevel, String> {
         let db: i8 = text.parse().map_err(|_| "a level is whole dB")?;
         ToneLevel::from_db(db).ok_or_else(|| "a level is from -10 to 10 dB".to_owned())
@@ -435,18 +530,6 @@ async fn zone_command(
         Volume::from_db_rounded(db).ok_or_else(|| "a volume is from -80 to 18 dB".to_owned())
     };
     match name {
-        "power-on" => zone.power_on().await?,
-        "power-standby" => zone.power_standby().await?,
-        "volume-up" => zone.volume_up().await?,
-        "volume-down" => zone.volume_down().await?,
-        "volume" => {
-            let db: f32 = need()?.parse().map_err(|_| "volume is a number in dB")?;
-            zone.set_volume_db(db).await?;
-        }
-        "mute" => zone.set_mute(true).await?,
-        "unmute" => zone.set_mute(false).await?,
-        "source" => zone.select_source(need()?).await?,
-        "sound-mode" => zone.select_sound_mode(need()?).await?,
         "zone-bass" => zone.set_bass(tone(need()?)?).await?,
         "zone-bass-up" => zone.bass_up().await?,
         "zone-bass-down" => zone.bass_down().await?,
@@ -494,16 +577,26 @@ async fn zone_command(
             };
             zone.set_volume_mode(mode).await?;
         }
+        "auto-standby" => {
+            let standby = AutoStandby::from_telnet(need()?)
+                .ok_or("auto standby is OFF, 15M, 30M, 60M, 2H, 4H or 8H")?;
+            zone.set_auto_standby(standby).await?;
+        }
+        "sleep" => {
+            let sleep = match need()? {
+                "off" => Sleep::Off,
+                minutes => minutes
+                    .parse()
+                    .ok()
+                    .and_then(Sleep::minutes)
+                    .ok_or("sleep is off or 1 to 120 minutes")?,
+            };
+            zone.set_sleep(sleep).await?;
+        }
         "volume-display" => {
             let display = VolumeDisplay::from_code(need()?).ok_or("display is REL or ABS")?;
             zone.set_volume_display(display).await?;
         }
-        "key" => zone.press(remote_key(need()?)?).await?,
-        "denon-code" => {
-            let code = need()?.parse().map_err(|_| "denon-code is a number")?;
-            zone.press_denon_code(code).await?;
-        }
-        "marantz-code" => zone.press_marantz_code(need()?).await?,
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
@@ -558,6 +651,99 @@ fn number(args: &mut impl Iterator<Item = String>, option: &str) -> Result<u64, 
         .ok_or_else(|| format!("{option} needs a whole number"))
 }
 
+/// Runs one command. The zone is for the commands of a zone.
+async fn run(
+    avr: &Avr,
+    zone: Zone,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let typed = |commands: &[&str]| commands.contains(&name);
+    if typed(&SOUND_COMMANDS) {
+        sound_command(avr, name, argument).await
+    } else if typed(&DEVICE_COMMANDS) {
+        device_command(avr, name, argument).await
+    } else if typed(&TUNER_COMMANDS) {
+        tuner_command(avr, name, argument).await
+    } else if typed(&VIDEO_COMMANDS) {
+        video_command(avr, name, argument).await
+    } else if typed(&TONE_COMMANDS) {
+        tone_command(avr.tone(), name, argument).await
+    } else if typed(&ZONE_COMMANDS) {
+        zone_command(avr.zone(zone)?, name, argument).await
+    } else {
+        avr.send(zone, command(name, argument)?).await?;
+        Ok(())
+    }
+}
+
+/// Refuses a name that is not a command, without a connection.
+fn check_known(name: &str, argument: Option<&str>) -> Result<(), String> {
+    let typed = |commands: &[&str]| commands.contains(&name);
+    if typed(&ZONE_COMMANDS)
+        || typed(&TONE_COMMANDS)
+        || typed(&SOUND_COMMANDS)
+        || typed(&VIDEO_COMMANDS)
+        || typed(&TUNER_COMMANDS)
+        || typed(&DEVICE_COMMANDS)
+    {
+        Ok(())
+    } else {
+        command(name, argument).map(|_| ())
+    }
+}
+
+/// A line of the batch mode: `[--zone 2|3] COMMAND [ARGUMENT]`.
+fn parse_line(line: &str) -> Result<(Zone, &str, Option<&str>), String> {
+    let mut rest = line.trim();
+    let mut zone = Zone::Main;
+    if let Some(after) = rest.strip_prefix("--zone ") {
+        let (number, tail) = after.trim_start().split_once(' ').unwrap_or((after, ""));
+        zone = match number {
+            "2" => Zone::Zone2,
+            "3" => Zone::Zone3,
+            _ => return Err("--zone is 2 or 3".into()),
+        };
+        rest = tail.trim_start();
+    }
+    let (name, argument) = match rest.split_once(' ') {
+        Some((name, argument)) => (name, Some(argument.trim()).filter(|text| !text.is_empty())),
+        None => (rest, None),
+    };
+    if name.is_empty() {
+        return Err("empty line".into());
+    }
+    Ok((zone, name, argument))
+}
+
+/// Runs the lines of the standard input as commands, over one connection.
+async fn run_batch(avr: &Avr, stamp: &(impl Fn() -> f64 + Sync)) {
+    let (lines, mut received) = tokio::sync::mpsc::unbounded_channel();
+    tokio::task::spawn_blocking(move || {
+        for line in std::io::stdin().lines().map_while(Result::ok) {
+            if lines.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    println!("[{:7.3}] ready", stamp());
+    let mut done = 0_u32;
+    while let Some(line) = received.recv().await {
+        match parse_line(&line) {
+            Ok((zone, name, argument)) => {
+                println!("[{:7.3}] sending {name} to {zone:?}", stamp());
+                match run(avr, zone, name, argument).await {
+                    Ok(()) => println!("[{:7.3}] written", stamp()),
+                    Err(error) => println!("[{:7.3}] failed: {error}", stamp()),
+                }
+            }
+            Err(error) => println!("[{:7.3}] failed: {error}", stamp()),
+        }
+        done += 1;
+        println!("[{:7.3}] done {done}", stamp());
+    }
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -568,6 +754,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut zone = Zone::Main;
     let (mut wait, mut listen) = (Duration::ZERO, Duration::from_secs(3));
     let mut config = TelnetConfig::default();
+    let mut batch = false;
     let name = loop {
         let word = args.next().ok_or(USAGE)?;
         match word.as_str() {
@@ -595,22 +782,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let names = args.next().ok_or("--groups needs a list")?;
                 config.query_groups = Box::leak(groups(&names)?.into_boxed_slice());
             }
+            "--batch" => {
+                batch = true;
+                break String::new();
+            }
             _ => break word,
         }
     };
     let argument = args.next();
-    // A command that is not known is refused before the connect.
-    let typed = |commands: &[&str]| commands.contains(&name.as_str());
-    let other = if typed(&ZONE_COMMANDS)
-        || typed(&TONE_COMMANDS)
-        || typed(&SOUND_COMMANDS)
-        || typed(&VIDEO_COMMANDS)
-        || typed(&TUNER_COMMANDS)
-    {
-        None
-    } else {
-        Some(command(&name, argument.as_deref())?)
-    };
+    if !batch {
+        // A command that is not known is refused before the connect.
+        check_known(&name, argument.as_deref())?;
+    }
 
     let avr = Avr::builder(host).telnet_config(config).connect().await?;
     println!("connected to {}", avr.info().friendly_name);
@@ -635,26 +818,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    sleep(wait).await;
-    println!("[{:7.3}] sending {name} to {zone:?}", stamp());
-    match other {
-        Some(command) => avr.send(zone, command).await?,
-        None if typed(&SOUND_COMMANDS) => {
-            sound_command(&avr, &name, argument.as_deref()).await?;
-        }
-        None if typed(&TUNER_COMMANDS) => {
-            tuner_command(&avr, &name, argument.as_deref()).await?;
-        }
-        None if typed(&VIDEO_COMMANDS) => {
-            video_command(&avr, &name, argument.as_deref()).await?;
-        }
-        None if typed(&TONE_COMMANDS) => {
-            tone_command(avr.tone(), &name, argument.as_deref()).await?;
-        }
-        None => zone_command(avr.zone(zone)?, &name, argument.as_deref()).await?,
+    if batch {
+        run_batch(&avr, &stamp).await;
+    } else {
+        sleep(wait).await;
+        println!("[{:7.3}] sending {name} to {zone:?}", stamp());
+        run(&avr, zone, &name, argument.as_deref()).await?;
+        println!("[{:7.3}] written", stamp());
+        sleep(listen).await;
     }
-    println!("[{:7.3}] written", stamp());
-    sleep(listen).await;
 
     printer.abort();
     avr.telnet_disconnect().await;

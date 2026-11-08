@@ -134,6 +134,10 @@ pub enum Error {
     /// A setting is not valid.
     #[error("invalid setting: {0}")]
     InvalidConfig(&'static str),
+    /// The key for a factory reset is not the last one from `reset_key`, it
+    /// was used, or it is older than 60 seconds.
+    #[error("the reset key is not valid")]
+    ResetKeyInvalid,
 }
 
 impl Error {
@@ -161,7 +165,8 @@ impl Error {
             | Self::DiracSlotOutOfRange(_)
             | Self::UnknownDiracSlot(_)
             | Self::DiracNotSupported
-            | Self::InvalidConfig(_) => None,
+            | Self::InvalidConfig(_)
+            | Self::ResetKeyInvalid => None,
         }
     }
 
@@ -190,6 +195,7 @@ impl Error {
                 | Self::UnknownDiracSlot(_)
                 | Self::DiracNotSupported
                 | Self::InvalidConfig(_)
+                | Self::ResetKeyInvalid
         )
     }
 

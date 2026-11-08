@@ -2,8 +2,8 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    MuteLevel, PowerOnVolume, RemoteKey, ToneLevel, Volume, VolumeDisplay, VolumeMode, Zone,
-    ZoneChannelMode, ZoneHdmiAudio, ZoneSettingValue,
+    AutoStandby, MuteLevel, PowerOnVolume, RemoteKey, Sleep, ToneLevel, Volume, VolumeDisplay,
+    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio, ZoneSettingValue,
 };
 
 use crate::avr::Avr;
@@ -46,7 +46,8 @@ macro_rules! steps {
 /// mode, HDMI audio and the volume mode are for zone 2 and zone 3. The main
 /// zone has [`Avr::tone`] for bass and treble. The volume display is for the
 /// main zone. The volume limit, the power on volume and the mute level work
-/// for all zones. A method that the zone does not have sends nothing and
+/// for all zones, and so do the auto standby and the sleep timer. A method
+/// that the zone does not have sends nothing and
 /// returns [`Error::InvalidCommand`].
 ///
 /// Each method returns when the command is written, as [`Avr::send`] does.
@@ -145,6 +146,28 @@ impl<'a> ZoneControl<'a> {
         self.send(Command::SelectSource(name)).await
     }
 
+    /// Selects the next sound mode of the list of the receiver. Main zone
+    /// only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSoundMode`], and sends nothing, for another zone.
+    /// See also [`ZoneControl`].
+    pub async fn sound_mode_next(&self) -> Result<(), Error> {
+        self.select_sound_mode("RIGHT").await
+    }
+
+    /// Selects the previous sound mode of the list of the receiver. Main zone
+    /// only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSoundMode`], and sends nothing, for another zone.
+    /// See also [`ZoneControl`].
+    pub async fn sound_mode_previous(&self) -> Result<(), Error> {
+        self.select_sound_mode("LEFT").await
+    }
+
     /// Selects a sound mode by name, for example `MOVIE`.
     ///
     /// # Errors
@@ -207,6 +230,8 @@ impl<'a> ZoneControl<'a> {
         set_power_on_volume(PowerOnVolume) => PowerOnVolume, "the volume that the zone has when it is switched on. A level must be a whole dB";
         set_mute_level(MuteLevel) => MuteLevel, "the mute level";
         set_volume_mode(VolumeMode) => VolumeMode, "variable volume, or a fixed volume that must be a whole dB. Zone 2 and zone 3 only";
+        set_auto_standby(AutoStandby) => AutoStandby, "the auto standby. The main zone takes off and 15, 30 or 60 minutes, zone 2 and zone 3 take off and 2, 4 or 8 hours. Any zone";
+        set_sleep(Sleep) => Sleep, "the sleep timer. Any zone";
         set_volume_display(VolumeDisplay) => VolumeDisplay, "how the volume is shown, relative to 0 dB or as an absolute number. Main zone only";
     }
 

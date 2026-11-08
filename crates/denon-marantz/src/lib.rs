@@ -10,6 +10,8 @@ mod audyssey;
 #[cfg(feature = "http")]
 mod avr;
 #[cfg(feature = "telnet")]
+mod device_control;
+#[cfg(feature = "telnet")]
 mod dirac;
 #[cfg(feature = "discovery")]
 mod discovery;
@@ -41,6 +43,8 @@ pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 pub use denon_marantz_proto::RemoteKey;
 #[cfg(feature = "telnet")]
 pub use denon_marantz_proto::telnet::{Command, QueryGroup};
+#[cfg(feature = "telnet")]
+pub use device_control::{DeviceControl, ResetKey};
 #[cfg(feature = "telnet")]
 pub use dirac::Dirac;
 #[cfg(feature = "discovery")]

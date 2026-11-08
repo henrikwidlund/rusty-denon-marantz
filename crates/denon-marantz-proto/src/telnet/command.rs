@@ -4,6 +4,7 @@ use core::fmt::Write as _;
 
 use crate::brand::Brand;
 use crate::containment::ContainmentAmount;
+use crate::device_settings::DeviceSettingValue;
 use crate::error::Error;
 use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
@@ -114,6 +115,8 @@ pub enum Command<'a> {
     SetTrigger(Trigger, bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
+    /// Sets a setting of the whole receiver, for example the dimmer.
+    SetDeviceSetting(DeviceSettingValue),
     /// Sets a setting of zone 2 or zone 3, for example the bass. The zone given
     /// to [`Command::write_line`] chooses the zone. Returns
     /// [`Error::UnsupportedZone`] for the main zone.
@@ -242,6 +245,7 @@ impl Command<'_> {
                 let _ = write!(out, "SD{}", mode.code());
             }
             Self::SetVideoSetting(value) => value.write(out),
+            Self::SetDeviceSetting(value) => value.write(brand, out)?,
             Self::SetZoneSetting(value) => value.write(zone, out)?,
             Self::Tuner(command) => command.write(out)?,
             Self::SetSoundSetting(value) => value.write(out)?,

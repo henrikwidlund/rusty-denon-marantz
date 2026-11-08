@@ -14,11 +14,11 @@ use denon_marantz::{
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, Brand, ChannelLevel, DiracFilter, DynamicVolume, FrontSpeakers, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, InputMode, MultiEq, MuteLevel, Power, PowerOnVolume, ReceiverType,
-    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, SpeakerPreset, ToneLevel, Trigger,
-    TunerBand, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
-    ZoneHdmiAudio,
+    AudioRestorer, AutoStandby, Brand, ChannelLevel, DimmerMode, DiracFilter, DynamicVolume,
+    EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, InputMode, MultiEq,
+    MuteLevel, PanelLock, Power, PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey,
+    RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode,
+    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -951,6 +951,107 @@ async fn zone_bass_up_to_10_db_fills_the_state() {
     let state = avr.snapshot();
     assert_eq!(state.zone(Zone::Zone2).bass, ToneLevel::from_db(8));
     assert_eq!(state.zone(Zone::Zone2).treble, ToneLevel::from_db(-8));
+}
+
+#[tokio::test]
+async fn device_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let device = avr.device();
+    device.set_dimmer(DimmerMode::Dim).await.unwrap();
+    device.dimmer_next().await.unwrap();
+    device.set_eco_mode(EcoMode::Auto).await.unwrap();
+    device.set_remote_lock(true).await.unwrap();
+    device
+        .set_panel_lock(PanelLock::PanelAndVolume)
+        .await
+        .unwrap();
+    device.set_panel_lock(PanelLock::Off).await.unwrap();
+    device.channel_level_menu().await.unwrap();
+    device.show_status().await.unwrap();
+    device.restart_network().await.unwrap();
+    avr.zone(Zone::Main)
+        .unwrap()
+        .sound_mode_next()
+        .await
+        .unwrap();
+    avr.zone(Zone::Main)
+        .unwrap()
+        .sound_mode_previous()
+        .await
+        .unwrap();
+    let error = avr
+        .zone(Zone::Zone2)
+        .unwrap()
+        .sound_mode_next()
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "DIM DIM",
+            "DIM SEL",
+            "ECOAUTO",
+            "SYREMOTE LOCK ON",
+            "SYPANEL+V LOCK ON",
+            "SYPANEL LOCK OFF",
+            "MNCHL",
+            "RCSHP0230030",
+            "NSRBT",
+            "MSRIGHT",
+            "MSLEFT",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_factory_reset_needs_the_last_key_once() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let device = avr.device();
+    let old = device.reset_key();
+    let key = device.reset_key();
+    // The old key stopped being valid when the new one came.
+    let error = device.factory_reset(old).await.unwrap_err();
+    assert!(matches!(error, Error::ResetKeyInvalid), "{error:?}");
+    assert!(error.is_invalid_input());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        commands_sent(&telnet).is_empty(),
+        "{:?}",
+        commands_sent(&telnet)
+    );
+    device.factory_reset(key).await.unwrap();
+    wait_until("the reset", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["SYRST"]);
+    // A key works once.
+    let used = device.reset_key();
+    device.factory_reset(used).await.unwrap();
+    wait_until("the second reset", || commands_sent(&telnet).len() >= 2).await;
+}
+
+#[tokio::test]
+async fn auto_standby_and_sleep_work_in_every_zone() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    main.set_auto_standby(AutoStandby::Minutes30).await.unwrap();
+    main.set_sleep(Sleep::minutes(45).unwrap()).await.unwrap();
+    zone2.set_auto_standby(AutoStandby::Hours4).await.unwrap();
+    zone2.set_sleep(Sleep::Off).await.unwrap();
+    let error = zone2
+        .set_auto_standby(AutoStandby::Minutes15)
+        .await
+        .unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["STBY30M", "SLP045", "Z2STBY4H", "Z2SLPOFF"]
+    );
 }
 
 /// The commands that the client sent, without the queries.

@@ -16,6 +16,8 @@ use tokio::sync::{broadcast, watch};
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
 #[cfg(feature = "telnet")]
+use crate::device_control::{DeviceControl, ResetKeys};
+#[cfg(feature = "telnet")]
 use crate::dirac::Dirac;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
@@ -124,6 +126,9 @@ pub struct Avr {
     channels: Channels,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
+    /// The reset key that was given out last.
+    #[cfg(feature = "telnet")]
+    reset_keys: ResetKeys,
 }
 
 impl Avr {
@@ -278,6 +283,19 @@ impl Avr {
     #[must_use]
     pub const fn sound(&self) -> SoundControl<'_> {
         SoundControl::new(self)
+    }
+
+    #[cfg(feature = "telnet")]
+    pub(crate) const fn reset_keys(&self) -> &ResetKeys {
+        &self.reset_keys
+    }
+
+    /// Controls the settings of the whole receiver on telnet with typed
+    /// methods.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn device(&self) -> DeviceControl<'_> {
+        DeviceControl::new(self)
     }
 
     /// Controls the tuner on telnet with typed methods.
@@ -506,6 +524,8 @@ impl AvrBuilder {
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),
+            #[cfg(feature = "telnet")]
+            reset_keys: ResetKeys::default(),
         })
     }
 

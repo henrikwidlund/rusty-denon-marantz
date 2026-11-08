@@ -3,8 +3,9 @@
 use core::fmt::Write as _;
 
 use crate::error::Error;
+use crate::sleep::Sleep;
 use crate::tone::ToneLevel;
-use crate::values::{MuteLevel, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio};
+use crate::values::{AutoStandby, MuteLevel, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio};
 use crate::volume::{PowerOnVolume, Volume, VolumeMode};
 use crate::zone::Zone;
 
@@ -13,10 +14,10 @@ const MAX_CHANNEL_DB: i8 = 12;
 
 /// A zone setting with the value to set.
 ///
-/// Zone 2 and zone 3 have all settings except the volume display. The main
-/// zone has the volume limit, the power on volume, the mute level and the
-/// volume display only. Any other combination gives
-/// [`Error::UnsupportedZone`].
+/// Every zone has the auto standby, the sleep timer, the volume limit, the
+/// power on volume and the mute level. Zone 2 and zone 3 also have the other
+/// settings except the volume display. The main zone also has the volume
+/// display. Any other combination gives [`Error::UnsupportedZone`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ZoneSettingValue {
@@ -61,6 +62,11 @@ pub enum ZoneSettingValue {
     VolumeMode(VolumeMode),
     /// How the volume is shown, relative to 0 dB or as an absolute number.
     VolumeDisplay(VolumeDisplay),
+    /// Auto standby. The main zone takes off and 15, 30 or 60 minutes. Zone 2
+    /// and zone 3 take off and 2, 4 or 8 hours.
+    AutoStandby(AutoStandby),
+    /// Sleep timer.
+    Sleep(Sleep),
 }
 
 impl ZoneSettingValue {
@@ -81,6 +87,14 @@ impl ZoneSettingValue {
     }
 
     fn write_text(self, zone: Zone, out: &mut String) -> Result<(), Error> {
+        match self {
+            Self::AutoStandby(standby) => return write_auto_standby(zone, standby, out),
+            Self::Sleep(sleep) => {
+                let _ = write!(out, "{}SLP{sleep}", zone_start(zone));
+                return Ok(());
+            }
+            _ => {}
+        }
         let z = match zone {
             Zone::Main => return self.write_volume_setting(zone, out),
             Zone::Zone2 => "Z2",
@@ -111,6 +125,7 @@ impl ZoneSettingValue {
             | Self::MuteLevel(_)
             | Self::VolumeMode(_)
             | Self::VolumeDisplay(_) => return self.write_volume_setting(zone, out),
+            Self::AutoStandby(_) | Self::Sleep(_) => return Err(Error::UnsupportedZone),
         }
         Ok(())
     }
@@ -151,6 +166,39 @@ impl ZoneSettingValue {
         }
         Ok(())
     }
+}
+
+/// The start of the text of a command for `zone`: nothing for the main zone.
+const fn zone_start(zone: Zone) -> &'static str {
+    match zone {
+        Zone::Main => "",
+        Zone::Zone2 => "Z2",
+        Zone::Zone3 => "Z3",
+    }
+}
+
+/// The main zone takes minutes, the other zones take hours.
+fn write_auto_standby(zone: Zone, standby: AutoStandby, out: &mut String) -> Result<(), Error> {
+    let allowed = match zone {
+        Zone::Main => matches!(
+            standby,
+            AutoStandby::Off
+                | AutoStandby::Minutes15
+                | AutoStandby::Minutes30
+                | AutoStandby::Minutes60
+        ),
+        Zone::Zone2 | Zone::Zone3 => matches!(
+            standby,
+            AutoStandby::Off | AutoStandby::Hours2 | AutoStandby::Hours4 | AutoStandby::Hours8
+        ),
+    };
+    if !allowed {
+        return Err(Error::ValueOutOfRange {
+            what: "auto standby",
+        });
+    }
+    let _ = write!(out, "{}STBY{}", zone_start(zone), standby.telnet_code());
+    Ok(())
 }
 
 fn push(out: &mut String, z: &str, text: &str) {
@@ -351,6 +399,58 @@ mod tests {
                 text(value, Zone::Main),
                 Err(Error::UnsupportedZone),
                 "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn auto_standby_and_sleep_of_every_zone() {
+        let sleep = |minutes| Sleep::minutes(minutes).unwrap();
+        let cases = [
+            (
+                ZoneSettingValue::AutoStandby(AutoStandby::Minutes15),
+                Zone::Main,
+                "STBY15M",
+            ),
+            (
+                ZoneSettingValue::AutoStandby(AutoStandby::Off),
+                Zone::Main,
+                "STBYOFF",
+            ),
+            (
+                ZoneSettingValue::AutoStandby(AutoStandby::Hours2),
+                Zone::Zone2,
+                "Z2STBY2H",
+            ),
+            (
+                ZoneSettingValue::AutoStandby(AutoStandby::Hours8),
+                Zone::Zone3,
+                "Z3STBY8H",
+            ),
+            (
+                ZoneSettingValue::AutoStandby(AutoStandby::Off),
+                Zone::Zone3,
+                "Z3STBYOFF",
+            ),
+            (ZoneSettingValue::Sleep(Sleep::Off), Zone::Main, "SLPOFF"),
+            (ZoneSettingValue::Sleep(sleep(30)), Zone::Main, "SLP030"),
+            (ZoneSettingValue::Sleep(sleep(120)), Zone::Zone2, "Z2SLP120"),
+            (ZoneSettingValue::Sleep(Sleep::Off), Zone::Zone3, "Z3SLPOFF"),
+        ];
+        for (value, zone, expected) in cases {
+            assert_eq!(text(value, zone).as_deref(), Ok(expected), "{value:?}");
+        }
+        // The main zone takes minutes, the other zones hours.
+        for (value, zone) in [
+            (AutoStandby::Hours2, Zone::Main),
+            (AutoStandby::Minutes15, Zone::Zone2),
+            (AutoStandby::Minutes60, Zone::Zone3),
+        ] {
+            assert_eq!(
+                text(ZoneSettingValue::AutoStandby(value), zone),
+                Err(Error::ValueOutOfRange {
+                    what: "auto standby"
+                })
             );
         }
     }
