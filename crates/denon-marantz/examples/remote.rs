@@ -33,7 +33,7 @@
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
 //! effect on or off, effect-level N, center-image N, center-gain N, step SETTING-up or SETTING-down
-//! (audio-delay, delay-time, dialog-control, dimension, center-width, lfe, bass-sync, auro-strength,
+//! (audio-delay, delay-time, dialog-control, dimension, center-width, center-width-cew, lfe, bass-sync, auro-strength,
 //! center-level, effect-level, center-image, center-gain, subwoofer1 to subwoofer4, for example lfe-up),
 //! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
 //! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
@@ -445,6 +445,7 @@ fn parse_step(text: &str) -> Result<(SoundStep, bool), String> {
         "dialog-control" => SoundStep::DialogControl,
         "dimension" => SoundStep::Dimension,
         "center-width" => SoundStep::CenterWidth,
+        "center-width-cew" => SoundStep::CenterWidthCew,
         "lfe" => SoundStep::LfeLevel,
         "bass-sync" => SoundStep::BassSync,
         "auro-strength" => SoundStep::AuroMaticStrength,

@@ -1379,6 +1379,41 @@ async fn sound_methods_refuse_numbers_out_of_range() {
 }
 
 #[tokio::test]
+async fn center_width_uses_the_reported_name() {
+    // Before the receiver reports a name, both names are sent.
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    avr.sound().set_center_width(3).await.unwrap();
+    avr.sound().center_width_up().await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["PSCEN 03", "PSCEW 03", "PSCEN UP", "PSCEW UP"]
+    );
+    // After a report, only that name is sent.
+    for (report, expected) in [
+        (&b"PSCEW 02\r"[..], ["PSCEW 04", "PSCEW DOWN"]),
+        (&b"PSCEN 02\r"[..], ["PSCEN 04", "PSCEN DOWN"]),
+    ] {
+        let telnet = FakeTelnet::start().await;
+        let (avr, _http) = connected(telnet_config(telnet.port)).await;
+        telnet.send(report);
+        wait_until("the state", || {
+            avr.snapshot()
+                .device()
+                .sound_settings
+                .center_width_name
+                .is_some()
+        })
+        .await;
+        avr.sound().set_center_width(4).await.unwrap();
+        avr.sound().center_width_down().await.unwrap();
+        wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
+        assert_eq!(commands_sent(&telnet), expected);
+    }
+}
+
+#[tokio::test]
 async fn audyssey_methods_refuse_what_cannot_work() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;

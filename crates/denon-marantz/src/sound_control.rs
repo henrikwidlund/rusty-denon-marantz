@@ -2,9 +2,9 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter, DialogEnhancerLevel,
-    Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput,
-    InputMode, Mdax, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
+    AudioRestorer, Auro3dMode, AuroMatic3dPreset, CenterWidthName, ChannelLevel, DacFilter,
+    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode,
+    ImaxSubwooferOutput, InputMode, Mdax, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
     SurroundLevelCompensation, Zone,
 };
 
@@ -82,7 +82,6 @@ impl<'a> SoundControl<'a> {
         set_lfe_level(u8) => LfeLevel, "the LFE level as dB below 0 dB, from 0 to 10";
         set_center_level(ChannelLevel) => CenterLevel, "the level of the center speaker";
         set_center_spread(bool) => CenterSpread, "center spread on (`true`) or off (`false`)";
-        set_center_width(u8) => CenterWidth, "the center width, from 0 to 7";
         set_loudness_management(bool) => LoudnessManagement, "loudness management on (`true`) or off (`false`)";
         set_speaker_virtualizer(bool) => SpeakerVirtualizer, "the speaker virtualizer on (`true`) or off (`false`)";
         set_front_speakers(FrontSpeakers) => FrontSpeakers, "the front speaker output. The receiver needs \"Amp assign = Front B\" in its setup";
@@ -105,6 +104,50 @@ impl<'a> SoundControl<'a> {
         set_audio_delay(u16) => AudioDelay, "the audio delay in ms, from 0 to 500";
     }
 
+    /// Sets the center width, from 0 to 7. Receivers use the name `PSCEN` or
+    /// `PSCEW`. The method uses the name that the receiver reported. Before
+    /// the receiver has reported one, it sends both names and the receiver
+    /// drops the one it does not know.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn set_center_width(&self, value: u8) -> Result<(), Error> {
+        self.center_width(
+            SoundSettingValue::CenterWidth(value),
+            SoundSettingValue::CenterWidthCew(value),
+        )
+        .await
+    }
+
+    /// Raises the center width by one step. The names are as in
+    /// [`SoundControl::set_center_width`].
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn center_width_up(&self) -> Result<(), Error> {
+        self.center_width(
+            SoundSettingValue::StepUp(SoundStep::CenterWidth),
+            SoundSettingValue::StepUp(SoundStep::CenterWidthCew),
+        )
+        .await
+    }
+
+    /// Lowers the center width by one step. The names are as in
+    /// [`SoundControl::set_center_width`].
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn center_width_down(&self) -> Result<(), Error> {
+        self.center_width(
+            SoundSettingValue::StepDown(SoundStep::CenterWidth),
+            SoundSettingValue::StepDown(SoundStep::CenterWidthCew),
+        )
+        .await
+    }
+
     /// Sets the level of subwoofer 1 to 4.
     ///
     /// # Errors
@@ -121,7 +164,6 @@ impl<'a> SoundControl<'a> {
         delay_time_up, delay_time_down => DelayTime, "the delay time (Denon receivers)";
         dialog_control_up, dialog_control_down => DialogControl, "the dialog control";
         dimension_up, dimension_down => Dimension, "the dimension";
-        center_width_up, center_width_down => CenterWidth, "the center width (older receivers)";
         lfe_level_up, lfe_level_down => LfeLevel, "the LFE level";
         bass_sync_up, bass_sync_down => BassSync, "the bass sync";
         auro_matic_strength_up, auro_matic_strength_down => AuroMaticStrength, "the Auro-Matic strength";
@@ -182,6 +224,29 @@ impl<'a> SoundControl<'a> {
     /// See [`SoundControl`].
     pub async fn set_input_mode(&self, mode: InputMode) -> Result<(), Error> {
         self.avr.send(Zone::Main, Command::SetInputMode(mode)).await
+    }
+
+    /// Sends the command with the name that the receiver reported, or both.
+    async fn center_width(
+        &self,
+        cen: SoundSettingValue,
+        cew: SoundSettingValue,
+    ) -> Result<(), Error> {
+        let name = self
+            .avr
+            .state()
+            .borrow()
+            .device()
+            .sound_settings
+            .center_width_name;
+        match name {
+            Some(CenterWidthName::Cen) => self.send(cen).await,
+            Some(CenterWidthName::Cew) => self.send(cew).await,
+            None => {
+                self.send(cen).await?;
+                self.send(cew).await
+            }
+        }
     }
 
     async fn send(&self, value: SoundSettingValue) -> Result<(), Error> {

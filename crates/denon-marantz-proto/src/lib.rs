@@ -47,7 +47,7 @@ pub use signal::{ChannelLayout, InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
-pub use sound_settings::{SoundSettingValue, SoundSettings, SoundStep};
+pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, SoundStep};
 pub use source_list::{SourceInfo, SourceList};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;

@@ -10,6 +10,16 @@ use crate::{
     RoomSize, SpeakerPreset, SurroundLevelCompensation,
 };
 
+/// The name that a receiver uses for the center width: `PSCEN` in the protocol
+/// spec and on older receivers, `PSCEW` on current receivers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CenterWidthName {
+    /// `PSCEN`.
+    Cen,
+    /// `PSCEW`.
+    Cew,
+}
+
 /// Highest value of each number, as the receiver accepts it.
 const MAX_AURO_STRENGTH: u16 = 15;
 const MAX_BASS_SYNC: u16 = 16;
@@ -46,6 +56,8 @@ pub struct SoundSettings {
     pub dimension: Option<u8>,
     /// Center width, from 0 to 7.
     pub center_width: Option<u8>,
+    /// The name that the receiver used for the center width.
+    pub center_width_name: Option<CenterWidthName>,
     /// Dialog enhancer.
     pub dialog_enhancer: Option<DialogEnhancerLevel>,
     /// Dynamic range compression.
@@ -141,6 +153,13 @@ impl SoundSettings {
             .unwrap_or_else(|| self.apply_other(name, value))
     }
 
+    /// Reads the center width and remembers the name that the receiver used.
+    fn apply_center_width(&mut self, name: CenterWidthName, value: &str) -> Option<bool> {
+        let width = put(&mut self.center_width, number(value, MAX_CENTER_WIDTH))?;
+        let renamed = put(&mut self.center_width_name, Some(name))?;
+        Some(width || renamed)
+    }
+
     /// `None` if the name or the value is not known.
     fn apply_known(&mut self, name: &str, value: &str) -> Option<bool> {
         match name {
@@ -151,8 +170,8 @@ impl SoundSettings {
                 SurroundLevelCompensation::from_code(value),
             ),
             "DIM" => put(&mut self.dimension, number(value, MAX_DIMENSION)),
-            // The protocol spec writes `CEN`, another source writes `CEW`.
-            "CEN" | "CEW" => put(&mut self.center_width, number(value, MAX_CENTER_WIDTH)),
+            "CEN" => self.apply_center_width(CenterWidthName::Cen, value),
+            "CEW" => self.apply_center_width(CenterWidthName::Cew, value),
             "DEH" => put(
                 &mut self.dialog_enhancer,
                 DialogEnhancerLevel::from_code(value),
@@ -311,8 +330,10 @@ pub enum SoundSettingValue {
     CenterLevel(ChannelLevel),
     /// Center spread.
     CenterSpread(bool),
-    /// Center width, from 0 to 7.
+    /// Center width, from 0 to 7, with the name `PSCEN` of the protocol spec.
     CenterWidth(u8),
+    /// Center width, from 0 to 7, with the name `PSCEW` of current receivers.
+    CenterWidthCew(u8),
     /// Front speaker output.
     FrontSpeakers(FrontSpeakers),
     /// Speaker preset.
@@ -473,6 +494,14 @@ impl SoundSettingValue {
                 MAX_CENTER_WIDTH,
                 2,
             ),
+            Self::CenterWidthCew(v) => digits(
+                out,
+                "PSCEW ",
+                "center width",
+                u16::from(v),
+                MAX_CENTER_WIDTH,
+                2,
+            ),
             Self::LoudnessManagement(on) => code(out, "PSLOM ", on_off_code(on)),
             Self::SpeakerVirtualizer(on) => code(out, "PSSPV ", on_off_code(on)),
             Self::GraphicEq(on) => code(out, "PSGEQ ", on_off_code(on)),
@@ -511,8 +540,10 @@ pub enum SoundStep {
     DialogControl,
     /// Dimension.
     Dimension,
-    /// Center width. Older receivers only.
+    /// Center width with the name `PSCEN`.
     CenterWidth,
+    /// Center width with the name `PSCEW`.
+    CenterWidthCew,
     /// LFE level.
     LfeLevel,
     /// Bass sync.
@@ -538,6 +569,7 @@ fn write_step(out: &mut String, step: SoundStep, direction: &str) -> Result<(), 
         SoundStep::DialogControl => "PSDIC",
         SoundStep::Dimension => "PSDIM",
         SoundStep::CenterWidth => "PSCEN",
+        SoundStep::CenterWidthCew => "PSCEW",
         SoundStep::LfeLevel => "PSLFE",
         SoundStep::BassSync => "PSBSC",
         SoundStep::AuroMaticStrength => "PSAUROST",
@@ -647,6 +679,10 @@ mod tests {
         assert!(settings.apply("SURLEV", "HEV"));
         assert!(settings.apply("DIM", "03"));
         assert!(settings.apply("CEN", "07"));
+        assert_eq!(settings.center_width_name, Some(CenterWidthName::Cen));
+        assert!(!settings.apply("CEN", "07"));
+        assert!(settings.apply("CEW", "07"));
+        assert_eq!(settings.center_width_name, Some(CenterWidthName::Cew));
         assert!(!settings.apply("CEW", "07"));
         assert!(settings.apply("CEW", "02"));
         assert_eq!(settings.center_width, Some(2));
