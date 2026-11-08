@@ -117,9 +117,68 @@ impl ChannelLevel {
     }
 }
 
+/// A change of the level of a channel of the main zone, or of all channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelVolumeCommand {
+    /// Sets the level of a channel.
+    Set(Channel, ChannelLevel),
+    /// Raises the level of a channel by one step of 0.5 dB.
+    Up(Channel),
+    /// Lowers the level of a channel by one step of 0.5 dB.
+    Down(Channel),
+    /// Sets the level of all channels to 0 dB.
+    ResetAll,
+}
+
+impl ChannelVolumeCommand {
+    /// Writes the command text without the line end, for example `CVFL 505`.
+    pub(crate) fn write(self, out: &mut String) {
+        match self {
+            Self::Set(channel, level) => {
+                out.push_str("CV");
+                out.push_str(channel.code());
+                out.push(' ');
+                out.push_str(level.code());
+            }
+            Self::Up(channel) => Self::push_step(out, channel, "UP"),
+            Self::Down(channel) => Self::push_step(out, channel, "DOWN"),
+            Self::ResetAll => out.push_str("CVZRL"),
+        }
+    }
+
+    fn push_step(out: &mut String, channel: Channel, direction: &str) {
+        out.push_str("CV");
+        out.push_str(channel.code());
+        out.push(' ');
+        out.push_str(direction);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_volume_commands() {
+        let level = ChannelLevel::from_half_db(1).unwrap();
+        for (command, text) in [
+            (
+                ChannelVolumeCommand::Set(Channel::FrontLeft, level),
+                "CVFL 505",
+            ),
+            (
+                ChannelVolumeCommand::Set(Channel::Subwoofer2, ChannelLevel::MIN),
+                "CVSW2 38",
+            ),
+            (ChannelVolumeCommand::Up(Channel::TopFrontLeft), "CVTFL UP"),
+            (ChannelVolumeCommand::Down(Channel::Center), "CVC DOWN"),
+            (ChannelVolumeCommand::ResetAll, "CVZRL"),
+        ] {
+            let mut out = String::new();
+            command.write(&mut out);
+            assert_eq!(out, text);
+        }
+    }
 
     #[test]
     fn channel_enums_round_trip() {

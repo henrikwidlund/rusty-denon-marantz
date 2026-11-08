@@ -35,7 +35,7 @@ pub mod telnet;
 pub mod zone;
 
 pub use brand::Brand;
-pub use channel::{Channel, ChannelLevel, Subwoofer};
+pub use channel::{Channel, ChannelLevel, ChannelVolumeCommand, Subwoofer};
 pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};

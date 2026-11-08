@@ -49,7 +49,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ,
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., Dirac must be off), channel-up CHANNEL, channel-down CHANNEL, channel-reset,
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
@@ -71,13 +71,13 @@ use denon_marantz::{
     Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, VideoControl, ZoneControl,
 };
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, DialogEnhancerLevel,
-    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction,
-    PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep,
-    SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode,
-    VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
-    ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, Channel, ChannelLevel,
+    DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode,
+    FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq,
+    MuteLevel, NoiseReduction, PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset,
+    RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand,
+    TunerMode, VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -197,7 +197,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 29] = [
+const SOUND_COMMANDS: [&str; 33] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -226,6 +226,10 @@ const SOUND_COMMANDS: [&str; 29] = [
     "effect-level",
     "center-image",
     "center-gain",
+    "channel-volume",
+    "channel-up",
+    "channel-down",
+    "channel-reset",
     "step",
 ];
 
@@ -414,6 +418,24 @@ async fn sound_extra_command(
         "effect-level" => avr.sound().set_effect_level(small(need()?)?).await?,
         "center-image" => avr.sound().set_center_image(small(need()?)?).await?,
         "center-gain" => avr.sound().set_center_gain(small(need()?)?).await?,
+        "channel-volume" => {
+            let (code, db) = need()?
+                .split_once(' ')
+                .ok_or("channel-volume is CHANNEL DB, for example FL -1.5")?;
+            let channel = Channel::from_code(code).ok_or_else(|| unknown("channel"))?;
+            let db: f32 = db.trim().parse().map_err(|_| "DB is a number in dB")?;
+            let level = ChannelLevel::from_db(db).ok_or("DB is from -12 to 12 in steps of 0.5")?;
+            avr.sound().set_channel_volume(channel, level).await?;
+        }
+        "channel-up" => {
+            let channel = Channel::from_code(need()?).ok_or_else(|| unknown("channel"))?;
+            avr.sound().channel_volume_up(channel).await?;
+        }
+        "channel-down" => {
+            let channel = Channel::from_code(need()?).ok_or_else(|| unknown("channel"))?;
+            avr.sound().channel_volume_down(channel).await?;
+        }
+        "channel-reset" => avr.sound().reset_channel_volumes().await?,
         "step" => {
             let (step, up) = parse_step(need()?)?;
             let value = if up {

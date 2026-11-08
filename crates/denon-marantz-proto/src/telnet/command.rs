@@ -3,6 +3,7 @@
 use core::fmt::Write as _;
 
 use crate::brand::Brand;
+use crate::channel::ChannelVolumeCommand;
 use crate::containment::ContainmentAmount;
 use crate::device_settings::DeviceSettingValue;
 use crate::error::Error;
@@ -116,6 +117,8 @@ pub enum Command<'a> {
     SetTrigger(Trigger, bool),
     /// Sets the audio input mode of the main zone.
     SetInputMode(InputMode),
+    /// Changes the level of a channel of the main zone, or resets all of them.
+    SetChannelVolume(ChannelVolumeCommand),
     /// Sets a setting of the whole receiver, for example the dimmer.
     SetDeviceSetting(DeviceSettingValue),
     /// Sets a setting of zone 2 or zone 3, for example the bass. The zone given
@@ -248,6 +251,7 @@ impl Command<'_> {
             Self::SetInputMode(mode) => {
                 let _ = write!(out, "SD{}", mode.code());
             }
+            Self::SetChannelVolume(command) => command.write(out),
             Self::SetVideoSetting(value) => value.write(out),
             Self::SetDeviceSetting(value) => value.write(brand, out)?,
             Self::SetZoneSetting(value) => value.write(brand, zone, out)?,
@@ -312,6 +316,7 @@ fn check_text(text: &str) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Channel;
 
     fn line(command: Command<'_>, zone: Zone) -> String {
         let mut out = String::new();
@@ -474,6 +479,14 @@ mod tests {
             (Command::AllZoneStereo(false), "MNZST OFF\r"),
             (Command::SetTrigger(Trigger::One, true), "TR1 ON\r"),
             (Command::SetTrigger(Trigger::Three, false), "TR3 OFF\r"),
+            (
+                Command::SetChannelVolume(ChannelVolumeCommand::Up(Channel::FrontLeft)),
+                "CVFL UP\r",
+            ),
+            (
+                Command::SetChannelVolume(ChannelVolumeCommand::ResetAll),
+                "CVZRL\r",
+            ),
             (Command::SetInputMode(InputMode::Auto), "SDAUTO\r"),
             (Command::SetInputMode(InputMode::Hdmi), "SDHDMI\r"),
             (Command::SetInputMode(InputMode::Digital), "SDDIGITAL\r"),

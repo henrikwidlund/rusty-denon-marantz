@@ -44,6 +44,8 @@ pub enum Setting {
     ZoneHdmiAudio,
     /// The level of the left or right channel of zone 2 or 3.
     ChannelLevels,
+    /// The level of a channel of the main zone, the `CV` events.
+    ChannelVolumes,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -276,6 +278,9 @@ pub struct DeviceState {
     /// Level of each speaker channel that the receiver has reported, in the
     /// order of the report. Telnet reports them on a Denon receiver.
     pub speaker_levels: Vec<(Channel, ChannelLevel)>,
+    /// Level of each channel of the main zone that the receiver has reported
+    /// as `CV` events, in the order of the report.
+    pub channel_volumes: Vec<(Channel, ChannelLevel)>,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -288,6 +293,19 @@ pub struct DeviceState {
     /// The video settings, for example the video processing mode. Telnet
     /// reports them.
     pub video_settings: VideoSettings,
+}
+
+/// Sets the level of a channel in a list. Returns true if the list changed.
+fn set_channel_level(
+    levels: &mut Vec<(Channel, ChannelLevel)>,
+    channel: Channel,
+    level: ChannelLevel,
+) -> bool {
+    if let Some((_, current)) = levels.iter_mut().find(|(known, _)| *known == channel) {
+        return std::mem::replace(current, level) != level;
+    }
+    levels.push((channel, level));
+    true
 }
 
 impl DeviceState {
@@ -440,6 +458,7 @@ impl State {
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
             }
+            Event::Cv if zone == Some(Zone::Main) => self.apply_channel_volume(parameter),
             Event::Cv if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_channel_level(zone?, parameter)
             }
@@ -998,12 +1017,23 @@ impl State {
         let (code, value) = parameter.strip_prefix("LEV")?.split_once(' ')?;
         let channel = Channel::from_code(code)?;
         let level = ChannelLevel::from_code(value.trim())?;
-        let levels = &mut self.device.speaker_levels;
-        if let Some((_, current)) = levels.iter_mut().find(|(known, _)| *known == channel) {
-            return Some(std::mem::replace(current, level) != level);
-        }
-        levels.push((channel, level));
-        Some(true)
+        Some(set_channel_level(
+            &mut self.device.speaker_levels,
+            channel,
+            level,
+        ))
+    }
+
+    /// Applies a `CV` event of the main zone like `FL 505`. The end of a list
+    /// and an unknown channel or level are ignored.
+    fn apply_channel_volume(&mut self, parameter: &str) -> Option<Change> {
+        let (code, value) = parameter.split_once(' ')?;
+        let channel = Channel::from_code(code)?;
+        let level = ChannelLevel::from_code(value.trim())?;
+        set_channel_level(&mut self.device.channel_volumes, channel, level).then_some(Change {
+            zone: Some(Zone::Main),
+            setting: Setting::ChannelVolumes,
+        })
     }
 
     fn apply_friendly_name(&mut self, name: &str) -> Option<Change> {
@@ -1623,7 +1653,7 @@ mod tests {
         for line in [
             "NSE1Hello",
             "VSXYZ",
-            "CVFL 50",
+            "CVXX 50",
             "TR4 ON",
             "SYHDMIDIAGERR NO",
         ] {
@@ -2265,6 +2295,28 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state.device().speaker_levels.len(), 2);
+    }
+
+    #[test]
+    fn channel_volumes_follow_events() {
+        let mut state = State::new(false);
+        let change = || change(Some(Zone::Main), Setting::ChannelVolumes);
+        assert_eq!(apply(&mut state, "CVFL 505"), change());
+        assert_eq!(apply(&mut state, "CVFL 505"), None);
+        assert_eq!(apply(&mut state, "CVSW2 48"), change());
+        assert_eq!(apply(&mut state, "CVFL 50"), change());
+        let levels = &state.device().channel_volumes;
+        assert_eq!(levels.len(), 2);
+        assert_eq!(
+            levels[0],
+            (Channel::FrontLeft, ChannelLevel::from_half_db(0).unwrap())
+        );
+        assert_eq!(levels[1].1.db(), -2.0);
+        for line in ["CVEND", "CV END", "CVXX 50", "CVFR 99", "CVFR"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        assert_eq!(state.device().channel_volumes.len(), 2);
+        assert_eq!(state.device().speaker_levels.len(), 0);
     }
 
     #[test]

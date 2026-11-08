@@ -14,12 +14,12 @@ use denon_marantz::{
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, ChannelLevel, DigitalCodec, DimmerMode,
-    DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
-    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, Power,
-    PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep,
-    SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode, Volume, VolumeDisplay,
-    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel, DigitalCodec,
+    DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
+    HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock,
+    PictureMode, Power, PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize,
+    Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode, Volume,
+    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1411,6 +1411,38 @@ async fn center_width_uses_the_reported_name() {
         wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
         assert_eq!(commands_sent(&telnet), expected);
     }
+}
+
+#[tokio::test]
+async fn channel_volumes_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    let level = ChannelLevel::from_half_db(-3).unwrap();
+    sound
+        .set_channel_volume(Channel::FrontLeft, level)
+        .await
+        .unwrap();
+    sound.channel_volume_up(Channel::Center).await.unwrap();
+    sound
+        .channel_volume_down(Channel::TopFrontLeft)
+        .await
+        .unwrap();
+    sound.reset_channel_volumes().await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["CVFL 485", "CVC UP", "CVTFL DOWN", "CVZRL"]
+    );
+    telnet.send(b"CVFL 485\rCVSW2 50\rCV END\r");
+    wait_until("the state", || {
+        avr.snapshot().device().channel_volumes.len() == 2
+    })
+    .await;
+    let state = avr.snapshot();
+    let levels = &state.device().channel_volumes;
+    assert_eq!(levels[0], (Channel::FrontLeft, level));
+    assert_eq!(levels[1].0, Channel::Subwoofer2);
 }
 
 #[tokio::test]

@@ -2,10 +2,10 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, CenterWidthName, ChannelLevel, DacFilter,
-    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode,
-    ImaxSubwooferOutput, InputMode, Mdax, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
-    SurroundLevelCompensation, Zone,
+    AudioRestorer, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel, ChannelLevel,
+    ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc, EffectSpeakerSelection,
+    FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, RoomSize,
+    SoundSettingValue, SoundStep, SpeakerPreset, SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -197,6 +197,54 @@ impl<'a> SoundControl<'a> {
         .await
     }
 
+    /// Sets the level of a speaker channel of the main zone. Dirac Live must be
+    /// off for the receiver to accept a change.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn set_channel_volume(
+        &self,
+        channel: Channel,
+        level: ChannelLevel,
+    ) -> Result<(), Error> {
+        self.channel_volume(ChannelVolumeCommand::Set(channel, level))
+            .await
+    }
+
+    /// Raises the level of a speaker channel of the main zone by 0.5 dB. Dirac
+    /// Live must be off for the receiver to accept a change.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn channel_volume_up(&self, channel: Channel) -> Result<(), Error> {
+        self.channel_volume(ChannelVolumeCommand::Up(channel)).await
+    }
+
+    /// Lowers the level of a speaker channel of the main zone by 0.5 dB. Dirac
+    /// Live must be off for the receiver to accept a change.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn channel_volume_down(&self, channel: Channel) -> Result<(), Error> {
+        self.channel_volume(ChannelVolumeCommand::Down(channel))
+            .await
+    }
+
+    /// Sets the level of all speaker channels of the main zone to 0 dB. This
+    /// overwrites all levels at once and cannot be undone by the library.
+    /// Dirac Live must be off for the receiver to accept it. Not tested on a
+    /// receiver.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn reset_channel_volumes(&self) -> Result<(), Error> {
+        self.channel_volume(ChannelVolumeCommand::ResetAll).await
+    }
+
     /// Raises the level of the tactile transducer by one step.
     ///
     /// # Errors
@@ -247,6 +295,12 @@ impl<'a> SoundControl<'a> {
                 self.send(cew).await
             }
         }
+    }
+
+    async fn channel_volume(&self, command: ChannelVolumeCommand) -> Result<(), Error> {
+        self.avr
+            .send(Zone::Main, Command::SetChannelVolume(command))
+            .await
     }
 
     async fn send(&self, value: SoundSettingValue) -> Result<(), Error> {
