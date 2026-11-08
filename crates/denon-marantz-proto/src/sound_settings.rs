@@ -19,6 +19,9 @@ const MAX_DELAY_TIME: u16 = 300;
 const MAX_AUDIO_DELAY: u16 = 500;
 const MAX_DIMENSION: u16 = 6;
 const MAX_CENTER_WIDTH: u16 = 7;
+const MAX_EFFECT_LEVEL: u16 = 15;
+/// Center image and center gain go from 0.0 to 1.0 in steps of 0.1.
+const MAX_TENTHS: u16 = 10;
 /// Values of the IMAX filters in Hz.
 const IMAX_HIGH_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
 const TACTILE_LOW_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
@@ -105,6 +108,16 @@ pub struct SoundSettings {
     pub audio_delay: Option<u16>,
     /// Front speaker output. Receivers with "Amp assign = Front B" only.
     pub front_speakers: Option<FrontSpeakers>,
+    /// The effect is on. Older receivers only.
+    pub effect: Option<bool>,
+    /// Effect level, from 1 to 15.
+    pub effect_level: Option<u8>,
+    /// Center image in tenths, from 0 to 10 (0.0 to 1.0). Older receivers
+    /// only.
+    pub center_image: Option<u8>,
+    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older Marantz
+    /// receivers only.
+    pub center_gain: Option<u8>,
     /// The tactile transducer is on.
     pub tactile_transducer: Option<bool>,
     /// Level of the tactile transducer.
@@ -202,6 +215,12 @@ impl SoundSettings {
             "DEL" => put(&mut self.delay_time, number(value, MAX_DELAY_TIME)),
             "DELAY" => put(&mut self.audio_delay, number(value, MAX_AUDIO_DELAY)),
             "FRONT" => put(&mut self.front_speakers, FrontSpeakers::from_code(value)),
+            "EFF" => match on_off(value) {
+                Some(on) => put(&mut self.effect, Some(on)),
+                None => put(&mut self.effect_level, number(value, MAX_EFFECT_LEVEL)),
+            },
+            "CEI" => put(&mut self.center_image, number(value, MAX_TENTHS)),
+            "CEG" => put(&mut self.center_gain, number(value, MAX_TENTHS)),
             "TTR" => put(&mut self.tactile_transducer, on_off(value)),
             "TTRLEV" => put(&mut self.tactile_level, ChannelLevel::from_code(value)),
             "TTRLPF" => put(&mut self.tactile_low_pass, number(value, 999)),
@@ -307,6 +326,20 @@ pub enum SoundSettingValue {
     /// Low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100,
     /// 110, 120, 150, 180, 200 or 250.
     TactileLowPass(u16),
+    /// Effect on (`true`) or off (`false`). Older receivers only.
+    Effect(bool),
+    /// Effect level, from 1 to 15.
+    EffectLevel(u8),
+    /// Center image in tenths, from 0 to 10 (0.0 to 1.0). Older receivers
+    /// only.
+    CenterImage(u8),
+    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older Marantz
+    /// receivers only.
+    CenterGain(u8),
+    /// Raises a setting by one step of the receiver.
+    StepUp(SoundStep),
+    /// Lowers a setting by one step of the receiver.
+    StepDown(SoundStep),
     /// Loudness management.
     LoudnessManagement(bool),
     /// Speaker virtualizer.
@@ -342,6 +375,7 @@ impl SoundSettingValue {
     ///
     /// Returns [`Error::ValueOutOfRange`] for a number that the receiver does
     /// not accept.
+    #[allow(clippy::too_many_lines)] // One arm for each setting.
     pub(crate) fn write(self, out: &mut String) -> Result<(), Error> {
         match self {
             Self::AudioRestorer(v) => code(out, "PSRSTR ", v.code()),
@@ -408,6 +442,26 @@ impl SoundSettingValue {
                 hz,
                 &TACTILE_LOW_PASS_HZ,
             ),
+            Self::Effect(on) => code(out, "PSEFF ", on_off_code(on)),
+            Self::EffectLevel(level) if (1..=15).contains(&level) => digits(
+                out,
+                "PSEFF ",
+                "effect level",
+                u16::from(level),
+                MAX_EFFECT_LEVEL,
+                2,
+            ),
+            Self::EffectLevel(_) => Err(Error::ValueOutOfRange {
+                what: "effect level",
+            }),
+            Self::CenterImage(v) => {
+                digits(out, "PSCEI ", "center image", u16::from(v), MAX_TENTHS, 2)
+            }
+            Self::CenterGain(v) => {
+                digits(out, "PSCEG ", "center gain", u16::from(v), MAX_TENTHS, 2)
+            }
+            Self::StepUp(step) => write_step(out, step, "UP"),
+            Self::StepDown(step) => write_step(out, step, "DOWN"),
             Self::LfeLevel(v) => digits(out, "PSLFE ", "LFE level", u16::from(v), MAX_LFE_LEVEL, 2),
             Self::CenterLevel(level) => code(out, "PSCLV ", level.code()),
             Self::CenterSpread(on) => code(out, "PSCES ", on_off_code(on)),
@@ -445,6 +499,69 @@ impl SoundSettingValue {
 }
 
 #[allow(clippy::unnecessary_wraps)] // Same type as the number writers, so each arm is one call.
+/// A setting that the receiver raises or lowers by one step of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SoundStep {
+    /// Audio delay (lip sync).
+    AudioDelay,
+    /// Delay time. Denon receivers only.
+    DelayTime,
+    /// Dialog control.
+    DialogControl,
+    /// Dimension.
+    Dimension,
+    /// Center width. Older receivers only.
+    CenterWidth,
+    /// LFE level.
+    LfeLevel,
+    /// Bass sync.
+    BassSync,
+    /// Auro-Matic strength.
+    AuroMaticStrength,
+    /// Level of the center speaker.
+    CenterLevel,
+    /// Level of subwoofer 1 to 4.
+    SubwooferLevel(u8),
+    /// Effect level.
+    EffectLevel,
+    /// Center image. Older receivers only.
+    CenterImage,
+    /// Center gain. Older Marantz receivers only.
+    CenterGain,
+}
+
+fn write_step(out: &mut String, step: SoundStep, direction: &str) -> Result<(), Error> {
+    let name = match step {
+        SoundStep::AudioDelay => "PSDELAY",
+        SoundStep::DelayTime => "PSDEL",
+        SoundStep::DialogControl => "PSDIC",
+        SoundStep::Dimension => "PSDIM",
+        SoundStep::CenterWidth => "PSCEN",
+        SoundStep::LfeLevel => "PSLFE",
+        SoundStep::BassSync => "PSBSC",
+        SoundStep::AuroMaticStrength => "PSAUROST",
+        SoundStep::CenterLevel => "PSCLV",
+        SoundStep::SubwooferLevel(1) => "PSSWL",
+        SoundStep::SubwooferLevel(2) => "PSSWL2",
+        SoundStep::SubwooferLevel(3) => "PSSWL3",
+        SoundStep::SubwooferLevel(4) => "PSSWL4",
+        SoundStep::SubwooferLevel(_) => {
+            return Err(Error::ValueOutOfRange {
+                what: "subwoofer number",
+            });
+        }
+        SoundStep::EffectLevel => "PSEFF",
+        SoundStep::CenterImage => "PSCEI",
+        SoundStep::CenterGain => "PSCEG",
+    };
+    out.push_str(name);
+    out.push(' ');
+    out.push_str(direction);
+    Ok(())
+}
+
+#[allow(clippy::unnecessary_wraps)] // The arms of `SoundSettingValue::write` return its result.
 fn code(out: &mut String, start: &str, value: &str) -> Result<(), Error> {
     out.push_str(start);
     out.push_str(value);
@@ -591,6 +708,111 @@ mod tests {
         assert!(settings.apply("FRONT", "SPA"));
         assert!(settings.apply("FRONT", "A+B"));
         assert_eq!(settings.front_speakers, Some(FrontSpeakers::Both));
+    }
+
+    #[test]
+    fn effect_center_image_and_gain() {
+        let mut settings = SoundSettings::default();
+        assert!(settings.apply("EFF", "ON"));
+        assert!(settings.apply("EFF", "10"));
+        assert!(settings.apply("CEI", "07"));
+        assert!(settings.apply("CEG", "10"));
+        assert_eq!(settings.effect, Some(true));
+        assert_eq!(settings.effect_level, Some(10));
+        assert_eq!(settings.center_image, Some(7));
+        assert_eq!(settings.center_gain, Some(10));
+        assert!(!settings.apply("EFF", "10"));
+        assert!(settings.apply("EFF", "OFF"));
+        // A value outside the range is kept as text.
+        assert!(settings.apply("EFF", "16"));
+        assert_eq!(settings.effect_level, Some(10));
+        assert_eq!(settings.other["EFF"], "16");
+    }
+
+    #[test]
+    fn step_and_effect_texts() {
+        let text = |value: SoundSettingValue| {
+            let mut out = String::new();
+            value.write(&mut out).map(|()| out)
+        };
+        let cases = [
+            (SoundSettingValue::Effect(true), "PSEFF ON"),
+            (SoundSettingValue::EffectLevel(1), "PSEFF 01"),
+            (SoundSettingValue::EffectLevel(15), "PSEFF 15"),
+            (SoundSettingValue::CenterImage(10), "PSCEI 10"),
+            (SoundSettingValue::CenterGain(0), "PSCEG 00"),
+            (
+                SoundSettingValue::StepUp(SoundStep::AudioDelay),
+                "PSDELAY UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::AudioDelay),
+                "PSDELAY DOWN",
+            ),
+            (SoundSettingValue::StepUp(SoundStep::DelayTime), "PSDEL UP"),
+            (
+                SoundSettingValue::StepUp(SoundStep::DialogControl),
+                "PSDIC UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::Dimension),
+                "PSDIM DOWN",
+            ),
+            (
+                SoundSettingValue::StepUp(SoundStep::CenterWidth),
+                "PSCEN UP",
+            ),
+            (SoundSettingValue::StepUp(SoundStep::LfeLevel), "PSLFE UP"),
+            (
+                SoundSettingValue::StepDown(SoundStep::BassSync),
+                "PSBSC DOWN",
+            ),
+            (
+                SoundSettingValue::StepUp(SoundStep::AuroMaticStrength),
+                "PSAUROST UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::CenterLevel),
+                "PSCLV DOWN",
+            ),
+            (
+                SoundSettingValue::StepUp(SoundStep::SubwooferLevel(1)),
+                "PSSWL UP",
+            ),
+            (
+                SoundSettingValue::StepUp(SoundStep::SubwooferLevel(2)),
+                "PSSWL2 UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::SubwooferLevel(4)),
+                "PSSWL4 DOWN",
+            ),
+            (
+                SoundSettingValue::StepUp(SoundStep::EffectLevel),
+                "PSEFF UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::CenterImage),
+                "PSCEI DOWN",
+            ),
+            (SoundSettingValue::StepUp(SoundStep::CenterGain), "PSCEG UP"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
+        }
+        for value in [
+            SoundSettingValue::EffectLevel(0),
+            SoundSettingValue::EffectLevel(16),
+            SoundSettingValue::CenterImage(11),
+            SoundSettingValue::CenterGain(11),
+            SoundSettingValue::StepUp(SoundStep::SubwooferLevel(0)),
+            SoundSettingValue::StepDown(SoundStep::SubwooferLevel(5)),
+        ] {
+            assert!(
+                matches!(text(value), Err(Error::ValueOutOfRange { .. })),
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

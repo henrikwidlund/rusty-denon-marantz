@@ -136,7 +136,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Query; 117] = [
+static QUERIES: [Query; 120] = [
     both(Core, "SI?"),                  // Select INPUT source
     both(Core, "MV?"),                  // MASTER VOLUME
     both(Core, "MU?"),                  // Mute
@@ -244,6 +244,9 @@ static QUERIES: [Query; 117] = [
     both(Sound, "PSSURLEV ?"),          // Surround level compensation
     both(Sound, "PSDIM ?"),             // Dimension
     both(Sound, "PSCEN ?"),             // Center width
+    both(Sound, "PSEFF ?"),             // Effect
+    both(Sound, "PSCEI ?"),             // Center image
+    marantz(Sound, "PSCEG ?"),          // Center gain
     both(Zones, "SSVCTZMA ?"),          // Volume settings of the main zone
     both(Zones, "SSVCTZ2S ?"),          // Volume settings of zone 2
     both(Zones, "Z2CV?"),               // Channel levels of zone 2
@@ -282,8 +285,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 110);
-        assert_eq!(marantz.len(), 111);
+        assert_eq!(denon.len(), 112);
+        assert_eq!(marantz.len(), 114);
     }
 
     #[test]

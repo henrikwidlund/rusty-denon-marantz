@@ -1113,6 +1113,43 @@ async fn digital_codec_and_favorites_are_sent_and_read() {
 }
 
 #[tokio::test]
+async fn sound_steps_and_the_effect_level_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    sound.lfe_level_up().await.unwrap();
+    sound.center_level_down().await.unwrap();
+    sound.subwoofer_level_up(2).await.unwrap();
+    sound.audio_delay_down().await.unwrap();
+    sound.dialog_control_up().await.unwrap();
+    sound.set_effect_level(10).await.unwrap();
+    let error = sound.subwoofer_level_down(5).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = sound.set_effect_level(0).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 6).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "PSLFE UP",
+            "PSCLV DOWN",
+            "PSSWL2 UP",
+            "PSDELAY DOWN",
+            "PSDIC UP",
+            "PSEFF 10",
+        ]
+    );
+    telnet.send(b"PSEFF 12\rPSEFF ON\r");
+    wait_until("the effect", || {
+        avr.snapshot().device().sound_settings.effect.is_some()
+    })
+    .await;
+    let settings = avr.snapshot().device().sound_settings.clone();
+    assert_eq!(settings.effect_level, Some(12));
+    assert_eq!(settings.effect, Some(true));
+}
+
+#[tokio::test]
 async fn the_factory_reset_needs_the_last_key_once() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;

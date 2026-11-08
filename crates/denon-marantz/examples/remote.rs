@@ -32,6 +32,9 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
+//! effect on or off, effect-level N, center-image N, center-gain N, step SETTING-up or SETTING-down
+//! (audio-delay, delay-time, dialog-control, dimension, center-width, lfe, bass-sync, auro-strength,
+//! center-level, effect-level, center-image, center-gain, subwoofer1 to subwoofer4, for example lfe-up),
 //! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
 //! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
 //! contrast-up, contrast-down, brightness-up, brightness-down, saturation-up, saturation-down,
@@ -71,9 +74,10 @@ use denon_marantz_proto::{
     AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, DialogEnhancerLevel,
     DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
     HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction,
-    PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep, SpeakerPreset,
-    ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Volume,
-    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep,
+    SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode,
+    VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -193,7 +197,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 24] = [
+const SOUND_COMMANDS: [&str; 29] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -218,6 +222,11 @@ const SOUND_COMMANDS: [&str; 24] = [
     "front-speakers",
     "panorama",
     "speaker-preset",
+    "effect",
+    "effect-level",
+    "center-image",
+    "center-gain",
+    "step",
 ];
 
 /// The other commands, sent with `Avr::send`.
@@ -376,9 +385,79 @@ async fn sound_command(
                 .map_err(|_| "tactile-lpf is a number of Hz")?;
             avr.sound().set_tactile_low_pass(hz).await?;
         }
+        other => return sound_extra_command(avr, other, argument).await,
+    }
+    Ok(())
+}
+
+/// The sound commands that do not fit in `sound_command`: effect, center image and gain, steps.
+async fn sound_extra_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let small = |text: &str| -> Result<u8, String> {
+        text.parse()
+            .map_err(|_| "a whole number is needed".to_owned())
+    };
+    match name {
+        "effect" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("effect").into()),
+            };
+            avr.sound().set_effect(on).await?;
+        }
+        "effect-level" => avr.sound().set_effect_level(small(need()?)?).await?,
+        "center-image" => avr.sound().set_center_image(small(need()?)?).await?,
+        "center-gain" => avr.sound().set_center_gain(small(need()?)?).await?,
+        "step" => {
+            let (step, up) = parse_step(need()?)?;
+            let value = if up {
+                SoundSettingValue::StepUp(step)
+            } else {
+                SoundSettingValue::StepDown(step)
+            };
+            avr.send(Zone::Main, Command::SetSoundSetting(value))
+                .await?;
+        }
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
+}
+
+/// A step like `lfe-up` or `subwoofer2-down`: the setting, and up (`true`) or down.
+fn parse_step(text: &str) -> Result<(SoundStep, bool), String> {
+    let (setting, direction) = text
+        .rsplit_once('-')
+        .ok_or("a step is SETTING-up or SETTING-down")?;
+    let up = match direction {
+        "up" => true,
+        "down" => false,
+        _ => return Err("a step is SETTING-up or SETTING-down".into()),
+    };
+    let step = match setting {
+        "audio-delay" => SoundStep::AudioDelay,
+        "delay-time" => SoundStep::DelayTime,
+        "dialog-control" => SoundStep::DialogControl,
+        "dimension" => SoundStep::Dimension,
+        "center-width" => SoundStep::CenterWidth,
+        "lfe" => SoundStep::LfeLevel,
+        "bass-sync" => SoundStep::BassSync,
+        "auro-strength" => SoundStep::AuroMaticStrength,
+        "center-level" => SoundStep::CenterLevel,
+        "effect-level" => SoundStep::EffectLevel,
+        "center-image" => SoundStep::CenterImage,
+        "center-gain" => SoundStep::CenterGain,
+        other => match other.strip_prefix("subwoofer").map(str::parse) {
+            Some(Ok(number)) => SoundStep::SubwooferLevel(number),
+            _ => return Err(format!("unknown setting {other}")),
+        },
+    };
+    Ok((step, up))
 }
 
 /// Runs a command with the methods of the device control.
