@@ -20,5 +20,9 @@ proptest.workspace = true
 name = "telnet"
 harness = false
 
+[[bench]]
+name = "xml"
+harness = false
+
 [lints]
 workspace = true
