@@ -212,7 +212,6 @@ static QUERIES: [Query; 121] = [
     both(Sound, "PSTRE ?"),             // TREBLE
     both(Sound, "PSCNTAMT ?"),          // Containment Amount
     both(Sound, "PSMULTEQ: ?"),         // MultEQ
-    both(Sound, "CV?"),                 // Channel Volume
     both(Sound, "PSIMAX ?"),            // IMAX
     both(Sound, "PSIMAXHPF ?"),         // IMAX High Pass Filter
     both(Sound, "PSIMAXLPF ?"),         // IMAX Low Pass Filter
@@ -248,16 +247,18 @@ static QUERIES: [Query; 121] = [
     both(Sound, "PSEFF ?"),             // Effect
     both(Sound, "PSCEI ?"),             // Center image
     marantz(Sound, "PSCEG ?"),          // Center gain
-    both(Zones, "SSVCTZMA ?"),          // Volume settings of the main zone
-    both(Zones, "SSVCTZ2S ?"),          // Volume settings of zone 2
-    both(Zones, "Z2CV?"),               // Channel levels of zone 2
-    both(Zones, "Z3CV?"),               // Channel levels of zone 3
-    both(Zones, "SSVCTZ3S ?"),          // Volume settings of zone 3
-    both(Picture, "PVCN ?"),            // Contrast
-    both(Picture, "PVBR ?"),            // Brightness
-    both(Picture, "PVST ?"),            // Saturation
-    both(Picture, "PVDNR ?"),           // Noise Reduction
-    both(Picture, "PVENH ?"),           // Enhancer
+    // The A10H and its app never get an answer to this query. It pushes the list after an input change.
+    both(Sound, "CV?"),        // Channel Volume
+    both(Zones, "SSVCTZMA ?"), // Volume settings of the main zone
+    both(Zones, "SSVCTZ2S ?"), // Volume settings of zone 2
+    both(Zones, "Z2CV?"),      // Channel levels of zone 2
+    both(Zones, "Z3CV?"),      // Channel levels of zone 3
+    both(Zones, "SSVCTZ3S ?"), // Volume settings of zone 3
+    both(Picture, "PVCN ?"),   // Contrast
+    both(Picture, "PVBR ?"),   // Brightness
+    both(Picture, "PVST ?"),   // Saturation
+    both(Picture, "PVDNR ?"),  // Noise Reduction
+    both(Picture, "PVENH ?"),  // Enhancer
 ];
 
 #[cfg(test)]
