@@ -18,6 +18,7 @@ quick-xml = "0.42"
 proptest = "1"
 socket2 = "0.6"
 allocation-counter = "0.8"
+criterion = { version = "0.8", default-features = false }
 bytes = "1"
 http = "1"
 if-addrs = "0.15"
