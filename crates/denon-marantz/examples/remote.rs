@@ -19,6 +19,7 @@
 //! - `--batch`: no command on the command line. The example keeps one connection and reads
 //!   lines from the standard input, each `[--zone 2|3] COMMAND [ARGUMENT]`. After each line it prints
 //!   `done N`. With `--groups ""` the connect asks for no state, so a test starts at once.
+//! - In the batch mode, `refresh GROUP` asks for a group of values (for example `refresh core`).
 //! - `--groups LIST`: the query groups that the connect fetches, in this order,
 //!   for example `core,signal`. The groups are core, names, toggles, signal,
 //!   device, sound and zones. The default is all of them.
@@ -766,7 +767,14 @@ async fn run(
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let typed = |commands: &[&str]| commands.contains(&name);
-    if typed(&SOUND_COMMANDS) {
+    if name == "refresh" {
+        // Asks for one group of values. Repeated values show again.
+        let wanted = groups(argument.ok_or("refresh needs a group")?)?;
+        for group in wanted {
+            avr.telnet_refresh_group(group).await?;
+        }
+        Ok(())
+    } else if typed(&SOUND_COMMANDS) {
         sound_command(avr, name, argument).await
     } else if typed(&DEVICE_COMMANDS) {
         device_command(avr, name, argument).await
@@ -787,7 +795,8 @@ async fn run(
 /// Refuses a name that is not a command, without a connection.
 fn check_known(name: &str, argument: Option<&str>) -> Result<(), String> {
     let typed = |commands: &[&str]| commands.contains(&name);
-    if typed(&ZONE_COMMANDS)
+    if name == "refresh"
+        || typed(&ZONE_COMMANDS)
         || typed(&TONE_COMMANDS)
         || typed(&SOUND_COMMANDS)
         || typed(&VIDEO_COMMANDS)
