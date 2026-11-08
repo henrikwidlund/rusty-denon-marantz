@@ -1,6 +1,6 @@
 //! Queries that ask a receiver for its state.
 
-use QueryGroup::{Core, Device, Names, Picture, Signal, Sound, Toggles, Zones};
+use QueryGroup::{Core, Device, Names, Picture, Signal, Sound, Speakers, Toggles, Zones};
 
 use crate::brand::Brand;
 
@@ -71,6 +71,7 @@ labeled_enum! {
         Sound = "Sound";
         Zones = "Zones";
         Picture = "Picture";
+        Speakers = "Speakers";
     }
 }
 
@@ -101,6 +102,7 @@ impl QueryGroup {
         Self::Sound,
         Self::Zones,
         Self::Picture,
+        Self::Speakers,
     ];
 }
 
@@ -136,7 +138,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Query; 121] = [
+static QUERIES: [Query; 125] = [
     both(Core, "SI?"),                  // Select INPUT source
     both(Core, "MV?"),                  // MASTER VOLUME
     both(Core, "MU?"),                  // Mute
@@ -245,20 +247,24 @@ static QUERIES: [Query; 121] = [
     both(Sound, "PSCEN ?"),             // Center width
     both(Sound, "PSCEW ?"),             // Center width, current receivers
     both(Sound, "PSEFF ?"),             // Effect
+    both(Sound, "SD?"),                 // Audio input mode
     both(Sound, "PSCEI ?"),             // Center image
     marantz(Sound, "PSCEG ?"),          // Center gain
     // The A10H and its app never get an answer to this query. It pushes the list after an input change.
-    both(Sound, "CV?"),        // Channel Volume
-    both(Zones, "SSVCTZMA ?"), // Volume settings of the main zone
-    both(Zones, "SSVCTZ2S ?"), // Volume settings of zone 2
-    both(Zones, "Z2CV?"),      // Channel levels of zone 2
-    both(Zones, "Z3CV?"),      // Channel levels of zone 3
-    both(Zones, "SSVCTZ3S ?"), // Volume settings of zone 3
-    both(Picture, "PVCN ?"),   // Contrast
-    both(Picture, "PVBR ?"),   // Brightness
-    both(Picture, "PVST ?"),   // Saturation
-    both(Picture, "PVDNR ?"),  // Noise Reduction
-    both(Picture, "PVENH ?"),  // Enhancer
+    both(Sound, "CV?"),            // Channel Volume
+    denon(Speakers, "SSSPC ?"),    // Speaker configuration
+    denon(Speakers, "SSCFR ?"),    // Speaker crossovers
+    denon(Speakers, "SSAEQLRS ?"), // Graphic EQ of each speaker group
+    both(Zones, "SSVCTZMA ?"),     // Volume settings of the main zone
+    both(Zones, "SSVCTZ2S ?"),     // Volume settings of zone 2
+    both(Zones, "Z2CV?"),          // Channel levels of zone 2
+    both(Zones, "Z3CV?"),          // Channel levels of zone 3
+    both(Zones, "SSVCTZ3S ?"),     // Volume settings of zone 3
+    both(Picture, "PVCN ?"),       // Contrast
+    both(Picture, "PVBR ?"),       // Brightness
+    both(Picture, "PVST ?"),       // Saturation
+    both(Picture, "PVDNR ?"),      // Noise Reduction
+    both(Picture, "PVENH ?"),      // Enhancer
 ];
 
 #[cfg(test)]
@@ -277,6 +283,17 @@ mod tests {
     }
 
     #[test]
+    fn speaker_queries_are_last_and_for_denon() {
+        let denon: Vec<_> = state_queries(Brand::Denon).collect();
+        let marantz: Vec<_> = state_queries(Brand::Marantz).collect();
+        let tail: Vec<_> = denon[denon.len() - 3..].to_vec();
+        assert_eq!(tail, ["SSSPC ?", "SSCFR ?", "SSAEQLRS ?"]);
+        assert!(!marantz.contains(&"SSAEQLRS ?"));
+        assert!(denon.contains(&"SD?") && marantz.contains(&"SD?"));
+        assert_eq!(QueryGroup::DEFAULT_ORDER.last(), Some(&Speakers));
+    }
+
+    #[test]
     fn brand_specific_queries() {
         let denon: Vec<_> = state_queries(Brand::Denon).collect();
         let marantz: Vec<_> = state_queries(Brand::Marantz).collect();
@@ -287,8 +304,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 113);
-        assert_eq!(marantz.len(), 115);
+        assert_eq!(denon.len(), 117);
+        assert_eq!(marantz.len(), 116);
     }
 
     #[test]

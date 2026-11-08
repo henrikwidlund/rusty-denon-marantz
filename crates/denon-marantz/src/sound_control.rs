@@ -264,8 +264,8 @@ impl<'a> SoundControl<'a> {
     }
 
     /// Sets the audio input mode: automatic, or a forced HDMI, digital or
-    /// analog input. The receiver does not report the mode back, so the state
-    /// does not have it.
+    /// analog input. The receiver reports the mode as an event, and the state
+    /// keeps it in `input_mode`.
     ///
     /// # Errors
     ///

@@ -16,14 +16,15 @@ use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
+use crate::speaker_setup::SpeakerSetup;
 use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
-    DimmerMode, DiracFilter, DynamicVolume, EcoMode, Illumination, MultiEq, MuteLevel, PanelLock,
-    Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel, Trigger, Volume,
-    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    DimmerMode, DiracFilter, DynamicVolume, EcoMode, Illumination, InputMode, MultiEq, MuteLevel,
+    PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel,
+    Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -46,6 +47,10 @@ pub enum Setting {
     ChannelLevels,
     /// The level of a channel of the main zone, the `CV` events.
     ChannelVolumes,
+    /// The audio input mode of the main zone.
+    InputMode,
+    /// Speaker crossovers, configuration or graphic EQ.
+    SpeakerSetup,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -281,6 +286,10 @@ pub struct DeviceState {
     /// Level of each channel of the main zone that the receiver has reported
     /// as `CV` events, in the order of the report.
     pub channel_volumes: Vec<(Channel, ChannelLevel)>,
+    /// The audio input mode of the main zone, the `SD` events.
+    pub input_mode: Option<InputMode>,
+    /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
+    pub speaker_setup: SpeakerSetup,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -412,6 +421,10 @@ impl State {
             Event::Slp => {
                 let value = Sleep::from_telnet(parameter)?;
                 self.zone_change(zone?, Setting::Sleep, |z| set(&mut z.sleep, Some(value)))
+            }
+            Event::Sd if zone == Some(Zone::Main) => {
+                let mode = InputMode::from_code(parameter.trim())?;
+                self.device_change(Setting::InputMode, |d| set(&mut d.input_mode, Some(mode)))
             }
             Event::Ss if zone == Some(Zone::Main) => {
                 let Some(value) = parameter.strip_prefix("VCTZMALIM") else {
@@ -973,6 +986,12 @@ impl State {
         }
         if parameter.starts_with("TTR") {
             return self.apply_tactile_transducer(parameter);
+        }
+        if let Some(changed) = self.device.speaker_setup.apply(parameter) {
+            return changed.then_some(Change {
+                zone: None,
+                setting: Setting::SpeakerSetup,
+            });
         }
         self.signal_change(|signal| signal.apply_ss(parameter))
     }
@@ -2295,6 +2314,35 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state.device().speaker_levels.len(), 2);
+    }
+
+    #[test]
+    fn input_mode_follows_events() {
+        let mut state = State::new(false);
+        let mode = || change(None, Setting::InputMode);
+        assert_eq!(apply(&mut state, "SDHDMI"), mode());
+        assert_eq!(apply(&mut state, "SDHDMI"), None);
+        assert_eq!(state.device().input_mode, Some(InputMode::Hdmi));
+        assert_eq!(apply(&mut state, "SDAUTO"), mode());
+        assert_eq!(state.device().input_mode, Some(InputMode::Auto));
+        assert_eq!(apply(&mut state, "SDXYZ"), None);
+        assert_eq!(state.device().input_mode, Some(InputMode::Auto));
+    }
+
+    #[test]
+    fn speaker_setup_follows_events() {
+        let mut state = State::new(false);
+        let setup = || change(None, Setting::SpeakerSetup);
+        assert_eq!(apply(&mut state, "SSCFRFRO FUL"), setup());
+        assert_eq!(apply(&mut state, "SSCFRFRO FUL"), None);
+        assert_eq!(apply(&mut state, "SSCFR END"), None);
+        assert_eq!(apply(&mut state, "SSSPCSBK 2SP"), setup());
+        assert_eq!(apply(&mut state, "SSAEQLRSFRO 500:500"), setup());
+        assert_eq!(apply(&mut state, "SSAEQLRSEND"), None);
+        let speakers = &state.device().speaker_setup;
+        assert_eq!(speakers.crossovers.len(), 1);
+        assert_eq!(speakers.config["SBK-SP"], "2SP");
+        assert_eq!(speakers.graphic_eq["FRO"], "500:500");
     }
 
     #[test]
