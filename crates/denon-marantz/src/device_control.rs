@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    BluetoothOutputMode, DeviceSettingValue, DimmerMode, EcoMode, Illumination, PanelLock, Zone,
+    BluetoothOutputMode, DeviceSettingValue, DigitalCodec, DimmerMode, EcoMode, Illumination,
+    PanelLock, Zone,
 };
 use tokio::time::Instant;
 
@@ -161,6 +162,38 @@ impl<'a> DeviceControl<'a> {
     /// receiver. See also [`DeviceControl`].
     pub async fn illumination_next(&self) -> Result<(), Error> {
         self.send(DeviceSettingValue::IlluminationNext).await
+    }
+
+    /// Sets the digital input mode. The text is from the integration of the
+    /// remote. The protocol spec has none.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn set_digital_codec(&self, mode: DigitalCodec) -> Result<(), Error> {
+        self.send(DeviceSettingValue::DigitalCodec(mode)).await
+    }
+
+    /// Calls favorite 1 to 3. The text is from the integration of the remote.
+    /// The protocol spec has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number that
+    /// is not from 1 to 3. See also [`DeviceControl`].
+    pub async fn select_favorite(&self, number: u8) -> Result<(), Error> {
+        self.send(DeviceSettingValue::Favorite(number)).await
+    }
+
+    /// Stores the current settings in favorite 1 to 3. This replaces what the
+    /// favorite had.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number that
+    /// is not from 1 to 3. See also [`DeviceControl`].
+    pub async fn store_favorite(&self, number: u8) -> Result<(), Error> {
+        self.send(DeviceSettingValue::StoreFavorite(number)).await
     }
 
     /// Opens or closes the channel level menu on the screen.

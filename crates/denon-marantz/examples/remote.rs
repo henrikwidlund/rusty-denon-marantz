@@ -32,6 +32,10 @@
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
 //! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
+//! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
+//! contrast-up, contrast-down, brightness-up, brightness-down, saturation-up, saturation-down,
+//! noise-reduction CODE (OFF, LOW, MID, HI), enhancer N, enhancer-up, enhancer-down,
+//! digital-codec CODE (AUTO, PCM, DTS), favorite N, favorite-store N (N is 1 to 3),
 //! bluetooth on or off, bluetooth-output SP or BT, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
 //! illumination-next, quick-select N, quick-select-store N (N is 1 to 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
 //! sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
@@ -59,13 +63,16 @@
 
 use std::time::Duration;
 
-use denon_marantz::{Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, ZoneControl};
+use denon_marantz::{
+    Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, VideoControl, ZoneControl,
+};
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, DialogEnhancerLevel, DimmerMode,
-    DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
-    Illumination, InputMode, MultiEq, MuteLevel, PanelLock, PowerOnVolume, ReferenceLevelOffset,
-    RoomSize, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
-    VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, DialogEnhancerLevel,
+    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
+    HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction,
+    PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep, SpeakerPreset,
+    ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Volume,
+    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -117,7 +124,7 @@ const ZONE_COMMANDS: [&str; 38] = [
 ];
 
 /// Commands that the video control has methods for.
-const VIDEO_COMMANDS: [&str; 7] = [
+const VIDEO_COMMANDS: [&str; 21] = [
     "video-mode",
     "hdmi-output",
     "hdmi-audio",
@@ -125,10 +132,24 @@ const VIDEO_COMMANDS: [&str; 7] = [
     "vertical-stretch",
     "resolution",
     "upscaler",
+    "picture-mode",
+    "contrast",
+    "brightness",
+    "saturation",
+    "noise-reduction",
+    "enhancer",
+    "contrast-up",
+    "contrast-down",
+    "brightness-up",
+    "brightness-down",
+    "saturation-up",
+    "saturation-down",
+    "enhancer-up",
+    "enhancer-down",
 ];
 
 /// Commands that the device control has methods for.
-const DEVICE_COMMANDS: [&str; 12] = [
+const DEVICE_COMMANDS: [&str; 15] = [
     "dimmer",
     "dimmer-next",
     "eco",
@@ -138,6 +159,9 @@ const DEVICE_COMMANDS: [&str; 12] = [
     "bluetooth-output",
     "illumination",
     "illumination-next",
+    "digital-codec",
+    "favorite",
+    "favorite-store",
     "channel-level-menu",
     "show-status",
     "restart-network",
@@ -403,6 +427,19 @@ async fn device_command(
             device.set_illumination(mode).await?;
         }
         "illumination-next" => device.illumination_next().await?,
+        "digital-codec" => {
+            let mode =
+                DigitalCodec::from_code(need()?).ok_or("digital codec is AUTO, PCM or DTS")?;
+            device.set_digital_codec(mode).await?;
+        }
+        "favorite" => {
+            let number = need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            device.select_favorite(number).await?;
+        }
+        "favorite-store" => {
+            let number = need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            device.store_favorite(number).await?;
+        }
         "channel-level-menu" => device.channel_level_menu().await?,
         "show-status" => device.show_status().await?,
         "restart-network" => device.restart_network().await?,
@@ -488,7 +525,7 @@ async fn video_command(
             let upscaler = HdmiUpscaler::from_code(need()?).ok_or_else(|| unknown("upscaler"))?;
             video.set_hdmi_upscaler(upscaler).await?;
         }
-        other => return Err(format!("unknown command {other}").into()),
+        other => return picture_command(&video, other, argument).await,
     }
     Ok(())
 }
@@ -528,6 +565,48 @@ async fn zone_command(
         }
         "marantz-code" => zone.press_marantz_code(need()?).await?,
         other => return zone_setting_command(zone, other, argument).await,
+    }
+    Ok(())
+}
+
+/// Runs a command with the picture methods of the video control.
+async fn picture_command(
+    video: &VideoControl<'_>,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let whole = || -> Result<i8, String> {
+        need()?
+            .parse()
+            .map_err(|_| format!("{name} needs a whole number"))
+    };
+    match name {
+        "picture-mode" => {
+            let mode = PictureMode::from_telnet(need()?).ok_or("picture mode is not known")?;
+            video.set_picture_mode(mode).await?;
+        }
+        "contrast" => video.set_contrast(whole()?).await?,
+        "brightness" => video.set_brightness(whole()?).await?,
+        "saturation" => video.set_saturation(whole()?).await?,
+        "noise-reduction" => {
+            let level = NoiseReduction::from_code(need()?)
+                .ok_or("noise reduction is OFF, LOW, MID or HI")?;
+            video.set_noise_reduction(level).await?;
+        }
+        "enhancer" => {
+            let level = need()?.parse().map_err(|_| "enhancer is 0 to 12")?;
+            video.set_enhancer(level).await?;
+        }
+        "contrast-up" => video.contrast_up().await?,
+        "contrast-down" => video.contrast_down().await?,
+        "brightness-up" => video.brightness_up().await?,
+        "brightness-down" => video.brightness_down().await?,
+        "saturation-up" => video.saturation_up().await?,
+        "saturation-down" => video.saturation_down().await?,
+        "enhancer-up" => video.enhancer_up().await?,
+        "enhancer-down" => video.enhancer_down().await?,
+        other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
 }

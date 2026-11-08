@@ -145,6 +145,36 @@ code_enum! {
 }
 
 code_enum! {
+    /// Noise reduction of the picture.
+    pub enum NoiseReduction {
+        Off = "OFF", "Off";
+        Low = "LOW", "Low";
+        Mid = "MID", "Middle";
+        High = "HI", "High";
+    }
+}
+
+impl PictureMode {
+    /// Code for the telnet command and event. The code of `Custom` is `CTM`
+    /// in the protocol spec.
+    #[must_use]
+    pub const fn telnet_code(self) -> &'static str {
+        self.code()
+    }
+
+    /// Parses the telnet code of an event. The code `CSTM` of other sources is
+    /// the custom mode too.
+    #[must_use]
+    pub fn from_telnet(code: &str) -> Option<Self> {
+        if code == "CSTM" {
+            Some(Self::Custom)
+        } else {
+            Self::from_code(code)
+        }
+    }
+}
+
+code_enum! {
     /// Dirac Live filter slot.
     pub enum DiracFilter {
         Off = "OFF", "Off";
@@ -227,7 +257,7 @@ code_enum! {
     pub enum PictureMode {
         Off = "OFF", "Off";
         Brilliant = "BRL", "Brilliant";
-        Custom = "CSTM", "Custom";
+        Custom = "CTM", "Custom";
         Game = "GAM", "Game";
         IsfDay = "DAY", "ISF Day";
         IsfNight = "NGT", "ISF Night";
@@ -520,6 +550,7 @@ mod tests {
             Illumination,
             InputMode,
             Mdax,
+            NoiseReduction,
             PictureMode,
             PixelDepth,
             Power,

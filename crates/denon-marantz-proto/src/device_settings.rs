@@ -4,7 +4,9 @@ use core::fmt::Write as _;
 
 use crate::brand::Brand;
 use crate::error::Error;
-use crate::values::{BluetoothOutputMode, DimmerMode, EcoMode, Illumination, PanelLock};
+use crate::values::{
+    BluetoothOutputMode, DigitalCodec, DimmerMode, EcoMode, Illumination, PanelLock,
+};
 
 /// A setting of the whole receiver, with the value to set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +32,14 @@ pub enum DeviceSettingValue {
     /// Goes to the next brightness of the illumination: auto, bright, dim,
     /// dark, off. Marantz receivers only.
     IlluminationNext,
+    /// Sets the digital input mode. The text is from the integration of the
+    /// remote, the protocol spec has none.
+    DigitalCodec(DigitalCodec),
+    /// Calls favorite 1 to 3. The text is from the integration of the remote,
+    /// the protocol spec has none.
+    Favorite(u8),
+    /// Stores the current settings in favorite 1 to 3.
+    StoreFavorite(u8),
     /// Opens or closes the channel level menu on the screen.
     ChannelLevelMenu,
     /// Shows the status of the receiver on the screen, like the status button.
@@ -58,6 +68,11 @@ impl DeviceSettingValue {
         if wrong_brand {
             return Err(Error::UnsupportedKey);
         }
+        if let Self::Favorite(number) | Self::StoreFavorite(number) = self
+            && !(1..=3).contains(&number)
+        {
+            return Err(Error::ValueOutOfRange { what: "favorite" });
+        }
         // Writing to a `String` cannot fail.
         let _ = match self {
             Self::Dimmer(mode) => write!(out, "DIM {}", mode.telnet_code()),
@@ -71,6 +86,9 @@ impl DeviceSettingValue {
             Self::BluetoothOutput(mode) => write!(out, "BTTX {}", mode.code()),
             Self::Illumination(mode) => write!(out, "ILB {}", mode.code()),
             Self::IlluminationNext => write!(out, "ILB SEL"),
+            Self::DigitalCodec(mode) => write!(out, "DC{}", mode.code()),
+            Self::Favorite(number) => write!(out, "ZMFAVORITE{number}"),
+            Self::StoreFavorite(number) => write!(out, "ZMFAVORITE{number} MEMORY"),
             Self::ChannelLevelMenu => write!(out, "MNCHL"),
             Self::Status => write!(out, "RCSHP0230030"),
             Self::RestartNetwork => write!(out, "NSRBT"),
@@ -123,6 +141,13 @@ mod tests {
                 DeviceSettingValue::BluetoothOutput(BluetoothOutputMode::BluetoothOnly),
                 "BTTX BT",
             ),
+            (DeviceSettingValue::DigitalCodec(DigitalCodec::Pcm), "DCPCM"),
+            (
+                DeviceSettingValue::DigitalCodec(DigitalCodec::Auto),
+                "DCAUTO",
+            ),
+            (DeviceSettingValue::Favorite(2), "ZMFAVORITE2"),
+            (DeviceSettingValue::StoreFavorite(3), "ZMFAVORITE3 MEMORY"),
             (DeviceSettingValue::ChannelLevelMenu, "MNCHL"),
             (DeviceSettingValue::Status, "RCSHP0230030"),
             (DeviceSettingValue::RestartNetwork, "NSRBT"),
@@ -132,6 +157,23 @@ mod tests {
             let mut out = String::new();
             value.write(Brand::Denon, &mut out).unwrap();
             assert_eq!(out, expected, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn a_favorite_is_from_1_to_3() {
+        for number in [0, 4] {
+            for value in [
+                DeviceSettingValue::Favorite(number),
+                DeviceSettingValue::StoreFavorite(number),
+            ] {
+                let mut out = String::new();
+                assert_eq!(
+                    value.write(Brand::Denon, &mut out),
+                    Err(Error::ValueOutOfRange { what: "favorite" })
+                );
+                assert_eq!(out, "");
+            }
         }
     }
 

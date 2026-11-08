@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 
 use crate::appcommand::Field;
+use crate::picture::PictureSettings;
 use crate::signal::SignalState;
 use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
@@ -19,9 +20,9 @@ use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
 use crate::{
-    AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DimmerMode,
-    DiracFilter, DynamicVolume, EcoMode, Illumination, MultiEq, MuteLevel, PanelLock, Power,
-    PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel, Trigger, Volume,
+    AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
+    DimmerMode, DiracFilter, DynamicVolume, EcoMode, Illumination, MultiEq, MuteLevel, PanelLock,
+    Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel, Trigger, Volume,
     VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
@@ -117,6 +118,10 @@ pub enum Setting {
     Triggers,
     /// The Bluetooth transmitter or its output mode.
     Bluetooth,
+    /// The digital input mode of the receiver.
+    DigitalCodec,
+    /// A picture setting such as the picture mode or the contrast.
+    PictureSettings,
     /// The illumination of a Marantz receiver.
     Illumination,
     /// The quick select (smart select on Marantz) of a zone.
@@ -251,6 +256,11 @@ pub struct DeviceState {
     pub remote_lock: Option<bool>,
     /// What the panel lock locks. Telnet reports it, also when it changes.
     pub panel_lock: Option<PanelLock>,
+    /// The digital input mode. Telnet reports it.
+    pub digital_codec: Option<DigitalCodec>,
+    /// The picture settings, for example the picture mode. Telnet reports
+    /// them on older receivers.
+    pub picture_settings: PictureSettings,
     /// The Bluetooth transmitter is on. Telnet reports it.
     pub bluetooth_transmitter: Option<bool>,
     /// Where the sound goes when the Bluetooth transmitter is on. Telnet
@@ -425,13 +435,7 @@ impl State {
             }
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
-            Event::Tr => self.apply_trigger(parameter),
-            Event::Bt => self.apply_bluetooth(parameter),
-            Event::Ilb => self.apply_illumination(parameter),
-            Event::Sp => self.apply_speaker_preset(parameter),
-            Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
-            Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
-            Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
+            event if event.is_device_report() => self.apply_device_report(event, parameter),
             Event::Vs if zone == Some(Zone::Main) => self.apply_video_setting(parameter),
             Event::Ps if matches!(zone, Some(Zone::Zone2 | Zone::Zone3)) => {
                 self.apply_zone_tone(zone?, parameter)
@@ -661,6 +665,41 @@ impl State {
             .filter(|n| *n <= 5)?;
         self.zone_change(zone, Setting::QuickSelect, |z| {
             set(&mut z.quick_select, Some(number))
+        })
+    }
+
+    /// Applies the events about settings of the whole receiver: triggers,
+    /// Bluetooth, picture, digital input, illumination, speaker preset and
+    /// tuner.
+    fn apply_device_report(&mut self, event: Event, parameter: &str) -> Option<Change> {
+        match event {
+            Event::Tr => self.apply_trigger(parameter),
+            Event::Bt => self.apply_bluetooth(parameter),
+            Event::Pv => self.apply_picture_setting(parameter),
+            Event::Dc => self.apply_digital_codec(parameter),
+            Event::Ilb => self.apply_illumination(parameter),
+            Event::Sp => self.apply_speaker_preset(parameter),
+            Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
+            Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
+            Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
+            _ => None,
+        }
+    }
+
+    /// Applies a `PV` event, for example `MOV` or `CN 050`.
+    fn apply_picture_setting(&mut self, parameter: &str) -> Option<Change> {
+        let changed = self.device.picture_settings.apply(parameter)?;
+        changed.then_some(Change {
+            zone: None,
+            setting: Setting::PictureSettings,
+        })
+    }
+
+    /// Applies a `DC` event, for example `AUTO`.
+    fn apply_digital_codec(&mut self, parameter: &str) -> Option<Change> {
+        let mode = DigitalCodec::from_code(parameter.trim())?;
+        self.device_change(Setting::DigitalCodec, |d| {
+            set(&mut d.digital_codec, Some(mode))
         })
     }
 
@@ -2071,6 +2110,28 @@ mod tests {
         assert_eq!(apply(&mut state, "SPPR 2"), changed());
         assert_eq!(state.device().speaker_preset, Some(SpeakerPreset::Two));
         for line in ["SPPR 3", "SPPR ?", "SPXX 1"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn picture_settings_and_the_digital_codec_follow_events() {
+        let mut state = State::new(false);
+        let picture = || change(None, Setting::PictureSettings);
+        assert_eq!(apply(&mut state, "PVMOV"), picture());
+        assert_eq!(apply(&mut state, "PVMOV"), None);
+        assert_eq!(apply(&mut state, "PVCN 060"), picture());
+        assert_eq!(apply(&mut state, "PVENH 03"), picture());
+        let settings = &state.device().picture_settings;
+        assert_eq!(settings.mode, Some(crate::PictureMode::Movie));
+        assert_eq!(settings.contrast, Some(10));
+        assert_eq!(settings.enhancer, Some(3));
+        assert_eq!(
+            apply(&mut state, "DCPCM"),
+            change(None, Setting::DigitalCodec)
+        );
+        assert_eq!(state.device().digital_codec, Some(DigitalCodec::Pcm));
+        for line in ["PV?", "PVXYZ", "DCXXX", "DC?"] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
     }

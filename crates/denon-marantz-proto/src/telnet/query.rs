@@ -1,6 +1,6 @@
 //! Queries that ask a receiver for its state.
 
-use QueryGroup::{Core, Device, Names, Signal, Sound, Toggles, Zones};
+use QueryGroup::{Core, Device, Names, Picture, Signal, Sound, Toggles, Zones};
 
 use crate::brand::Brand;
 
@@ -70,6 +70,7 @@ labeled_enum! {
         Device = "Device";
         Sound = "Sound";
         Zones = "Zones";
+        Picture = "Picture";
     }
 }
 
@@ -89,6 +90,8 @@ impl QueryGroup {
     ///    picture settings.
     /// 6. [`Sound`](Self::Sound): the sound settings and levels.
     /// 7. [`Zones`](Self::Zones): the volume settings and levels of the zones.
+    /// 8. [`Picture`](Self::Picture): the picture mode and the picture
+    ///    adjustments. Only older receivers answer these.
     pub const DEFAULT_ORDER: &'static [Self] = &[
         Self::Core,
         Self::Names,
@@ -97,6 +100,7 @@ impl QueryGroup {
         Self::Device,
         Self::Sound,
         Self::Zones,
+        Self::Picture,
     ];
 }
 
@@ -132,7 +136,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Query; 112] = [
+static QUERIES: [Query; 117] = [
     both(Core, "SI?"),                  // Select INPUT source
     both(Core, "MV?"),                  // MASTER VOLUME
     both(Core, "MU?"),                  // Mute
@@ -202,7 +206,7 @@ static QUERIES: [Query; 112] = [
     both(Sound, "PSREFLEV ?"),          // Reference Level
     both(Sound, "PSDYNVOL ?"),          // Dynamic Vol.
     both(Device, "SPPR ?"),             // Speaker Preset
-    both(Device, "PV?"),                // Picture Mode
+    both(Picture, "PV?"),               // Picture Mode
     both(Device, "DC?"),                // Digital Codec
     both(Sound, "PSBAS ?"),             // BASS
     both(Sound, "PSTRE ?"),             // TREBLE
@@ -245,6 +249,11 @@ static QUERIES: [Query; 112] = [
     both(Zones, "Z2CV?"),               // Channel levels of zone 2
     both(Zones, "Z3CV?"),               // Channel levels of zone 3
     both(Zones, "SSVCTZ3S ?"),          // Volume settings of zone 3
+    both(Picture, "PVCN ?"),            // Contrast
+    both(Picture, "PVBR ?"),            // Brightness
+    both(Picture, "PVST ?"),            // Saturation
+    both(Picture, "PVDNR ?"),           // Noise Reduction
+    both(Picture, "PVENH ?"),           // Enhancer
 ];
 
 #[cfg(test)]
@@ -273,8 +282,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 105);
-        assert_eq!(marantz.len(), 106);
+        assert_eq!(denon.len(), 110);
+        assert_eq!(marantz.len(), 111);
     }
 
     #[test]

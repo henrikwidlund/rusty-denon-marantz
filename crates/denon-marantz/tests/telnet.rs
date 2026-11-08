@@ -14,12 +14,12 @@ use denon_marantz::{
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, ChannelLevel, DimmerMode, DiracFilter,
-    DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination,
-    InputMode, MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReceiverType,
-    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger,
-    TunerBand, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
-    ZoneHdmiAudio,
+    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, ChannelLevel, DigitalCodec, DimmerMode,
+    DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
+    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, Power,
+    PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep,
+    SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode, Volume, VolumeDisplay,
+    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1047,6 +1047,69 @@ async fn bluetooth_and_quick_select_are_sent_and_read() {
     );
     assert_eq!(state.zone(Zone::Main).quick_select, Some(1));
     assert_eq!(state.zone(Zone::Zone2).quick_select, Some(4));
+}
+
+#[tokio::test]
+async fn picture_settings_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let video = avr.video();
+    video.set_picture_mode(PictureMode::Custom).await.unwrap();
+    video.set_contrast(-5).await.unwrap();
+    video.brightness_up().await.unwrap();
+    video
+        .set_noise_reduction(NoiseReduction::Mid)
+        .await
+        .unwrap();
+    video.set_enhancer(12).await.unwrap();
+    let error = video.set_enhancer(13).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = video.set_contrast(51).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 5).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["PVCTM", "PVCN 045", "PVBR UP", "PVDNR MID", "PVENH 12"]
+    );
+    telnet.send(b"PVMOV\rPVCN 060\rPVDNR HI\r");
+    wait_until("the picture values", || {
+        avr.snapshot()
+            .device()
+            .picture_settings
+            .noise_reduction
+            .is_some()
+    })
+    .await;
+    let picture = avr.snapshot().device().picture_settings;
+    assert_eq!(picture.mode, Some(PictureMode::Movie));
+    assert_eq!(picture.contrast, Some(10));
+    assert_eq!(picture.noise_reduction, Some(NoiseReduction::High));
+}
+
+#[tokio::test]
+async fn digital_codec_and_favorites_are_sent_and_read() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let device = avr.device();
+    device.set_digital_codec(DigitalCodec::Dts).await.unwrap();
+    device.select_favorite(2).await.unwrap();
+    device.store_favorite(3).await.unwrap();
+    let error = device.select_favorite(4).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 3).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["DCDTS", "ZMFAVORITE2", "ZMFAVORITE3 MEMORY"]
+    );
+    telnet.send(b"DCPCM\r");
+    wait_until("the digital codec", || {
+        avr.snapshot().device().digital_codec.is_some()
+    })
+    .await;
+    assert_eq!(
+        avr.snapshot().device().digital_codec,
+        Some(DigitalCodec::Pcm)
+    );
 }
 
 #[tokio::test]

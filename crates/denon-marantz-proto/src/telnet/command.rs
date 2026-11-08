@@ -6,6 +6,7 @@ use crate::brand::Brand;
 use crate::containment::ContainmentAmount;
 use crate::device_settings::DeviceSettingValue;
 use crate::error::Error;
+use crate::picture::PictureSettingValue;
 use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
 use crate::text::reject_control;
@@ -123,6 +124,9 @@ pub enum Command<'a> {
     SetZoneSetting(ZoneSettingValue),
     /// Controls the tuner.
     Tuner(TunerCommand),
+    /// Sets a picture setting, for example the picture mode. Older receivers
+    /// only.
+    SetPictureSetting(PictureSettingValue),
     /// Sets a video setting, for example the video processing mode.
     SetVideoSetting(VideoSettingValue),
     /// Sets a sound setting, for example the room size or the audio delay.
@@ -247,6 +251,7 @@ impl Command<'_> {
             Self::SetVideoSetting(value) => value.write(out),
             Self::SetDeviceSetting(value) => value.write(brand, out)?,
             Self::SetZoneSetting(value) => value.write(brand, zone, out)?,
+            Self::SetPictureSetting(value) => value.write(out)?,
             Self::Tuner(command) => command.write(out)?,
             Self::SetSoundSetting(value) => value.write(out)?,
             Self::RemoteKey(key) => key.write(brand, zone, out)?,

@@ -58,6 +58,25 @@ impl Event {
         })
     }
 
+    /// Returns true if the event reports one setting of the whole receiver that
+    /// the state keeps apart: triggers, Bluetooth, picture, digital input,
+    /// illumination, speaker preset and tuner.
+    #[must_use]
+    pub const fn is_device_report(self) -> bool {
+        matches!(
+            self,
+            Self::Tr
+                | Self::Bt
+                | Self::Pv
+                | Self::Dc
+                | Self::Ilb
+                | Self::Sp
+                | Self::Tf
+                | Self::Tp
+                | Self::Tm
+        )
+    }
+
     /// Returns true if the event is about the whole receiver, not one zone.
     #[must_use]
     pub const fn is_all_zone(self) -> bool {

@@ -10,6 +10,7 @@ mod device_description;
 mod device_info;
 mod device_settings;
 mod error;
+mod picture;
 mod remote_key;
 mod signal;
 mod sleep;
@@ -40,6 +41,7 @@ pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use device_settings::DeviceSettingValue;
 pub use error::Error;
+pub use picture::{PictureSettingValue, PictureSettings};
 pub use remote_key::RemoteKey;
 pub use signal::{ChannelLayout, InOut, SignalState};
 pub use sleep::Sleep;
@@ -55,9 +57,9 @@ pub use values::{
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
     DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
     Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, MultiEq, MuteLevel,
-    PanelLock, PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SpeakerPreset,
-    SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
-    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    NoiseReduction, PanelLock, PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize,
+    SpeakerPreset, SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode,
+    VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
