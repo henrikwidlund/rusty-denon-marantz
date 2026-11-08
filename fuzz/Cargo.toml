@@ -1,0 +1,64 @@
+[package]
+name = "denon-marantz-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+denon-marantz-proto = { path = "../crates/denon-marantz-proto" }
+denon-marantz-discovery = { path = "../crates/denon-marantz-discovery" }
+
+[workspace]
+
+[[bin]]
+name = "telnet_stream"
+path = "fuzz_targets/telnet_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "telnet_state"
+path = "fuzz_targets/telnet_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "command_text"
+path = "fuzz_targets/command_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "appcommand_response"
+path = "fuzz_targets/appcommand_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "status_page"
+path = "fuzz_targets/status_page.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "device_xml"
+path = "fuzz_targets/device_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ssdp"
+path = "fuzz_targets/ssdp.rs"
+test = false
+doc = false
+bench = false
