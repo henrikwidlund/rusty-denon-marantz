@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 
 use crate::appcommand::Field;
+use crate::input_pages::{InputAssignment, SourceNames};
 use crate::picture::PictureSettings;
 use crate::signal::SignalState;
 use crate::sound_mode_list::SoundModeList;
@@ -484,6 +485,25 @@ impl State {
             Event::Op => self.apply_option(parameter),
             _ => None,
         }
+    }
+
+    /// Stores the physical inputs of the sources, from the input assign page
+    /// of the web control. They are part of [`DeviceState::sources`].
+    pub fn apply_input_assignments(&mut self, assignments: &[InputAssignment]) -> Option<Change> {
+        self.device
+            .sources
+            .set_assignments(assignments)
+            .then_some(sources_change())
+    }
+
+    /// Stores the default and automatic names of the sources and the longest
+    /// name, from the source names page of the web control. They are part of
+    /// [`DeviceState::sources`].
+    pub fn apply_web_source_names(&mut self, names: &SourceNames) -> Option<Change> {
+        self.device
+            .sources
+            .set_name_details(names)
+            .then_some(sources_change())
     }
 
     /// Stores the speaker distances of the web control page.
@@ -1170,6 +1190,13 @@ fn on_off(text: &str) -> Option<bool> {
 }
 
 /// `1` is on and `0` is off, as in an `AppCommand` answer.
+const fn sources_change() -> Change {
+    Change {
+        zone: None,
+        setting: Setting::Sources,
+    }
+}
+
 const fn speaker_tables_change() -> Change {
     Change {
         zone: None,
@@ -2395,6 +2422,32 @@ mod tests {
         assert_eq!(speakers.crossovers.len(), 1);
         assert_eq!(speakers.config["SBK-SP"], "2SP");
         assert_eq!(speakers.graphic_eq["FRO"], "500:500");
+    }
+
+    #[test]
+    fn source_details_of_the_web_pages_are_part_of_the_sources() {
+        let mut state = State::new(false);
+        apply(&mut state, "SSFUNMPLAY Apple TV");
+        let assignments = InputAssignment::parse(
+            br#"<InputAssign><Source index="5"><Name>Apple TV</Name><HDMI>4</HDMI></Source>
+            <SelectionList><HDMI><List><Item index="4">2</Item></List></HDMI></SelectionList>
+            </InputAssign>"#,
+        )
+        .unwrap();
+        let names = SourceNames::parse(
+            br#"<SourceRename><CharacterMax>16</CharacterMax><Source index="5">
+            <Auto>UDP-203</Auto></Source></SourceRename>"#,
+        )
+        .unwrap();
+        let sources = || change(None, Setting::Sources);
+        assert_eq!(state.apply_input_assignments(&assignments), sources());
+        assert_eq!(state.apply_input_assignments(&assignments), None);
+        assert_eq!(state.apply_web_source_names(&names), sources());
+        assert_eq!(state.apply_web_source_names(&names), None);
+        let source = state.device().sources.get("MPLAY").unwrap();
+        assert_eq!(source.hdmi_input.as_deref(), Some("2"));
+        assert_eq!(source.auto_name.as_deref(), Some("UDP-203"));
+        assert_eq!(source.name.as_deref(), Some("Apple TV"));
     }
 
     #[test]

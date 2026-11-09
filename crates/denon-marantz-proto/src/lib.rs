@@ -10,6 +10,7 @@ mod device_description;
 mod device_info;
 mod device_settings;
 mod error;
+mod input_pages;
 mod picture;
 mod remote_key;
 mod signal;
@@ -43,6 +44,10 @@ pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use device_settings::DeviceSettingValue;
 pub use error::Error;
+pub use input_pages::{
+    INPUT_ASSIGN_PATH, InputAssignment, SOURCE_NAMES_PATH, SourceNameEntry, SourceNames,
+    source_for_index,
+};
 pub use picture::{PictureSettingValue, PictureSettings};
 pub use remote_key::RemoteKey;
 pub use signal::{ChannelLayout, InOut, SignalState};

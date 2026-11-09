@@ -13,7 +13,8 @@ use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
     AJAX_PORT, BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change,
-    DISTANCES_PATH, DeviceDescription, ReceiverType, SpeakerTable, State, Zone,
+    DISTANCES_PATH, DeviceDescription, INPUT_ASSIGN_PATH, InputAssignment, ReceiverType,
+    SOURCE_NAMES_PATH, SourceNames, SpeakerTable, State, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -254,6 +255,35 @@ impl Avr {
             .await?;
         read |= self
             .read_ajax(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
+            .await?;
+        Ok(read)
+    }
+
+    /// Reads the physical input of each source and the names of the sources
+    /// (default, user and automatic) from the web control pages on port 11080.
+    ///
+    /// Telnet has the names that the user gave, but not the others and not the
+    /// inputs. The pages do not send changes: call it again to read them
+    /// again. The result is in
+    /// [`DeviceState::sources`](denon_marantz_proto::DeviceState::sources).
+    ///
+    /// Returns true if at least one page was read. A page that the receiver
+    /// does not have is skipped and is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_source_details(&self) -> Result<bool, Error> {
+        let mut read = false;
+        read |= self
+            .read_ajax(INPUT_ASSIGN_PATH, InputAssignment::parse, |state, list| {
+                state.apply_input_assignments(&list)
+            })
+            .await?;
+        read |= self
+            .read_ajax(SOURCE_NAMES_PATH, SourceNames::parse, |state, names| {
+                state.apply_web_source_names(&names)
+            })
             .await?;
         Ok(read)
     }

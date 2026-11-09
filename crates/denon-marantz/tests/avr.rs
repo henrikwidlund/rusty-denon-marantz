@@ -466,3 +466,67 @@ async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
     }
     assert!(avr.snapshot().device().speaker_tables.distances.is_none());
 }
+
+const INPUT_ASSIGN_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-inputs-assign.xml");
+const SOURCE_NAMES_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-inputs-names.xml");
+
+#[tokio::test]
+async fn source_details_are_read_from_the_web_control_pages() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/inputs/get_config?type=2" => Reply::Body(INPUT_ASSIGN_PAGE.to_vec()),
+        "/ajax/inputs/get_config?type=3" => Reply::Body(SOURCE_NAMES_PAGE.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(avr.update_source_details().await.unwrap());
+    let state = avr.snapshot();
+    let apple = state.device().sources.get("MPLAY").unwrap();
+    assert_eq!(apple.hdmi_input.as_deref(), Some("2"));
+    let bluray = state.device().sources.get("BD").unwrap();
+    assert_eq!(bluray.default_name.as_deref(), Some("Blu-ray"));
+    assert_eq!(bluray.auto_name.as_deref(), Some("UDP-203"));
+    assert_eq!(state.device().sources.max_name_length(), Some(16));
+    // Reading the same pages again changes nothing.
+    let mut changes = avr.changes();
+    assert!(avr.update_source_details().await.unwrap());
+    assert!(changes.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|_| Reply::Status(404)).await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(!avr.update_source_details().await.unwrap());
+    assert!(avr.snapshot().device().sources.get("MPLAY").is_none());
+
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(
+        avr.update_source_details()
+            .await
+            .unwrap_err()
+            .is_unreachable()
+    );
+}

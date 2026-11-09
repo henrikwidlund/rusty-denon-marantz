@@ -1,0 +1,261 @@
+//! Inputs from the web control pages: which physical input each source uses,
+//! and the names of the sources. The values go into the
+//! [`SourceList`](crate::SourceList) of the state.
+//!
+//! The pages are `/ajax/inputs/get_config?type=N` on port 11080. They list
+//! sources by an index. The index is converted to the telnet source name for
+//! the sources that are known. Other sources keep only the index.
+
+use crate::error::Error;
+use crate::speaker_tables::{number, root};
+use crate::xml::Node;
+
+/// Path of the input assign page.
+pub const INPUT_ASSIGN_PATH: &str = "/ajax/inputs/get_config?type=2";
+/// Path of the source names page.
+pub const SOURCE_NAMES_PATH: &str = "/ajax/inputs/get_config?type=3";
+
+/// Most sources of a page that are kept.
+const MAX_SOURCES: usize = 32;
+
+/// Telnet source name of an index of the web control pages.
+#[must_use]
+pub const fn source_for_index(index: u8) -> Option<&'static str> {
+    Some(match index {
+        1 => "SAT/CBL",
+        3 => "BD",
+        4 => "GAME1",
+        5 => "MPLAY",
+        6 => "TV",
+        7 => "AUX1",
+        8 => "AUX2",
+        9 => "CD",
+        10 => "PHONO",
+        11 => "TUNER",
+        13 => "NET",
+        14 => "AUX3",
+        15 => "AUX4",
+        16 => "AUX5",
+        17 => "AUX6",
+        18 => "AUX7",
+        21 => "GAME2",
+        _ => return None,
+    })
+}
+
+/// The physical inputs that a source uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputAssignment {
+    /// Index of the source on the web control pages.
+    pub index: u8,
+    /// Telnet name of the source, if the index is known.
+    pub source: Option<&'static str>,
+    /// Name of the source.
+    pub name: String,
+    /// HDMI input, for example `2`. `None` if no HDMI input is assigned.
+    pub hdmi: Option<String>,
+    /// Digital input, for example `COAX1` or `OPT2`.
+    pub digital: Option<String>,
+    /// Analog input, for example `1`.
+    pub analog: Option<String>,
+    /// Video input, for example `VIDEO1` or `COMP`.
+    pub video: Option<String>,
+}
+
+impl InputAssignment {
+    /// Reads the input assign page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is not valid XML or is an HTML page.
+    pub fn parse(body: &[u8]) -> Result<Vec<Self>, Error> {
+        let node = root(body)?.node();
+        let selection = node.child("SelectionList").map(|list| list.node());
+        // The page gives the number of a list item, the text of the item is
+        // the name of the input.
+        let label = |port: &str, element: &crate::xml::Child<'_>| -> Option<String> {
+            let wanted: u32 = element.node().text()?.trim().parse().ok()?;
+            let list = selection?.child(port)?.node().child("List")?;
+            let item = list.node().children().find(|item| {
+                item.attribute("index")
+                    .and_then(|index| index.trim().parse::<u32>().ok())
+                    == Some(wanted)
+            })?;
+            let text = item.node().text()?;
+            let text = text.trim();
+            (!text.is_empty() && text != "-").then(|| text.to_owned())
+        };
+        let mut assignments = Vec::new();
+        for source in node.children().filter(|c| c.is("Source")) {
+            let Some(index) = source
+                .attribute("index")
+                .and_then(|index| index.trim().parse::<u8>().ok())
+            else {
+                continue;
+            };
+            if assignments.len() == MAX_SOURCES {
+                break;
+            }
+            let content = source.node();
+            let port = |name: &str| content.child(name).and_then(|e| label(name, &e));
+            assignments.push(Self {
+                index,
+                source: source_for_index(index),
+                name: text_of(content, "Name").unwrap_or_default(),
+                hdmi: port("HDMI"),
+                digital: port("Digital"),
+                analog: port("Analog"),
+                video: port("Video"),
+            });
+        }
+        Ok(assignments)
+    }
+}
+
+/// The names of one source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceNameEntry {
+    /// Index of the source on the web control pages.
+    pub index: u8,
+    /// Telnet name of the source, if the index is known.
+    pub source: Option<&'static str>,
+    /// The name of the source when nothing is changed, for example
+    /// `Media Player`.
+    pub default_name: Option<String>,
+    /// The name that the user gave, for example `Apple TV`.
+    pub rename: Option<String>,
+    /// The name that the device on the input reported itself, for example
+    /// `UDP-203`. It can be used as a name by the receiver.
+    pub auto_name: Option<String>,
+}
+
+/// The source names page.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceNames {
+    /// Longest name that the receiver accepts, in characters.
+    pub max_length: Option<u8>,
+    /// The sources that have names on the page.
+    pub entries: Vec<SourceNameEntry>,
+}
+
+impl SourceNames {
+    /// Reads the source names page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is not valid XML or is an HTML page.
+    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+        let node = root(body)?.node();
+        let mut names = Self {
+            max_length: number(node, "CharacterMax"),
+            entries: Vec::new(),
+        };
+        for source in node.children().filter(|c| c.is("Source")) {
+            let Some(index) = source
+                .attribute("index")
+                .and_then(|index| index.trim().parse::<u8>().ok())
+            else {
+                continue;
+            };
+            if names.entries.len() == MAX_SOURCES {
+                break;
+            }
+            let content = source.node();
+            names.entries.push(SourceNameEntry {
+                index,
+                source: source_for_index(index),
+                default_name: text_of(content, "Default"),
+                rename: text_of(content, "Rename"),
+                auto_name: text_of(content, "Auto"),
+            });
+        }
+        Ok(names)
+    }
+}
+
+/// The trimmed text of the child `name`. `None` if it is missing or empty.
+fn text_of(node: Node<'_>, name: &str) -> Option<String> {
+    let text = node.child(name)?.node().text()?;
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ASSIGN: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-inputs-assign.xml");
+    const NAMES: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-inputs-names.xml");
+
+    #[test]
+    fn input_assign_of_the_a10h() {
+        let assignments = InputAssignment::parse(ASSIGN).unwrap();
+        assert_eq!(assignments.len(), 5);
+        let apple = &assignments[0];
+        assert_eq!(apple.index, 5);
+        assert_eq!(apple.source, Some("MPLAY"));
+        assert_eq!(apple.name, "Apple TV");
+        // The page gives list item 4, which is HDMI input 2.
+        assert_eq!(apple.hdmi.as_deref(), Some("2"));
+        assert_eq!(apple.digital, None);
+        assert_eq!(apple.analog, None);
+        assert_eq!(apple.video, None);
+        let hdmi: Vec<_> = assignments.iter().map(|a| a.hdmi.as_deref()).collect();
+        assert_eq!(
+            hdmi,
+            [Some("2"), Some("3"), Some("4"), Some("5"), Some("6")]
+        );
+        assert_eq!(assignments[4].source, Some("AUX2"));
+    }
+
+    #[test]
+    fn source_names_of_the_a10h() {
+        let names = SourceNames::parse(NAMES).unwrap();
+        assert_eq!(names.max_length, Some(16));
+        assert_eq!(names.entries.len(), 5);
+        let bluray = &names.entries[1];
+        assert_eq!(bluray.source, Some("BD"));
+        assert_eq!(bluray.default_name.as_deref(), Some("Blu-ray"));
+        assert_eq!(bluray.rename.as_deref(), Some("Blu-ray Disc"));
+        assert_eq!(bluray.auto_name.as_deref(), Some("UDP-203"));
+    }
+
+    #[test]
+    fn digital_analog_and_video_inputs_have_names() {
+        let xml = br#"<InputAssign><Source index="9"><Name>CD</Name>
+            <HDMI>1</HDMI><Digital>5</Digital><Analog>3</Analog><Video>8</Video></Source>
+            <Source index="99"><Name>X</Name><HDMI>7</HDMI></Source>
+            <Source><Name>No index</Name></Source>
+            <SelectionList><HDMI><List><Item index="1">-</Item></List></HDMI>
+            <Digital><List><Item index="5">COAX1</Item></List></Digital>
+            <Analog><List><Item index="3">1</Item></List></Analog>
+            <Video><List><Item index="8">COMP</Item></List></Video></SelectionList>
+            </InputAssign>"#;
+        let assignments = InputAssignment::parse(xml).unwrap();
+        assert_eq!(assignments.len(), 2);
+        let cd = &assignments[0];
+        assert_eq!(cd.source, Some("CD"));
+        assert_eq!(cd.hdmi, None);
+        assert_eq!(cd.digital.as_deref(), Some("COAX1"));
+        assert_eq!(cd.analog.as_deref(), Some("1"));
+        assert_eq!(cd.video.as_deref(), Some("COMP"));
+        // An unknown source keeps its index, and an item that the list does
+        // not have gives no input.
+        assert_eq!(assignments[1].source, None);
+        assert_eq!(assignments[1].hdmi, None);
+    }
+
+    #[test]
+    fn indexes_and_empty_names() {
+        assert_eq!(source_for_index(1), Some("SAT/CBL"));
+        assert_eq!(source_for_index(21), Some("GAME2"));
+        assert_eq!(source_for_index(2), None);
+        let xml = b"<SourceRename><Source index=\"3\"><Default/><Rename> </Rename></Source></SourceRename>";
+        let names = SourceNames::parse(xml).unwrap();
+        assert_eq!(names.max_length, None);
+        assert_eq!(names.entries[0].default_name, None);
+        assert_eq!(names.entries[0].rename, None);
+        assert!(SourceNames::parse(b"<html/>").is_err());
+        assert!(InputAssignment::parse(b"").is_err());
+    }
+}

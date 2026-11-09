@@ -298,7 +298,7 @@ impl SpeakerTable<SpeakerGroup> {
 }
 
 /// Checks the body and returns the root element.
-fn root(body: &[u8]) -> Result<crate::xml::Child<'_>, Error> {
+pub(crate) fn root(body: &[u8]) -> Result<crate::xml::Child<'_>, Error> {
     check_well_formed(body)?;
     let root = Node::new(body)
         .children()
@@ -311,7 +311,7 @@ fn root(body: &[u8]) -> Result<crate::xml::Child<'_>, Error> {
 }
 
 /// Number in the text of the child `name`.
-fn number<T: std::str::FromStr>(node: Node<'_>, name: &str) -> Option<T> {
+pub(crate) fn number<T: std::str::FromStr>(node: Node<'_>, name: &str) -> Option<T> {
     node.child(name)
         .and_then(|child| child.node().text())
         .and_then(|text| text.trim().parse().ok())

@@ -49,7 +49,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., Dirac must be off), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-tables (reads the distances and crossovers from port 11080),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., Dirac must be off), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-tables (reads the distances and crossovers from port 11080), source-details (reads the physical inputs and the source names from port 11080),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
@@ -197,7 +197,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 34] = [
+const SOUND_COMMANDS: [&str; 35] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -231,6 +231,7 @@ const SOUND_COMMANDS: [&str; 34] = [
     "channel-down",
     "channel-reset",
     "speaker-tables",
+    "source-details",
     "step",
 ];
 
@@ -437,6 +438,11 @@ async fn sound_extra_command(
             avr.sound().channel_volume_down(channel).await?;
         }
         "channel-reset" => avr.sound().reset_channel_volumes().await?,
+        "source-details" => {
+            let read = avr.update_source_details().await?;
+            println!("read from the web control pages: {read}");
+            println!("{:#?}", avr.snapshot().device().sources);
+        }
         "speaker-tables" => {
             let read = avr.update_speaker_tables().await?;
             println!("read from the web control pages: {read}");
