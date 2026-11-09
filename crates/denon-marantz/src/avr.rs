@@ -13,15 +13,18 @@ use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
     AJAX_PORT, BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change,
-    DISTANCES_PATH, DeviceDescription, INPUT_ASSIGN_PATH, InputAssignment, ReceiverType,
-    SOURCE_NAMES_PATH, SourceNames, SpeakerTable, State, Zone,
+    DISTANCES_PATH, DeviceDescription, GroupAvailability, INPUT_ASSIGN_PATH, InputAssignment,
+    ReceiverType, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames,
+    SpeakerTable, State, SystemSettings, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
 #[cfg(feature = "telnet")]
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
-use crate::details::{PageStatus, SkipReason, SourceDetails, SpeakerDetails};
+use crate::details::{
+    PageStatus, SettingsAvailabilityDetails, SkipReason, SourceDetails, SpeakerDetails,
+};
 #[cfg(feature = "telnet")]
 use crate::device_control::{DeviceControl, ResetKeys};
 #[cfg(feature = "telnet")]
@@ -295,6 +298,57 @@ impl Avr {
             })
             .await?;
         Ok(SourceDetails { assignments, names })
+    }
+
+    /// Reads which settings the receiver offers and lets the user change
+    /// right now, from the web control pages on port 11080.
+    ///
+    /// This changes with the sound mode, the signal and the Dirac filter, and
+    /// the pages do not send changes: call it again to read it again. The
+    /// values are in
+    /// [`DeviceState::settings_availability`](denon_marantz_proto::DeviceState::settings_availability).
+    /// It asks for one page for each group in [`SettingsGroup::ALL`].
+    ///
+    /// The result says what happened to each group. A group that the receiver
+    /// does not have or refuses is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_settings_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
+        let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
+        for group in SettingsGroup::ALL {
+            let status = self
+                .read_ajax(
+                    group.path(),
+                    |body| GroupAvailability::parse(group, body),
+                    State::apply_settings_availability,
+                )
+                .await?;
+            pages.push((group, status));
+        }
+        Ok(SettingsAvailabilityDetails { pages })
+    }
+
+    /// Reads the settings that telnet does not report from a web control page
+    /// on port 11080: HDMI control, the menu lock, firmware updates, when the
+    /// network answers and the streaming services.
+    ///
+    /// The page does not send changes: call it again to read it again. The
+    /// values are in
+    /// [`DeviceState::system_settings`](denon_marantz_proto::DeviceState::system_settings).
+    /// A page that the receiver does not have or refuses is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_system_settings(&self) -> Result<PageStatus, Error> {
+        self.read_ajax(
+            SYSTEM_SETTINGS_PATH,
+            SystemSettings::parse,
+            State::apply_system_settings,
+        )
+        .await
     }
 
     /// Returns true if the state shows that a Dirac ART filter is active.

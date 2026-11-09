@@ -10,7 +10,8 @@ use common::{
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
-    AutoStandby, Brand, DimmerMode, EcoMode, Power, ReceiverType, ToneLevel, Volume, Zone,
+    AutoStandby, Availability, Brand, DimmerMode, EcoMode, NetworkControl, Power, ReceiverType,
+    SettingsGroup, ToneLevel, Volume, Zone,
 };
 
 const OLD_STATUS: &[u8] = include_bytes!(
@@ -567,4 +568,130 @@ async fn refused_and_unreadable_pages_are_reported_per_page() {
     assert_eq!(result.channel_levels, PageStatus::Refused(403));
     assert_eq!(result.bass, PageStatus::Read);
     assert!(result.any_read());
+}
+
+#[tokio::test]
+async fn settings_availability_are_read_from_the_web_control_pages() {
+    const GROUPS: [(&str, &[u8]); 7] = [
+        (
+            "/ajax/audio/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-audio.xml"
+            ),
+        ),
+        (
+            "/ajax/video/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-video.xml"
+            ),
+        ),
+        (
+            "/ajax/inputs/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-inputs.xml"
+            ),
+        ),
+        (
+            "/ajax/speakers/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-speakers.xml"
+            ),
+        ),
+        (
+            "/ajax/network/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-network.xml"
+            ),
+        ),
+        (
+            "/ajax/general/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-general.xml"
+            ),
+        ),
+        (
+            "/ajax/option/get_config?type=1",
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-option.xml"
+            ),
+        ),
+    ];
+    let receiver = avr_x_receiver().await;
+    // The video group is missing on this fake receiver.
+    let ajax = Fake::start(|seen| {
+        GROUPS
+            .iter()
+            .filter(|(path, _)| !path.contains("/video/"))
+            .find(|(path, _)| *path == seen.path)
+            .map_or(Reply::Status(404), |(_, body)| Reply::Body(body.to_vec()))
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    let result = avr.update_settings_availability().await.unwrap();
+    assert!(result.any_read());
+    assert_eq!(
+        result.status(SettingsGroup::Speakers),
+        Some(PageStatus::Read)
+    );
+    assert_eq!(
+        result.status(SettingsGroup::Video),
+        Some(PageStatus::NotFound)
+    );
+    let state = avr.snapshot();
+    let crossovers = state
+        .device()
+        .settings_availability
+        .item(SettingsGroup::Speakers, "Crossovers")
+        .unwrap();
+    assert_eq!(crossovers.availability, Availability::Blocked);
+    assert_eq!(crossovers.reason_code, Some(3));
+    assert!(
+        state
+            .device()
+            .settings_availability
+            .group(SettingsGroup::Video)
+            .is_none()
+    );
+    // The same pages again change nothing.
+    let mut changes = avr.changes();
+    assert!(avr.update_settings_availability().await.unwrap().any_read());
+    assert!(changes.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn system_settings_are_read_from_the_web_control_page() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/advanced/get_config?type=3" => Reply::Body(
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-system-settings.xml"
+            )
+            .to_vec(),
+        ),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(
+        avr.update_system_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    let settings = avr.snapshot().device().system_settings;
+    assert_eq!(settings.network_control, Some(NetworkControl::Always));
+    assert_eq!(settings.allow_update, Some(true));
+    assert_eq!(settings.hdmi_control, Some(false));
+    // The same page again changes nothing.
+    let mut changes = avr.changes();
+    avr.update_system_settings().await.unwrap();
+    assert!(changes.try_recv().is_err());
 }

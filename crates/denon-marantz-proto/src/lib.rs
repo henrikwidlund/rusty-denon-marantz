@@ -13,6 +13,7 @@ mod error;
 mod input_pages;
 mod picture;
 mod remote_key;
+mod settings_availability;
 mod signal;
 mod sleep;
 mod sound_mode;
@@ -20,6 +21,7 @@ mod sound_settings;
 mod speaker_setup;
 mod speaker_tables;
 mod state;
+mod system_settings;
 mod text;
 mod tone;
 mod tuner;
@@ -50,6 +52,9 @@ pub use input_pages::{
 };
 pub use picture::{PictureSettingValue, PictureSettings};
 pub use remote_key::RemoteKey;
+pub use settings_availability::{
+    Availability, GroupAvailability, SettingAvailability, SettingsAvailability, SettingsGroup,
+};
 pub use signal::{ChannelLayout, InOut, SignalState};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
@@ -62,6 +67,7 @@ pub use speaker_tables::{
     DistanceUnit, LFE_DISTRIBUTION_OFF, SpeakerTable, TableEntry,
 };
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
+pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};
 pub use tone::ToneLevel;
 pub use tuner::{TUNER_QUERIES, TunerCommand, TunerFrequency, TunerState};
 pub use values::{

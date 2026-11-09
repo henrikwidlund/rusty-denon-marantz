@@ -1,5 +1,7 @@
 //! What happened to each page of a read from the web control pages.
 
+use denon_marantz_proto::SettingsGroup;
+
 /// Why a page was not asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -73,5 +75,29 @@ impl SourceDetails {
     #[must_use]
     pub const fn any_read(&self) -> bool {
         self.assignments.is_read() || self.names.is_read()
+    }
+}
+
+/// The pages of [`Avr::update_settings_availability`](crate::Avr::update_settings_availability).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsAvailabilityDetails {
+    /// The result for each group of settings, in the order of [`SettingsGroup::ALL`].
+    pub pages: Vec<(SettingsGroup, PageStatus)>,
+}
+
+impl SettingsAvailabilityDetails {
+    /// The result for a group of settings.
+    #[must_use]
+    pub fn status(&self, group: SettingsGroup) -> Option<PageStatus> {
+        self.pages
+            .iter()
+            .find(|(known, _)| *known == group)
+            .map(|(_, status)| *status)
+    }
+
+    /// Returns true if at least one group was read.
+    #[must_use]
+    pub fn any_read(&self) -> bool {
+        self.pages.iter().any(|(_, status)| status.is_read())
     }
 }

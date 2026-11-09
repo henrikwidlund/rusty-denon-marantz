@@ -12,6 +12,7 @@ use std::borrow::Cow;
 use crate::appcommand::Field;
 use crate::input_pages::{InputAssignment, SourceNames};
 use crate::picture::PictureSettings;
+use crate::settings_availability::{GroupAvailability, SettingsAvailability};
 use crate::signal::SignalState;
 use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
@@ -19,6 +20,7 @@ use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
 use crate::speaker_tables::{BassSettings, SpeakerTable};
+use crate::system_settings::SystemSettings;
 use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
@@ -53,6 +55,11 @@ pub enum Setting {
     InputMode,
     /// Speaker crossovers, configuration or graphic EQ.
     SpeakerSetup,
+    /// Which settings the receiver offers and lets the user change, from the
+    /// web control.
+    SettingsAvailability,
+    /// The settings that only the web control pages give, such as HDMI control.
+    SystemSettings,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -298,6 +305,14 @@ pub struct DeviceState {
     pub input_mode: Option<InputMode>,
     /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
     pub speaker_setup: SpeakerSetup,
+    /// Which settings the receiver offers and lets the user change now. Only
+    /// the web control pages have it, and they change with the sound mode and the signal, so they
+    /// are read on request.
+    pub settings_availability: SettingsAvailability,
+    /// Settings that telnet does not report, such as HDMI control, the menu
+    /// lock and when the network answers. Only the web control page has them,
+    /// and it does not send changes, so it is read on request.
+    pub system_settings: SystemSettings,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -538,6 +553,30 @@ impl State {
             .sources
             .set_name_details(names)
             .then_some(sources_change())
+    }
+
+    /// Stores the availability of a group of settings from the web control.
+    /// It is part of [`DeviceState::settings_availability`].
+    pub fn apply_settings_availability(&mut self, group: GroupAvailability) -> Option<Change> {
+        self.device
+            .settings_availability
+            .set(group)
+            .then_some(Change {
+                zone: None,
+                setting: Setting::SettingsAvailability,
+            })
+    }
+
+    /// Stores the system settings of the web control. They are
+    /// [`DeviceState::system_settings`].
+    pub fn apply_system_settings(&mut self, settings: SystemSettings) -> Option<Change> {
+        (self.device.system_settings != settings).then(|| {
+            self.device.system_settings = settings;
+            Change {
+                zone: None,
+                setting: Setting::SystemSettings,
+            }
+        })
     }
 
     /// Stores the speaker distances of the web control page, and the number
@@ -2624,6 +2663,46 @@ mod tests {
         assert_eq!(state.device().dirac_art_active(), Some(false));
         apply(&mut state, "PSDIRAC OFF");
         assert_eq!(state.device().dirac_art_active(), Some(false));
+    }
+
+    #[test]
+    fn settings_availability_are_stored_when_they_change() {
+        use crate::{Availability, SettingsGroup};
+        let mut state = State::new(false);
+        let group = |value: &str| {
+            GroupAvailability::parse(
+                SettingsGroup::Speakers,
+                format!("<listGroupAvailability><Crossovers>{value}</Crossovers></listGroupAvailability>")
+                    .as_bytes(),
+            )
+            .unwrap()
+        };
+        let changed = || change(None, Setting::SettingsAvailability);
+        assert_eq!(state.apply_settings_availability(group("2")), changed());
+        assert_eq!(state.apply_settings_availability(group("2")), None);
+        assert_eq!(state.apply_settings_availability(group("3")), changed());
+        let item = state
+            .device()
+            .settings_availability
+            .item(SettingsGroup::Speakers, "Crossovers")
+            .unwrap();
+        assert_eq!(item.availability, Availability::Available);
+    }
+
+    #[test]
+    fn system_settings_are_stored_when_they_change() {
+        let mut state = State::new(false);
+        let settings = |value: &str| {
+            SystemSettings::parse(
+                format!("<AdvancedMenu><MenuLock>{value}</MenuLock></AdvancedMenu>").as_bytes(),
+            )
+            .unwrap()
+        };
+        let changed = || change(None, Setting::SystemSettings);
+        assert_eq!(state.apply_system_settings(settings("2")), changed());
+        assert_eq!(state.apply_system_settings(settings("2")), None);
+        assert_eq!(state.apply_system_settings(settings("1")), changed());
+        assert_eq!(state.device().system_settings.menu_lock, Some(true));
     }
 
     #[test]

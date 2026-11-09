@@ -100,6 +100,11 @@ impl<'a> Child<'a> {
         self.start.local_name().as_ref() == name
     }
 
+    /// Name of the element without a namespace prefix.
+    pub(crate) fn name(&self) -> String {
+        self.start.local_name().as_ref().to_owned()
+    }
+
     pub(crate) const fn node(&self) -> Node<'a> {
         self.node
     }

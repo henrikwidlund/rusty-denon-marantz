@@ -49,7 +49,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels and bass from port 11080), source-details (reads the physical inputs and the source names from port 11080),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels and bass from port 11080), source-details (reads the physical inputs and the source names from port 11080), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
@@ -197,7 +197,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 35] = [
+const SOUND_COMMANDS: [&str; 37] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -232,6 +232,8 @@ const SOUND_COMMANDS: [&str; 35] = [
     "channel-reset",
     "speaker-details",
     "source-details",
+    "settings-availability",
+    "system-settings",
     "step",
 ];
 
@@ -438,6 +440,28 @@ async fn sound_extra_command(
             avr.sound().channel_volume_down(channel).await?;
         }
         "channel-reset" => avr.sound().reset_channel_volumes().await?,
+        "system-settings" => {
+            println!("page: {:?}", avr.update_system_settings().await?);
+            println!("{:#?}", avr.snapshot().device().system_settings);
+        }
+        "settings-availability" => {
+            let result = avr.update_settings_availability().await?;
+            println!("pages: {result:?}");
+            let state = avr.snapshot();
+            for group in denon_marantz_proto::SettingsGroup::ALL
+                .iter()
+                .filter_map(|group| state.device().settings_availability.group(*group))
+            {
+                for item in &group.items {
+                    if item.availability != denon_marantz_proto::Availability::Available {
+                        println!(
+                            "{:?} {}: {:?} {:?}",
+                            group.group, item.name, item.availability, item.reason_code
+                        );
+                    }
+                }
+            }
+        }
         "source-details" => {
             let result = avr.update_source_details().await?;
             println!("pages: {result:?}");
