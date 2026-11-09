@@ -2,6 +2,8 @@
 
 #[cfg(feature = "http")]
 mod channels;
+#[cfg(feature = "http")]
+mod details;
 mod error;
 mod pacer;
 
@@ -43,6 +45,8 @@ pub use avr::{Avr, AvrBuilder, Info, UpdateMethod};
 pub use denon_marantz_proto::RemoteKey;
 #[cfg(feature = "telnet")]
 pub use denon_marantz_proto::telnet::{Command, QueryGroup};
+#[cfg(feature = "http")]
+pub use details::{PageStatus, SkipReason, SourceDetails, SpeakerDetails};
 #[cfg(feature = "telnet")]
 pub use device_control::{DeviceControl, ResetKey};
 #[cfg(feature = "telnet")]

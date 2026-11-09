@@ -10,7 +10,8 @@ use common::{
     AVR_X_DIRAC_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info, builder, wait_until,
 };
 use denon_marantz::{
-    Avr, Command, Error, QueryGroup, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
+    Avr, Command, Error, PageStatus, QueryGroup, SkipReason, TelnetConfig, TelnetEvent,
+    TelnetStatus, ToneBlocker,
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
@@ -1497,20 +1498,30 @@ async fn tone_control_is_not_turned_on_when_the_receiver_would_ignore_it() {
         );
         assert!(error.is_invalid_input());
     }
+    // Any Dirac filter blocks it, also one that is not Dirac ART.
+    telnet.send(b"OPDLSSL1TYP BC\rPSDIRAC 1\r");
+    wait_until("the other filter", || {
+        avr.snapshot().device().dirac_art_active() == Some(false)
+    })
+    .await;
+    let error = tone.set_enabled(true).await.unwrap_err();
+    assert!(
+        matches!(error, Error::ToneControlBlocked(ToneBlocker::DiracFilter)),
+        "{error:?}"
+    );
+    // Dynamic EQ does not block it: that is not confirmed for a receiver.
     telnet.send(b"PSDIRAC OFF\rPSDYNEQ ON\r");
     wait_until("dynamic eq", || {
         avr.snapshot().device().dynamic_eq == Some(true)
     })
     .await;
-    let error = tone.treble_up().await.unwrap_err();
-    assert!(
-        matches!(error, Error::ToneControlBlocked(ToneBlocker::DynamicEq)),
-        "{error:?}"
-    );
-    // Turning it off is not blocked.
-    tone.set_enabled(false).await.unwrap();
+    tone.set_enabled(true).await.unwrap();
     wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
-    assert_eq!(commands_sent(&telnet), ["PSTONE CTRL OFF"]);
+    assert_eq!(commands_sent(&telnet), ["PSTONE CTRL ON"]);
+    // Turning it off is never blocked.
+    tone.set_enabled(false).await.unwrap();
+    wait_until("the command", || commands_sent(&telnet).len() >= 2).await;
+    assert_eq!(commands_sent(&telnet)[1], "PSTONE CTRL OFF");
     // If the state says that tone control is on, the levels work.
     telnet.send(b"PSTONE CTRL ON\r");
     wait_until("tone control on", || {
@@ -1518,8 +1529,114 @@ async fn tone_control_is_not_turned_on_when_the_receiver_would_ignore_it() {
     })
     .await;
     tone.set_bass_db(3).await.unwrap();
-    wait_until("the level", || commands_sent(&telnet).len() >= 2).await;
-    assert_eq!(commands_sent(&telnet)[1], "PSBAS 53");
+    wait_until("the level", || commands_sent(&telnet).len() >= 3).await;
+    assert_eq!(commands_sent(&telnet)[2], "PSBAS 53");
+}
+
+#[tokio::test]
+async fn audyssey_settings_are_not_sent_while_a_dirac_filter_is_selected() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let audyssey = avr.audyssey();
+    // Without a Dirac filter the commands go out.
+    audyssey.set_dynamic_eq(true).await.unwrap();
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["PSDYNEQ ON"]);
+
+    telnet.send(b"PSDIRAC 1\r");
+    wait_until("the filter", || {
+        avr.snapshot().device().dirac_filter == Some(DiracFilter::Slot1)
+    })
+    .await;
+    let blocked = [
+        audyssey.set_dynamic_eq(false).await,
+        audyssey
+            .set_reference_level_offset(ReferenceLevelOffset::Db0)
+            .await,
+        audyssey.set_dynamic_volume(DynamicVolume::Light).await,
+        audyssey.set_lfc(true).await,
+        audyssey.set_containment_level(3).await,
+        audyssey.containment_amount_up().await,
+        audyssey.containment_amount_down().await,
+    ];
+    for result in blocked {
+        let error = result.unwrap_err();
+        assert!(matches!(error, Error::AudysseyBlockedByDirac), "{error:?}");
+        assert!(error.is_invalid_input());
+    }
+    assert_eq!(commands_sent(&telnet), ["PSDYNEQ ON"]);
+    // Selecting a MultEQ mode is the way back to Audyssey: it is sent.
+    audyssey.set_multi_eq(MultiEq::Reference).await.unwrap();
+    wait_until("the mode", || commands_sent(&telnet).len() >= 2).await;
+    assert_eq!(commands_sent(&telnet)[1], "PSMULTEQ:AUDYSSEY");
+    // With Dirac off again, the others go out.
+    telnet.send(b"PSDIRAC OFF\r");
+    wait_until("the filter is off", || {
+        avr.snapshot().device().dirac_filter == Some(DiracFilter::Off)
+    })
+    .await;
+    audyssey.set_lfc(true).await.unwrap();
+    wait_until("the command", || commands_sent(&telnet).len() >= 3).await;
+    assert_eq!(commands_sent(&telnet)[2], "PSLFC ON");
+}
+
+const DISTANCES_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-distances.xml");
+const CHANNEL_LEVELS_PAGE: &[u8] = include_bytes!(
+    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml"
+);
+
+#[tokio::test]
+async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
+    let receiver = avr_x_receiver().await;
+    let ajax = common::Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/speakers/get_config?type=4" => common::Reply::Body(DISTANCES_PAGE.to_vec()),
+        "/ajax/option/get_config?type=3" => common::Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
+        _ => common::Reply::Status(404),
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .ajax_port(ajax.port)
+        .ajax_config(common::config())
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    let asked = |ajax: &common::Fake| {
+        ajax.requests()
+            .iter()
+            .filter(|seen| seen.path.ends_with("type=3"))
+            .count()
+    };
+    // The kind of the filter is not known: the page is asked for.
+    let result = avr.update_speaker_details().await.unwrap();
+    assert_eq!(result.channel_levels, PageStatus::Read);
+    assert_eq!(asked(&ajax), 1);
+    // Dirac ART is active: it is not asked for, and the levels stay.
+    telnet.send(b"OPDLSSL2TYP ART\rPSDIRAC 2\r");
+    wait_until("the filter", || {
+        avr.snapshot().device().dirac_art_active() == Some(true)
+    })
+    .await;
+    let result = avr.update_speaker_details().await.unwrap();
+    assert_eq!(
+        result.channel_levels,
+        PageStatus::Skipped(SkipReason::DiracArt)
+    );
+    assert_eq!(result.distances, PageStatus::Read);
+    assert_eq!(asked(&ajax), 1);
+    assert_eq!(avr.snapshot().device().active_channels.len(), 13);
+    // A filter of another kind does not stop it.
+    telnet.send(b"OPDLSSL1TYP BC\rPSDIRAC 1\r");
+    wait_until("the other filter", || {
+        avr.snapshot().device().dirac_art_active() == Some(false)
+    })
+    .await;
+    let result = avr.update_speaker_details().await.unwrap();
+    assert_eq!(result.channel_levels, PageStatus::Read);
+    assert_eq!(asked(&ajax), 2);
 }
 
 #[tokio::test]

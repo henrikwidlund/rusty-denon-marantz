@@ -207,9 +207,6 @@ impl DistanceUnit {
 /// A table of the speaker pages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpeakerTable<K> {
-    /// The `mode` attribute of the page, for example `diracmenulock`. The
-    /// receiver locks the values in this mode.
-    pub mode: Option<String>,
     /// Entries in the order of the page.
     pub entries: Vec<TableEntry<K>>,
     /// Values that the page offers for the setting, for example crossover
@@ -218,34 +215,9 @@ pub struct SpeakerTable<K> {
     /// The `Unit` of the page. Only the distances page has it. See
     /// [`SpeakerTable::distance_unit`].
     pub unit: Option<u8>,
-    /// The `MsecMax` of the page. Only the distances page has it.
-    pub max_msec: Option<i32>,
     /// Number of subwoofers, from 1 to 4. The distances page has it. The
     /// receiver sends a setup code that is 5 plus the number.
     pub subwoofer_count: Option<u8>,
-}
-
-/// The speaker tables of the web control pages that a receiver gave.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SpeakerTables {
-    /// Distances, if the receiver has the page.
-    pub distances: Option<SpeakerTable<Channel>>,
-    /// Crossovers, if the receiver has the page.
-    pub crossovers: Option<SpeakerTable<SpeakerGroup>>,
-    /// Channel levels, if the receiver has the page.
-    pub channel_levels: Option<SpeakerTable<Channel>>,
-    /// Bass settings, if the receiver has the page.
-    pub bass: Option<BassSettings>,
-}
-
-impl SpeakerTables {
-    /// Number of subwoofers, if a page gave it.
-    #[must_use]
-    pub fn subwoofer_count(&self) -> Option<u8> {
-        self.distances
-            .as_ref()
-            .and_then(|table| table.subwoofer_count)
-    }
 }
 
 impl<K> SpeakerTable<K> {
@@ -276,7 +248,7 @@ impl SpeakerTable<Channel> {
     /// speaker setup are the shown ones, see [`TableEntry::is_shown`].
     ///
     /// The receiver answers this page with HTTP status 500 when the dials
-    /// cannot be used, for example while a Dirac filter is on.
+    /// cannot be used, for example while a Dirac ART filter is active.
     ///
     /// # Errors
     ///
@@ -358,7 +330,6 @@ fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTabl
     let root = root(body)?;
     let node = root.node();
     Ok(SpeakerTable {
-        mode: root.attribute("mode").map(std::borrow::Cow::into_owned),
         entries: node
             .child("List")
             .map(|list| read_entries(list.node(), key))
@@ -369,7 +340,6 @@ fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTabl
             .map(|list| read_choices(list.node()))
             .unwrap_or_default(),
         unit: number::<i32>(node, "Unit").and_then(|unit| u8::try_from(unit).ok()),
-        max_msec: number(node, "MsecMax"),
         subwoofer_count: node
             .child("SubwooferType")
             .and_then(|kind| number::<u8>(kind.node(), "CurrentNumber"))
@@ -502,9 +472,7 @@ mod tests {
     #[test]
     fn distances_of_the_a10h() {
         let table = SpeakerTable::parse_distances(DISTANCES).unwrap();
-        assert_eq!(table.mode.as_deref(), Some("diracmenulock"));
         assert_eq!(table.unit, Some(3));
-        assert_eq!(table.max_msec, Some(50));
         // The test receiver has two subwoofers.
         assert_eq!(table.subwoofer_count, Some(2));
         assert_eq!(table.entries.len(), 13);
@@ -610,7 +578,6 @@ mod tests {
     #[test]
     fn crossovers_of_the_a10h() {
         let table = SpeakerTable::parse_crossovers(CROSSOVERS).unwrap();
-        assert_eq!(table.mode.as_deref(), Some("diracmenulock"));
         assert_eq!(table.entries.len(), 6);
         assert_eq!(entry(&table, 0), (SpeakerGroup::Front, 0, Some(3)));
         assert_eq!(entry(&table, 3), (SpeakerGroup::SurroundBack, 80, Some(3)));
@@ -627,7 +594,6 @@ mod tests {
             <Speaker>3</Speaker></List></Distances>"#;
         let table = SpeakerTable::parse_distances(xml).unwrap();
         assert_eq!(table.entries.len(), 1);
-        assert_eq!(table.mode, None);
         assert_eq!(table.unit, None);
         assert_eq!(table.subwoofer_count, None);
         for code in ["4", "10", "x"] {

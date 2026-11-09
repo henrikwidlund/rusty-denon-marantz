@@ -8,7 +8,7 @@ use common::{
     AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, avr_x_receiver, builder, config, friendly_name_answer,
     is_friendly_name_request,
 };
-use denon_marantz::{Avr, Error, UpdateMethod};
+use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
     AutoStandby, Brand, DimmerMode, EcoMode, Power, ReceiverType, ToneLevel, Volume, Zone,
 };
@@ -396,7 +396,7 @@ const CROSSOVERS_PAGE: &[u8] = include_bytes!(
 );
 
 #[tokio::test]
-async fn speaker_tables_are_read_from_the_web_control_pages() {
+async fn speaker_details_are_read_from_the_web_control_pages() {
     let receiver = avr_x_receiver().await;
     let ajax = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/speakers/get_config?type=4" => Reply::Body(DISTANCES_PAGE.to_vec()),
@@ -412,17 +412,24 @@ async fn speaker_tables_are_read_from_the_web_control_pages() {
         .connect()
         .await
         .unwrap();
-    assert!(avr.snapshot().device().speaker_tables.distances.is_none());
-    assert!(avr.update_speaker_tables().await.unwrap());
+    assert!(avr.snapshot().device().speaker_setup.distances.is_none());
+    let result = avr.update_speaker_details().await.unwrap();
+    assert!(result.any_read());
+    assert_eq!(result.distances, PageStatus::Read);
+    assert_eq!(result.channel_levels, PageStatus::Read);
     let state = avr.snapshot();
-    let tables = &state.device().speaker_tables;
-    assert_eq!(tables.distances.as_ref().unwrap().entries.len(), 13);
-    assert_eq!(tables.crossovers.as_ref().unwrap().entries.len(), 6);
-    assert_eq!(tables.channel_levels.as_ref().unwrap().entries.len(), 34);
-    assert_eq!(tables.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
+    let setup = &state.device().speaker_setup;
+    assert_eq!(setup.distances.as_ref().unwrap().entries.len(), 13);
+    assert_eq!(setup.subwoofer_count, Some(2));
+    assert_eq!(setup.crossovers.len(), 6);
+    assert_eq!(setup.crossover_choices.len(), 13);
+    assert_eq!(setup.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
+    // The 13 channels of the speaker setup are shown on the dial page.
+    assert_eq!(state.device().channel_volumes.len(), 13);
+    assert_eq!(state.device().active_channels.len(), 13);
     // The same pages again change nothing.
     let mut changes = avr.changes();
-    assert!(avr.update_speaker_tables().await.unwrap());
+    assert!(avr.update_speaker_details().await.unwrap().any_read());
     assert!(changes.try_recv().is_err());
 }
 
@@ -440,11 +447,14 @@ async fn a_missing_speaker_page_is_not_an_error() {
         .connect()
         .await
         .unwrap();
-    assert!(avr.update_speaker_tables().await.unwrap());
+    let result = avr.update_speaker_details().await.unwrap();
+    assert!(result.any_read());
+    assert_eq!(result.distances, PageStatus::NotFound);
+    assert_eq!(result.crossovers, PageStatus::Read);
     let state = avr.snapshot();
-    let tables = &state.device().speaker_tables;
-    assert!(tables.distances.is_none());
-    assert!(tables.crossovers.is_some());
+    let setup = &state.device().speaker_setup;
+    assert!(setup.distances.is_none());
+    assert_eq!(setup.crossovers.len(), 6);
 }
 
 #[tokio::test]
@@ -461,10 +471,10 @@ async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
         .await
         .unwrap();
     for _ in 0..2 {
-        let error = avr.update_speaker_tables().await.unwrap_err();
+        let error = avr.update_speaker_details().await.unwrap_err();
         assert!(error.is_unreachable(), "{error}");
     }
-    assert!(avr.snapshot().device().speaker_tables.distances.is_none());
+    assert!(avr.snapshot().device().speaker_setup.distances.is_none());
 }
 
 const INPUT_ASSIGN_PAGE: &[u8] =
@@ -487,7 +497,8 @@ async fn source_details_are_read_from_the_web_control_pages() {
         .connect()
         .await
         .unwrap();
-    assert!(avr.update_source_details().await.unwrap());
+    let result = avr.update_source_details().await.unwrap();
+    assert!(result.assignments.is_read() && result.names.is_read());
     let state = avr.snapshot();
     let apple = state.device().sources.get("MPLAY").unwrap();
     assert_eq!(apple.hdmi_input.as_deref(), Some("2"));
@@ -497,7 +508,7 @@ async fn source_details_are_read_from_the_web_control_pages() {
     assert_eq!(state.device().sources.max_name_length(), Some(16));
     // Reading the same pages again changes nothing.
     let mut changes = avr.changes();
-    assert!(avr.update_source_details().await.unwrap());
+    assert!(avr.update_source_details().await.unwrap().any_read());
     assert!(changes.try_recv().is_err());
 }
 
@@ -511,7 +522,9 @@ async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
         .connect()
         .await
         .unwrap();
-    assert!(!avr.update_source_details().await.unwrap());
+    let result = avr.update_source_details().await.unwrap();
+    assert!(!result.any_read());
+    assert_eq!(result.assignments, PageStatus::NotFound);
     assert!(avr.snapshot().device().sources.get("MPLAY").is_none());
 
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -529,4 +542,29 @@ async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
             .unwrap_err()
             .is_unreachable()
     );
+}
+
+#[tokio::test]
+async fn refused_and_unreadable_pages_are_reported_per_page() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/speakers/get_config?type=4" => Reply::Status(500),
+        "/ajax/speakers/get_config?type=6" => Reply::Body(b"<html>sorry</html>".to_vec()),
+        "/ajax/option/get_config?type=3" => Reply::Status(403),
+        "/ajax/speakers/get_config?type=7" => Reply::Body(BASS_PAGE.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    let result = avr.update_speaker_details().await.unwrap();
+    assert_eq!(result.distances, PageStatus::Refused(500));
+    assert_eq!(result.crossovers, PageStatus::Unreadable);
+    assert_eq!(result.channel_levels, PageStatus::Refused(403));
+    assert_eq!(result.bass, PageStatus::Read);
+    assert!(result.any_read());
 }

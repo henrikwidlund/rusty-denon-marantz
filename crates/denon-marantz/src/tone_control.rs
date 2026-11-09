@@ -11,10 +11,10 @@ use crate::error::{Error, ToneBlocker};
 ///
 /// Bass and treble work only while tone control is on. A method that changes
 /// them turns tone control on first if the state says that it is off. The
-/// receiver ignores that while Dynamic EQ is on, or with a Dirac Live filter
-/// such as Dirac ART (seen on an AVC-A10H). It sends no answer and no error.
-/// So these methods return [`Error::ToneControlBlocked`] and send nothing when
-/// the state shows one of the two. To send the command anyway, use
+/// receiver ignores that with any Dirac Live filter selected. It sends no
+/// answer and no error. So these methods return [`Error::ToneControlBlocked`]
+/// and send nothing when the state shows a Dirac filter. Audyssey Dynamic EQ
+/// might also block it, but that is not confirmed, so it is not checked. To send the command anyway, use
 /// [`Avr::send`] with [`Command::ToneControl`].
 ///
 /// Each method returns when the commands are written, as [`Avr::send`] does.
@@ -35,8 +35,8 @@ impl<'a> ToneControl<'a> {
     /// # Errors
     ///
     /// Returns [`Error::ToneControlBlocked`], and sends nothing, if `on` is
-    /// `true` and the state says that Dynamic EQ is on or a Dirac filter is
-    /// selected. See also [`ToneControl`].
+    /// `true` and the state says that a Dirac filter is selected. See also
+    /// [`ToneControl`].
     pub async fn set_enabled(&self, on: bool) -> Result<(), Error> {
         if on {
             self.check_not_blocked()?;
@@ -155,10 +155,8 @@ impl<'a> ToneControl<'a> {
     fn check_not_blocked(self) -> Result<(), Error> {
         let state = self.avr.state();
         let state = state.borrow();
-        let device = state.device();
-        if device.dynamic_eq == Some(true) {
-            Err(Error::ToneControlBlocked(ToneBlocker::DynamicEq))
-        } else if device
+        if state
+            .device()
             .dirac_filter
             .is_some_and(|filter| filter != DiracFilter::Off)
         {

@@ -76,8 +76,8 @@ pub enum Command<'a> {
     /// Opens (`true`) or closes (`false`) the setup menu.
     SetupMenu(bool),
     /// Turns tone control on (`true`) or off (`false`). Bass and treble work
-    /// only when it is on. The receiver ignores this while Dynamic EQ is on,
-    /// or with a Dirac Live filter such as Dirac ART.
+    /// only when it is on. The receiver ignores this with a Dirac Live filter
+    /// selected.
     ToneControl(bool),
     /// Sets the bass level of the main zone, from -6 to +6 dB.
     SetBass(ToneLevel),

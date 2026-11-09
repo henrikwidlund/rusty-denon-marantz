@@ -1,7 +1,9 @@
 //! Typed control of the Audyssey settings on telnet.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{ContainmentAmount, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone};
+use denon_marantz_proto::{
+    ContainmentAmount, DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone,
+};
 
 use crate::avr::Avr;
 use crate::error::Error;
@@ -9,9 +11,14 @@ use crate::error::Error;
 /// Controls the Audyssey settings of a receiver. Get it from
 /// [`Avr::audyssey`].
 ///
-/// A receiver that uses a Dirac Live filter can ignore these settings. An
-/// AVC-A10H with Dirac ART ignored Dynamic Volume. It sends no answer and no
-/// error, so the state keeps the old value.
+/// Dirac Live and Audyssey are two ways to calibrate the speakers and do not
+/// work together. A receiver with a Dirac Live filter selected ignores the
+/// Audyssey settings (an AVC-A10H with Dirac ART ignored Dynamic Volume) and
+/// sends no answer and no error. So each method but
+/// [`Audyssey::set_multi_eq`] returns [`Error::AudysseyBlockedByDirac`] and
+/// sends nothing while the state shows a Dirac filter. Selecting a MultEQ mode
+/// is the way to go back to Audyssey, so it is sent. To send an Audyssey
+/// command anyway, use [`Avr::send`].
 ///
 /// Each method returns when the command is written, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns
@@ -32,6 +39,7 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn set_dynamic_eq(&self, on: bool) -> Result<(), Error> {
+        self.check_no_dirac()?;
         self.send(Command::DynamicEq(on)).await
     }
 
@@ -55,6 +63,7 @@ impl<'a> Audyssey<'a> {
         &self,
         offset: ReferenceLevelOffset,
     ) -> Result<(), Error> {
+        self.check_no_dirac()?;
         if self.avr.state().borrow().device().dynamic_eq == Some(false) {
             return Err(Error::DynamicEqOff);
         }
@@ -67,6 +76,7 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn set_dynamic_volume(&self, volume: DynamicVolume) -> Result<(), Error> {
+        self.check_no_dirac()?;
         self.send(Command::SetDynamicVolume(volume)).await
     }
 
@@ -76,6 +86,7 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn set_lfc(&self, on: bool) -> Result<(), Error> {
+        self.check_no_dirac()?;
         self.send(Command::Lfc(on)).await
     }
 
@@ -85,6 +96,7 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn set_containment_amount(&self, amount: ContainmentAmount) -> Result<(), Error> {
+        self.check_no_dirac()?;
         self.send(Command::SetContainmentAmount(amount)).await
     }
 
@@ -106,6 +118,7 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn containment_amount_up(&self) -> Result<(), Error> {
+        self.check_no_dirac()?;
         if self.containment_amount() == Some(ContainmentAmount::MAX) {
             return Ok(());
         }
@@ -119,10 +132,26 @@ impl<'a> Audyssey<'a> {
     ///
     /// See [`Audyssey`].
     pub async fn containment_amount_down(&self) -> Result<(), Error> {
+        self.check_no_dirac()?;
         if self.containment_amount() == Some(ContainmentAmount::MIN) {
             return Ok(());
         }
         self.send(Command::ContainmentAmountDown).await
+    }
+
+    /// Fails if the state shows that a Dirac filter is selected.
+    fn check_no_dirac(self) -> Result<(), Error> {
+        let state = self.avr.state();
+        let dirac = state
+            .borrow()
+            .device()
+            .dirac_filter
+            .is_some_and(|filter| filter != DiracFilter::Off);
+        if dirac {
+            Err(Error::AudysseyBlockedByDirac)
+        } else {
+            Ok(())
+        }
     }
 
     fn containment_amount(self) -> Option<ContainmentAmount> {

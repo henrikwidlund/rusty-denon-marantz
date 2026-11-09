@@ -10,8 +10,6 @@ type Source = Box<dyn std::error::Error + Send + Sync>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ToneBlocker {
-    /// Audyssey Dynamic EQ is on.
-    DynamicEq,
     /// A Dirac Live filter is selected.
     DiracFilter,
 }
@@ -19,7 +17,6 @@ pub enum ToneBlocker {
 impl std::fmt::Display for ToneBlocker {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::DynamicEq => "Dynamic EQ is on",
             Self::DiracFilter => "a Dirac filter is selected",
         })
     }
@@ -118,6 +115,12 @@ pub enum Error {
     /// sends no error. Nothing was sent.
     #[error("tone control cannot be turned on: {0}")]
     ToneControlBlocked(ToneBlocker),
+    /// An Audyssey setting cannot be used while a Dirac Live filter is
+    /// selected: Dirac and Audyssey do not work together, and the receiver
+    /// ignores the setting. Nothing was sent. Turn the Dirac filter off, or
+    /// select an Audyssey MultEQ mode, first.
+    #[error("Audyssey settings are ignored while a Dirac filter is selected")]
+    AudysseyBlockedByDirac,
     /// The reference level offset works only with Dynamic EQ on. Nothing was
     /// sent.
     #[error("the reference level offset needs Dynamic EQ to be on")]
@@ -162,6 +165,7 @@ impl Error {
             | Self::ContainmentOutOfRange(_)
             | Self::ToneControlBlocked(_)
             | Self::DynamicEqOff
+            | Self::AudysseyBlockedByDirac
             | Self::DiracSlotOutOfRange(_)
             | Self::UnknownDiracSlot(_)
             | Self::DiracNotSupported
@@ -191,6 +195,7 @@ impl Error {
                 | Self::ContainmentOutOfRange(_)
                 | Self::ToneControlBlocked(_)
                 | Self::DynamicEqOff
+                | Self::AudysseyBlockedByDirac
                 | Self::DiracSlotOutOfRange(_)
                 | Self::UnknownDiracSlot(_)
                 | Self::DiracNotSupported

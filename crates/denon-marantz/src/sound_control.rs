@@ -197,8 +197,9 @@ impl<'a> SoundControl<'a> {
         .await
     }
 
-    /// Sets the level of a speaker channel of the main zone. Dirac Live must be
-    /// off for the receiver to accept a change.
+    /// Sets the level of a speaker channel of the main zone. The receiver does
+    /// not accept a change while a Dirac ART filter is active. Other Dirac
+    /// filters do not stop it.
     ///
     /// # Errors
     ///
@@ -235,8 +236,8 @@ impl<'a> SoundControl<'a> {
 
     /// Sets the level of all speaker channels of the main zone to 0 dB. This
     /// overwrites all levels at once and cannot be undone by the library.
-    /// Dirac Live must be off for the receiver to accept it. Not tested on a
-    /// receiver.
+    /// The receiver does not accept it while a Dirac ART filter is active. Not
+    /// tested on a receiver.
     ///
     /// # Errors
     ///

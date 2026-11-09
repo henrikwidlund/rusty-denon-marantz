@@ -18,7 +18,7 @@ use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
-use crate::speaker_tables::{BassSettings, SpeakerTable, SpeakerTables};
+use crate::speaker_tables::{BassSettings, SpeakerTable};
 use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
@@ -53,8 +53,6 @@ pub enum Setting {
     InputMode,
     /// Speaker crossovers, configuration or graphic EQ.
     SpeakerSetup,
-    /// Speaker distances or crossovers from the web control pages.
-    SpeakerTables,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -290,13 +288,16 @@ pub struct DeviceState {
     /// Level of each channel of the main zone that the receiver has reported
     /// as `CV` events, in the order of the report.
     pub channel_volumes: Vec<(Channel, ChannelLevel)>,
+    /// The channels that the receiver uses now, in the order of the latest
+    /// list: the `CV` list of telnet up to its `CVEND` line, or the channels
+    /// that the web control page shows. The receiver sends a new list when
+    /// the input or the signal changes. [`DeviceState::channel_volumes`] keeps
+    /// the levels of the channels of earlier lists too.
+    pub active_channels: Vec<Channel>,
     /// The audio input mode of the main zone, the `SD` events.
     pub input_mode: Option<InputMode>,
     /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
     pub speaker_setup: SpeakerSetup,
-    /// Speaker distances and crossovers. Only the web control pages have
-    /// them, so they are read on request and not kept up to date.
-    pub speaker_tables: SpeakerTables,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -312,6 +313,16 @@ pub struct DeviceState {
 }
 
 /// Sets the level of a channel in a list. Returns true if the list changed.
+/// Replaces the active channels. Returns true if the list is different. An
+/// empty list is ignored, so a list that has no known channel changes nothing.
+fn set_active_channels(active: &mut Vec<Channel>, list: Vec<Channel>) -> bool {
+    if list.is_empty() || *active == list {
+        return false;
+    }
+    *active = list;
+    true
+}
+
 fn set_channel_level(
     levels: &mut Vec<(Channel, ChannelLevel)>,
     channel: Channel,
@@ -329,6 +340,26 @@ impl DeviceState {
     #[must_use]
     pub const fn trigger(&self, trigger: Trigger) -> Option<bool> {
         self.triggers[trigger.number() as usize - 1]
+    }
+
+    /// Whether the active Dirac filter is a Dirac ART filter, if the state
+    /// knows. `Some(false)` if Dirac is off or the filter is of another kind,
+    /// for example Bass Control. `None` if the state does not know the filter
+    /// or its kind.
+    ///
+    /// A Dirac ART filter locks the channel levels, as seen on an AVC-A10H.
+    /// Other filters, such as Bass Control, do not. Tone control is blocked by
+    /// any Dirac filter, not only by this one.
+    #[must_use]
+    pub fn dirac_art_active(&self) -> Option<bool> {
+        let slot = match self.dirac_filter? {
+            DiracFilter::Off => return Some(false),
+            DiracFilter::Slot1 => 0,
+            DiracFilter::Slot2 => 1,
+            DiracFilter::Slot3 => 2,
+        };
+        let kind = self.dirac_slots[slot].kind.as_deref()?;
+        Some(kind.eq_ignore_ascii_case("ART"))
     }
 
     /// The Dirac Live filter of the slot with this name, if the state knows
@@ -354,6 +385,8 @@ pub struct State {
     single_zone: bool,
     device: DeviceState,
     zones: [ZoneState; 3],
+    /// Channels of the `CV` list that is being received.
+    pending_channels: Vec<Channel>,
 }
 
 impl State {
@@ -367,6 +400,7 @@ impl State {
             single_zone,
             device: DeviceState::default(),
             zones: Default::default(),
+            pending_channels: Vec::new(),
         }
     }
 
@@ -506,42 +540,61 @@ impl State {
             .then_some(sources_change())
     }
 
-    /// Stores the speaker distances of the web control page.
+    /// Stores the speaker distances of the web control page, and the number
+    /// of subwoofers. They are part of [`DeviceState::speaker_setup`].
     pub fn apply_speaker_distances(&mut self, table: SpeakerTable<Channel>) -> Option<Change> {
-        let new = Some(table);
-        (self.device.speaker_tables.distances != new).then(|| {
-            self.device.speaker_tables.distances = new;
-            speaker_tables_change()
-        })
+        self.device
+            .speaker_setup
+            .apply_distances(table)
+            .then_some(speaker_setup_change())
     }
 
-    /// Stores the channel levels of the web control page.
-    pub fn apply_channel_level_table(&mut self, table: SpeakerTable<Channel>) -> Option<Change> {
-        let new = Some(table);
-        (self.device.speaker_tables.channel_levels != new).then(|| {
-            self.device.speaker_tables.channel_levels = new;
-            speaker_tables_change()
-        })
-    }
-
-    /// Stores the bass page of the web control.
-    pub fn apply_bass_settings(&mut self, bass: BassSettings) -> Option<Change> {
-        let new = Some(bass);
-        (self.device.speaker_tables.bass != new).then(|| {
-            self.device.speaker_tables.bass = new;
-            speaker_tables_change()
-        })
-    }
-
-    /// Stores the speaker crossovers of the web control page.
+    /// Stores the speaker crossovers of the web control page. They join the
+    /// crossovers that telnet reports, in [`DeviceState::speaker_setup`].
     pub fn apply_speaker_crossovers(
         &mut self,
-        table: SpeakerTable<SpeakerGroup>,
+        table: &SpeakerTable<SpeakerGroup>,
     ) -> Option<Change> {
-        let new = Some(table);
-        (self.device.speaker_tables.crossovers != new).then(|| {
-            self.device.speaker_tables.crossovers = new;
-            speaker_tables_change()
+        self.device
+            .speaker_setup
+            .apply_crossover_table(table)
+            .then_some(speaker_setup_change())
+    }
+
+    /// Stores the bass page of the web control. It is part of
+    /// [`DeviceState::speaker_setup`].
+    pub fn apply_bass_settings(&mut self, bass: BassSettings) -> Option<Change> {
+        self.device
+            .speaker_setup
+            .apply_bass(bass)
+            .then_some(speaker_setup_change())
+    }
+
+    /// Stores the channel levels of the channel level page of the web
+    /// control, for the channels that the page shows. They join the levels
+    /// that telnet reports in [`DeviceState::channel_volumes`]. A level that
+    /// is not a multiple of 0.5 dB is ignored.
+    pub fn apply_channel_level_table(&mut self, table: &SpeakerTable<Channel>) -> Option<Change> {
+        let mut changed = false;
+        let shown: Vec<Channel> = table
+            .entries
+            .iter()
+            .filter(|entry| entry.is_shown())
+            .map(|entry| entry.key)
+            .collect();
+        changed |= set_active_channels(&mut self.device.active_channels, shown);
+        for entry in table.entries.iter().filter(|entry| entry.is_shown()) {
+            let level = (entry.value % 5 == 0)
+                .then(|| i8::try_from(entry.value / 5).ok())
+                .flatten()
+                .and_then(ChannelLevel::from_half_db);
+            if let Some(level) = level {
+                changed |= set_channel_level(&mut self.device.channel_volumes, entry.key, level);
+            }
+        }
+        changed.then_some(Change {
+            zone: Some(Zone::Main),
+            setting: Setting::ChannelVolumes,
         })
     }
 
@@ -1108,13 +1161,23 @@ impl State {
         ))
     }
 
-    /// Applies a `CV` event of the main zone like `FL 505`. The end of a list
-    /// and an unknown channel or level are ignored.
+    /// Applies a `CV` event of the main zone like `FL 505`. The line `END`
+    /// closes a list: the channels of the list are then the active channels.
+    /// An unknown channel or level is ignored.
     fn apply_channel_volume(&mut self, parameter: &str) -> Option<Change> {
-        let (code, value) = parameter.split_once(' ')?;
-        let channel = Channel::from_code(code)?;
-        let level = ChannelLevel::from_code(value.trim())?;
-        set_channel_level(&mut self.device.channel_volumes, channel, level).then_some(Change {
+        let changed = if parameter.trim() == "END" {
+            let list = std::mem::take(&mut self.pending_channels);
+            set_active_channels(&mut self.device.active_channels, list)
+        } else {
+            let (code, value) = parameter.split_once(' ')?;
+            let channel = Channel::from_code(code)?;
+            let level = ChannelLevel::from_code(value.trim())?;
+            if !self.pending_channels.contains(&channel) {
+                self.pending_channels.push(channel);
+            }
+            set_channel_level(&mut self.device.channel_volumes, channel, level)
+        };
+        changed.then_some(Change {
             zone: Some(Zone::Main),
             setting: Setting::ChannelVolumes,
         })
@@ -1197,10 +1260,10 @@ const fn sources_change() -> Change {
     }
 }
 
-const fn speaker_tables_change() -> Change {
+const fn speaker_setup_change() -> Change {
     Change {
         zone: None,
-        setting: Setting::SpeakerTables,
+        setting: Setting::SpeakerSetup,
     }
 }
 
@@ -1298,6 +1361,7 @@ fn limit_from_answer(text: &str) -> Option<Volume> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Crossover;
 
     fn apply(state: &mut State, line: &str) -> Option<Change> {
         state.apply_message(&Message::parse(line).unwrap())
@@ -2425,6 +2489,71 @@ mod tests {
     }
 
     #[test]
+    fn speaker_pages_join_the_telnet_values() {
+        let mut state = State::new(false);
+        apply(&mut state, "SSCFRCEN 070");
+        let distances = SpeakerTable::parse_distances(
+            br#"<Distances><SubwooferType><CurrentNumber>7</CurrentNumber></SubwooferType>
+            <List><Speaker index="0">25</Speaker></List></Distances>"#,
+        )
+        .unwrap();
+        let crossovers = SpeakerTable::parse_crossovers(
+            br#"<Crossovers><List><Speaker index="1">80</Speaker></List></Crossovers>"#,
+        )
+        .unwrap();
+        let setup = || change(None, Setting::SpeakerSetup);
+        assert_eq!(state.apply_speaker_distances(distances.clone()), setup());
+        assert_eq!(state.apply_speaker_distances(distances), None);
+        assert_eq!(state.apply_speaker_crossovers(&crossovers), setup());
+        assert_eq!(state.apply_speaker_crossovers(&crossovers), None);
+        let bass = BassSettings::parse(b"<Bass><LPFforLFE>120</LPFforLFE></Bass>").unwrap();
+        assert_eq!(state.apply_bass_settings(bass.clone()), setup());
+        assert_eq!(state.apply_bass_settings(bass), None);
+        let stored = &state.device().speaker_setup;
+        assert_eq!(stored.subwoofer_count, Some(2));
+        assert_eq!(stored.distances.as_ref().unwrap().entries[0].value, 25);
+        assert_eq!(
+            stored.crossovers,
+            [(SpeakerGroup::Center, Crossover::Hz(80))]
+        );
+        assert_eq!(stored.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
+    }
+
+    #[test]
+    fn channel_levels_of_the_web_page_join_the_telnet_levels() {
+        let mut state = State::new(false);
+        apply(&mut state, "CVFL 505");
+        let table = SpeakerTable::parse_channel_levels(
+            br#"<ChannelLevel><List><Speaker index="0" display="3">-20</Speaker>
+            <Speaker index="3" display="3">5</Speaker>
+            <Speaker index="4" display="1">10</Speaker>
+            <Speaker index="5" display="3">3</Speaker></List></ChannelLevel>"#,
+        )
+        .unwrap();
+        let levels = || change(Some(Zone::Main), Setting::ChannelVolumes);
+        // The center is new, the front left is the same as telnet reported.
+        assert_eq!(state.apply_channel_level_table(&table), levels());
+        assert_eq!(state.apply_channel_level_table(&table), None);
+        let volumes = &state.device().channel_volumes;
+        let level = |channel| {
+            volumes
+                .iter()
+                .find(|(c, _)| *c == channel)
+                .map(|(_, l)| l.db())
+        };
+        // A shown channel is active, also if its level cannot be used.
+        assert_eq!(
+            state.device().active_channels,
+            [Channel::Center, Channel::FrontLeft, Channel::SurroundLeft]
+        );
+        assert_eq!(level(Channel::Center), Some(-2.0));
+        assert_eq!(level(Channel::FrontLeft), Some(0.5));
+        // A hidden channel and a level between the steps are left out.
+        assert_eq!(level(Channel::FrontRight), None);
+        assert_eq!(level(Channel::SurroundLeft), None);
+    }
+
+    #[test]
     fn source_details_of_the_web_pages_are_part_of_the_sources() {
         let mut state = State::new(false);
         apply(&mut state, "SSFUNMPLAY Apple TV");
@@ -2451,24 +2580,50 @@ mod tests {
     }
 
     #[test]
-    fn speaker_tables_are_stored_when_they_change() {
+    fn active_channels_follow_the_cv_lists() {
         let mut state = State::new(false);
-        let distances = SpeakerTable::parse_distances(
-            br#"<Distances><List><Speaker index="0">25</Speaker></List></Distances>"#,
-        )
-        .unwrap();
-        let crossovers = SpeakerTable::parse_crossovers(
-            br#"<Crossovers><List><Speaker index="1">80</Speaker></List></Crossovers>"#,
-        )
-        .unwrap();
-        let tables = || change(None, Setting::SpeakerTables);
-        assert_eq!(state.apply_speaker_distances(distances.clone()), tables());
-        assert_eq!(state.apply_speaker_distances(distances), None);
-        assert_eq!(state.apply_speaker_crossovers(crossovers.clone()), tables());
-        assert_eq!(state.apply_speaker_crossovers(crossovers), None);
-        let stored = &state.device().speaker_tables;
-        assert_eq!(stored.distances.as_ref().unwrap().entries[0].value, 25);
-        assert_eq!(stored.crossovers.as_ref().unwrap().entries[0].value, 80);
+        let levels = || change(Some(Zone::Main), Setting::ChannelVolumes);
+        assert_eq!(apply(&mut state, "CVFL 50"), levels());
+        assert_eq!(apply(&mut state, "CVC 51"), levels());
+        // The list is not active until its end.
+        assert_eq!(state.device().active_channels, []);
+        assert_eq!(apply(&mut state, "CVEND"), levels());
+        assert_eq!(
+            state.device().active_channels,
+            [Channel::FrontLeft, Channel::Center]
+        );
+        // The same list again changes nothing, also not the levels.
+        for line in ["CVFL 50", "CVC 51"] {
+            assert_eq!(apply(&mut state, line), None);
+        }
+        assert_eq!(apply(&mut state, "CVEND"), None);
+        // A shorter list replaces the active channels. The level of the
+        // center stays known.
+        assert_eq!(apply(&mut state, "CVFL 50"), None);
+        assert_eq!(apply(&mut state, "CVEND"), levels());
+        assert_eq!(state.device().active_channels, [Channel::FrontLeft]);
+        assert_eq!(state.device().channel_volumes.len(), 2);
+        // An empty list and a list of unknown channels change nothing.
+        assert_eq!(apply(&mut state, "CVEND"), None);
+        assert_eq!(apply(&mut state, "CVXX 50"), None);
+        assert_eq!(apply(&mut state, "CVEND"), None);
+        assert_eq!(state.device().active_channels, [Channel::FrontLeft]);
+    }
+
+    #[test]
+    fn dirac_art_is_known_from_the_filter_and_its_kind() {
+        let mut state = State::new(false);
+        assert_eq!(state.device().dirac_art_active(), None);
+        apply(&mut state, "PSDIRAC 2");
+        // The kind of the slot is not known yet.
+        assert_eq!(state.device().dirac_art_active(), None);
+        apply(&mut state, "OPDLSSL2TYP ART");
+        assert_eq!(state.device().dirac_art_active(), Some(true));
+        apply(&mut state, "OPDLSSL1TYP BC");
+        apply(&mut state, "PSDIRAC 1");
+        assert_eq!(state.device().dirac_art_active(), Some(false));
+        apply(&mut state, "PSDIRAC OFF");
+        assert_eq!(state.device().dirac_art_active(), Some(false));
     }
 
     #[test]
@@ -2486,9 +2641,15 @@ mod tests {
             (Channel::FrontLeft, ChannelLevel::from_half_db(0).unwrap())
         );
         assert_eq!(levels[1].1.db(), -2.0);
+        // The end of the list makes its channels the active ones, once.
+        assert_eq!(apply(&mut state, "CVEND"), change());
         for line in ["CVEND", "CV END", "CVXX 50", "CVFR 99", "CVFR"] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
+        assert_eq!(
+            state.device().active_channels,
+            [Channel::FrontLeft, Channel::Subwoofer2]
+        );
         assert_eq!(state.device().channel_volumes.len(), 2);
         assert_eq!(state.device().speaker_levels.len(), 0);
     }

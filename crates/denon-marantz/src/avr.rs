@@ -21,6 +21,7 @@ use tokio::sync::{broadcast, watch};
 #[cfg(feature = "telnet")]
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
+use crate::details::{PageStatus, SkipReason, SourceDetails, SpeakerDetails};
 #[cfg(feature = "telnet")]
 use crate::device_control::{DeviceControl, ResetKeys};
 #[cfg(feature = "telnet")]
@@ -215,13 +216,15 @@ impl Avr {
     /// bass settings from the web control pages on port 11080.
     ///
     /// Only these pages have them, and they do not send changes: call it
-    /// again to read them again. The result is in
-    /// [`DeviceState::speaker_tables`](denon_marantz_proto::DeviceState::speaker_tables).
+    /// again to read them again. The values join the telnet values in
+    /// [`DeviceState::speaker_setup`](denon_marantz_proto::DeviceState::speaker_setup) and
+    /// [`DeviceState::channel_volumes`](denon_marantz_proto::DeviceState::channel_volumes).
     ///
-    /// Returns true if at least one page was read. Not every receiver has the
-    /// pages, and the receiver can refuse one for a while, for example the
-    /// channel levels while a Dirac filter is on. Such a page is skipped and
-    /// is not an error.
+    /// The result says what happened to each page. A page that the receiver
+    /// does not have, refuses or sends in a form that the library cannot read
+    /// is not an error. The channel level page is not asked for while the
+    /// state shows that a Dirac ART filter is active, because the receiver
+    /// does not answer it then.
     ///
     /// # Errors
     ///
@@ -230,33 +233,40 @@ impl Avr {
     /// before stay in the state. A receiver without the port gives this error
     /// after the connect time of [`AvrBuilder::ajax_config`], one second by
     /// default, on each call.
-    pub async fn update_speaker_tables(&self) -> Result<bool, Error> {
-        let mut read = false;
-        read |= self
+    pub async fn update_speaker_details(&self) -> Result<SpeakerDetails, Error> {
+        let distances = self
             .read_ajax(
                 DISTANCES_PATH,
                 SpeakerTable::parse_distances,
                 State::apply_speaker_distances,
             )
             .await?;
-        read |= self
+        let crossovers = self
             .read_ajax(
                 CROSSOVERS_PATH,
                 SpeakerTable::parse_crossovers,
-                State::apply_speaker_crossovers,
+                |state, table| state.apply_speaker_crossovers(&table),
             )
             .await?;
-        read |= self
-            .read_ajax(
+        let channel_levels = if self.dirac_art_active() {
+            PageStatus::Skipped(SkipReason::DiracArt)
+        } else {
+            self.read_ajax(
                 CHANNEL_LEVELS_PATH,
                 SpeakerTable::parse_channel_levels,
-                State::apply_channel_level_table,
+                |state, table| state.apply_channel_level_table(&table),
             )
-            .await?;
-        read |= self
+            .await?
+        };
+        let bass = self
             .read_ajax(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
             .await?;
-        Ok(read)
+        Ok(SpeakerDetails {
+            distances,
+            crossovers,
+            channel_levels,
+            bass,
+        })
     }
 
     /// Reads the physical input of each source and the names of the sources
@@ -264,49 +274,62 @@ impl Avr {
     ///
     /// Telnet has the names that the user gave, but not the others and not the
     /// inputs. The pages do not send changes: call it again to read them
-    /// again. The result is in
+    /// again. The values are in
     /// [`DeviceState::sources`](denon_marantz_proto::DeviceState::sources).
     ///
-    /// Returns true if at least one page was read. A page that the receiver
-    /// does not have is skipped and is not an error.
+    /// The result says what happened to each page. A page that the receiver
+    /// does not have or refuses is not an error.
     ///
     /// # Errors
     ///
     /// The same as [`Avr::update_speaker_details`].
-    pub async fn update_source_details(&self) -> Result<bool, Error> {
-        let mut read = false;
-        read |= self
+    pub async fn update_source_details(&self) -> Result<SourceDetails, Error> {
+        let assignments = self
             .read_ajax(INPUT_ASSIGN_PATH, InputAssignment::parse, |state, list| {
                 state.apply_input_assignments(&list)
             })
             .await?;
-        read |= self
+        let names = self
             .read_ajax(SOURCE_NAMES_PATH, SourceNames::parse, |state, names| {
                 state.apply_web_source_names(&names)
             })
             .await?;
-        Ok(read)
+        Ok(SourceDetails { assignments, names })
     }
 
-    /// Reads one web control page into the state. Returns false if the page
-    /// is not available. Returns an error only if the receiver is not
-    /// reachable.
+    /// Returns true if the state shows that a Dirac ART filter is active.
+    fn dirac_art_active(&self) -> bool {
+        self.channels
+            .watch_state()
+            .borrow()
+            .device()
+            .dirac_art_active()
+            == Some(true)
+    }
+
+    /// Reads one web control page into the state. Returns an error only if
+    /// the receiver is not reachable.
     async fn read_ajax<T>(
         &self,
         path: &str,
         parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
         apply: impl FnOnce(&mut State, T) -> Option<Change>,
-    ) -> Result<bool, Error> {
+    ) -> Result<PageStatus, Error> {
         match self.ajax.get_parsed(path, parse).await {
             Ok(value) => {
                 self.channels
                     .modify(|state, notify| notify(apply(state, value)));
-                Ok(true)
+                Ok(PageStatus::Read)
             }
             Err(error) if error.is_unreachable() => Err(error),
             Err(error) => {
                 tracing::debug!(host = %self.info.host, %error, "web control page not read");
-                Ok(false)
+                Ok(match error {
+                    Error::Status { status: 404, .. } => PageStatus::NotFound,
+                    Error::Status { status, .. } => PageStatus::Refused(status),
+                    Error::Forbidden { .. } => PageStatus::Refused(403),
+                    _ => PageStatus::Unreadable,
+                })
             }
         }
     }

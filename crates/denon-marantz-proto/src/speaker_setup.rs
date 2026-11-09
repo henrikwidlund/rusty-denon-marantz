@@ -1,8 +1,12 @@
 //! Speaker crossovers, speaker configuration and graphic EQ that a receiver
 //! reports on telnet as `SS` events. The spec does not describe them. The
-//! texts come from the answers of an AVC-A10H.
+//! texts come from the answers of an AVC-A10H. The web control pages add the
+//! distances, the bass settings and the crossover choices.
 
 use std::collections::BTreeMap;
+
+use crate::channel::Channel;
+use crate::speaker_tables::{BassSettings, SpeakerTable};
 
 /// Most entries of each map that are kept. A faulty receiver cannot make the
 /// maps grow without a limit.
@@ -41,6 +45,16 @@ pub enum Crossover {
 }
 
 impl Crossover {
+    /// A value of the web control pages: `0` is full range, other values are
+    /// Hz. `None` for a value below 0 or above 65535.
+    #[must_use]
+    pub fn from_page_value(value: i32) -> Option<Self> {
+        match u16::try_from(value).ok()? {
+            0 => Some(Self::Full),
+            hz => Some(Self::Hz(hz)),
+        }
+    }
+
     /// Parses the value of an event: `FUL` or three digits, for example `080`.
     #[must_use]
     pub fn from_code(code: &str) -> Option<Self> {
@@ -66,6 +80,18 @@ pub struct SpeakerSetup {
     /// Graphic EQ values of each group, for example `FRO` is
     /// `500:500:500:500:500:500:500:500:500`. The unit is not documented.
     pub graphic_eq: BTreeMap<String, String>,
+    /// The crossovers that the receiver offers. Empty until the web control
+    /// page has been read.
+    pub crossover_choices: Vec<Crossover>,
+    /// Distances of the speakers from the web control page. `None` until it
+    /// has been read.
+    pub distances: Option<SpeakerTable<Channel>>,
+    /// Number of subwoofers, from 1 to 4. `None` until the web control page
+    /// has been read.
+    pub subwoofer_count: Option<u8>,
+    /// Bass settings from the web control page. `None` until it has been
+    /// read.
+    pub bass: Option<BassSettings>,
 }
 
 impl SpeakerSetup {
@@ -117,15 +143,63 @@ impl SpeakerSetup {
         let (code, value) = rest.split_once(' ')?;
         let group = SpeakerGroup::from_code(code)?;
         let crossover = Crossover::from_code(value.trim())?;
+        Some(self.set_crossover(group, crossover))
+    }
+
+    /// Sets the crossover of a group. Returns true if it changed.
+    fn set_crossover(&mut self, group: SpeakerGroup, crossover: Crossover) -> bool {
         if let Some((_, current)) = self
             .crossovers
             .iter_mut()
             .find(|(known, _)| *known == group)
         {
-            return Some(std::mem::replace(current, crossover) != crossover);
+            return std::mem::replace(current, crossover) != crossover;
         }
         self.crossovers.push((group, crossover));
-        Some(true)
+        true
+    }
+
+    /// Stores the crossovers and the choices of the crossovers page of the
+    /// web control. Returns true if anything changed.
+    pub(crate) fn apply_crossover_table(&mut self, table: &SpeakerTable<SpeakerGroup>) -> bool {
+        let mut changed = false;
+        for entry in &table.entries {
+            if let Some(crossover) = Crossover::from_page_value(entry.value) {
+                changed |= self.set_crossover(entry.key, crossover);
+            }
+        }
+        let choices: Vec<_> = table
+            .choices
+            .iter()
+            .filter_map(|&hz| Crossover::from_page_value(hz))
+            .collect();
+        if self.crossover_choices != choices {
+            self.crossover_choices = choices;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Stores the distances of the web control page. Returns true if anything
+    /// changed.
+    pub(crate) fn apply_distances(&mut self, table: SpeakerTable<Channel>) -> bool {
+        let count = table.subwoofer_count;
+        let mut changed = self.subwoofer_count != count;
+        self.subwoofer_count = count;
+        let table = Some(table);
+        if self.distances != table {
+            self.distances = table;
+            changed = true;
+        }
+        changed
+    }
+
+    /// Stores the bass page of the web control. Returns true if it changed.
+    pub(crate) fn apply_bass(&mut self, bass: BassSettings) -> bool {
+        let bass = Some(bass);
+        let changed = self.bass != bass;
+        self.bass = bass;
+        changed
     }
 }
 
@@ -155,6 +229,39 @@ fn insert(map: &mut BTreeMap<String, String>, key: &str, value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_pages_join_the_telnet_values() {
+        let mut setup = SpeakerSetup::default();
+        setup.apply("CFRCEN 080");
+        let table = SpeakerTable::parse_crossovers(
+            br#"<Crossovers><List><Speaker index="0">0</Speaker><Speaker index="1">80</Speaker>
+            </List><SelectableValue><List><Item>0</Item><Item>40</Item></List>
+            </SelectableValue></Crossovers>"#,
+        )
+        .unwrap();
+        assert!(setup.apply_crossover_table(&table));
+        assert!(!setup.apply_crossover_table(&table));
+        assert_eq!(
+            setup.crossovers,
+            [
+                (SpeakerGroup::Center, Crossover::Hz(80)),
+                (SpeakerGroup::Front, Crossover::Full)
+            ]
+        );
+        assert_eq!(
+            setup.crossover_choices,
+            [Crossover::Full, Crossover::Hz(40)]
+        );
+        // Telnet goes on to change the same values.
+        assert_eq!(setup.apply("CFRFRO 100"), Some(true));
+        assert_eq!(
+            setup.crossovers[1],
+            (SpeakerGroup::Front, Crossover::Hz(100))
+        );
+        assert_eq!(Crossover::from_page_value(-1), None);
+        assert_eq!(Crossover::from_page_value(70_000), None);
+    }
 
     #[test]
     fn crossovers_follow_events() {
