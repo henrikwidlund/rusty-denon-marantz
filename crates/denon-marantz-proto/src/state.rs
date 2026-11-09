@@ -495,6 +495,15 @@ impl State {
         })
     }
 
+    /// Stores the channel levels of the web control page.
+    pub fn apply_channel_level_table(&mut self, table: SpeakerTable<Channel>) -> Option<Change> {
+        let new = Some(table);
+        (self.device.speaker_tables.channel_levels != new).then(|| {
+            self.device.speaker_tables.channel_levels = new;
+            speaker_tables_change()
+        })
+    }
+
     /// Stores the speaker crossovers of the web control page.
     pub fn apply_speaker_crossovers(
         &mut self,

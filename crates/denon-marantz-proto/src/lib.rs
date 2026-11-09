@@ -53,7 +53,8 @@ pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, Soun
 pub use source_list::{SourceInfo, SourceList};
 pub use speaker_setup::{Crossover, SpeakerGroup, SpeakerSetup};
 pub use speaker_tables::{
-    AJAX_PORT, CROSSOVERS_PATH, DISTANCES_PATH, SpeakerTable, SpeakerTables, TableEntry,
+    AJAX_PORT, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, DISTANCES_PATH, DistanceUnit, SpeakerTable,
+    SpeakerTables, TableEntry,
 };
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;

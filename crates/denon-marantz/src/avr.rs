@@ -13,8 +13,8 @@ use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
-    AJAX_PORT, Brand, CROSSOVERS_PATH, Change, DISTANCES_PATH, DeviceDescription, ReceiverType,
-    SpeakerTable, State, Zone,
+    AJAX_PORT, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
+    DeviceDescription, ReceiverType, SpeakerTable, State, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -213,8 +213,8 @@ impl Avr {
         }
     }
 
-    /// Reads the speaker distances and crossovers from the web control pages
-    /// on port 11080.
+    /// Reads the speaker distances, the crossovers and the channel levels from
+    /// the web control pages on port 11080.
     ///
     /// Only these pages have them, and they do not send changes: call it
     /// again to read them again. Not every receiver has the pages. Returns
@@ -253,6 +253,23 @@ impl Avr {
                 read = true;
                 self.channels.modify(|state, notify| {
                     notify(state.apply_speaker_crossovers(table));
+                });
+            }
+            Err(error) => {
+                if self.ajax_unreachable(&error) {
+                    return read;
+                }
+            }
+        }
+        match self
+            .ajax
+            .get_parsed(CHANNEL_LEVELS_PATH, SpeakerTable::parse_channel_levels)
+            .await
+        {
+            Ok(table) => {
+                read = true;
+                self.channels.modify(|state, notify| {
+                    notify(state.apply_channel_level_table(table));
                 });
             }
             Err(error) => {
