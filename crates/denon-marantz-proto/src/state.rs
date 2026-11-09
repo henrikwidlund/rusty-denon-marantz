@@ -1,4 +1,5 @@
-//! State of a receiver, updated from telnet events and `AppCommand` answers.
+//! State of a receiver, updated from telnet events, `AppCommand` answers and
+//! pages of the web interface.
 //!
 //! A value is `None` until the receiver reports it, or if the receiver reports
 //! something that is not a known value.
@@ -6,6 +7,9 @@
 //! Telnet events change one value at a time. An event with text that cannot be
 //! read is ignored, so the last known value stays. An `AppCommand` answer is a
 //! full snapshot. A value in it that cannot be read makes the value unknown.
+//!
+//! The web interface has values that telnet does not report. A page fills its
+//! values when it is read, and the receiver does not send changes of it.
 
 use std::borrow::Cow;
 
@@ -56,9 +60,9 @@ pub enum Setting {
     /// Speaker crossovers, configuration or graphic EQ.
     SpeakerSetup,
     /// Which settings the receiver offers and lets the user change, from the
-    /// web control.
+    /// web interface.
     SettingsAvailability,
-    /// The settings that only the web control pages give, such as HDMI control.
+    /// The settings that only the web interface gives, such as HDMI control.
     SystemSettings,
     /// Variable or fixed volume of a zone.
     VolumeMode,
@@ -297,7 +301,7 @@ pub struct DeviceState {
     pub channel_volumes: Vec<(Channel, ChannelLevel)>,
     /// The channels that the receiver uses now, in the order of the latest
     /// list: the `CV` list of telnet up to its `CVEND` line, or the channels
-    /// that the web control page shows. The receiver sends a new list when
+    /// that the web interface page shows. The receiver sends a new list when
     /// the input or the signal changes. [`DeviceState::channel_volumes`] keeps
     /// the levels of the channels of earlier lists too.
     pub active_channels: Vec<Channel>,
@@ -306,11 +310,11 @@ pub struct DeviceState {
     /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
     pub speaker_setup: SpeakerSetup,
     /// Which settings the receiver offers and lets the user change now. Only
-    /// the web control pages have it, and they change with the sound mode and the signal, so they
-    /// are read on request.
+    /// the web interface has it, and it changes with the sound mode and the
+    /// signal, so it is read on request.
     pub settings_availability: SettingsAvailability,
     /// Settings that telnet does not report, such as HDMI control, the menu
-    /// lock and when the network answers. Only the web control page has them,
+    /// lock and when the network answers. Only the web interface has them,
     /// and it does not send changes, so it is read on request.
     pub system_settings: SystemSettings,
     /// The sound settings that the state has no value for above, such as
@@ -537,7 +541,7 @@ impl State {
     }
 
     /// Stores the physical inputs of the sources, from the input assign page
-    /// of the web control. They are part of [`DeviceState::sources`].
+    /// of the web interface. They are part of [`DeviceState::sources`].
     pub fn apply_input_assignments(&mut self, assignments: &[InputAssignment]) -> Option<Change> {
         self.device
             .sources
@@ -546,7 +550,7 @@ impl State {
     }
 
     /// Stores the default and automatic names of the sources and the longest
-    /// name, from the source names page of the web control. They are part of
+    /// name, from the source names page of the web interface. They are part of
     /// [`DeviceState::sources`].
     pub fn apply_web_source_names(&mut self, names: &SourceNames) -> Option<Change> {
         self.device
@@ -555,7 +559,7 @@ impl State {
             .then_some(sources_change())
     }
 
-    /// Stores the availability of a group of settings from the web control.
+    /// Stores the availability of a group of settings from the web interface.
     /// It is part of [`DeviceState::settings_availability`].
     pub fn apply_settings_availability(&mut self, group: GroupAvailability) -> Option<Change> {
         self.device
@@ -567,7 +571,7 @@ impl State {
             })
     }
 
-    /// Stores the system settings of the web control. They are
+    /// Stores the system settings of the web interface. They are
     /// [`DeviceState::system_settings`].
     pub fn apply_system_settings(&mut self, settings: SystemSettings) -> Option<Change> {
         (self.device.system_settings != settings).then(|| {
@@ -579,7 +583,7 @@ impl State {
         })
     }
 
-    /// Stores the speaker distances of the web control page, and the number
+    /// Stores the speaker distances of the web interface page, and the number
     /// of subwoofers. They are part of [`DeviceState::speaker_setup`].
     pub fn apply_speaker_distances(&mut self, table: SpeakerTable<Channel>) -> Option<Change> {
         self.device
@@ -588,7 +592,7 @@ impl State {
             .then_some(speaker_setup_change())
     }
 
-    /// Stores the speaker crossovers of the web control page. They join the
+    /// Stores the speaker crossovers of the web interface page. They join the
     /// crossovers that telnet reports, in [`DeviceState::speaker_setup`].
     pub fn apply_speaker_crossovers(
         &mut self,
@@ -600,7 +604,7 @@ impl State {
             .then_some(speaker_setup_change())
     }
 
-    /// Stores the bass page of the web control. It is part of
+    /// Stores the bass page of the web interface. It is part of
     /// [`DeviceState::speaker_setup`].
     pub fn apply_bass_settings(&mut self, bass: BassSettings) -> Option<Change> {
         self.device
@@ -981,7 +985,7 @@ impl State {
     }
 
     /// Applies an `OP` event about a Dirac Live slot, for example
-    /// `DLSSL1NAME Comte`. The other `OP` events are ignored.
+    /// `DLSSL1NAME Cinema`. The other `OP` events are ignored.
     fn apply_dirac_slot(&mut self, parameter: &str) -> Option<Change> {
         let rest = parameter.strip_prefix("DLSSL")?;
         let number = rest.bytes().next()?.checked_sub(b'1').filter(|n| *n < 3)?;
@@ -2239,7 +2243,7 @@ mod tests {
             })
         };
         // The receiver pads the name with spaces.
-        let name = format!("OPDLSSL1NAME {:<55}", "Comte");
+        let name = format!("OPDLSSL1NAME {:<55}", "Cinema");
         assert_eq!(apply(&mut state, &name), slot(1));
         assert_eq!(apply(&mut state, &name), None);
         assert_eq!(apply(&mut state, "OPDLSSL1IMP ON"), slot(1));
@@ -2248,7 +2252,7 @@ mod tests {
         assert_eq!(apply(&mut state, "OPDLSSL2TYP ART"), slot(2));
         assert_eq!(apply(&mut state, "OPDLSSL3IMP OFF"), slot(3));
         let slots = &state.device().dirac_slots;
-        assert_eq!(slots[0].name.as_deref(), Some("Comte"));
+        assert_eq!(slots[0].name.as_deref(), Some("Cinema"));
         assert_eq!(slots[0].imported, Some(true));
         assert_eq!(slots[0].kind.as_deref(), Some("BC"));
         assert_eq!(slots[1].name.as_deref(), Some("Dirac ART"));
@@ -2259,11 +2263,11 @@ mod tests {
         assert_eq!(state.device().dirac_slots[1].name, None);
         // A name finds its slot. A slot without a filter is not used.
         assert_eq!(
-            state.device().dirac_filter_named("comte"),
+            state.device().dirac_filter_named("cinema"),
             Some(DiracFilter::Slot1)
         );
         assert_eq!(
-            state.device().dirac_filter_named(" Comte "),
+            state.device().dirac_filter_named(" Cinema "),
             Some(DiracFilter::Slot1)
         );
         assert_eq!(state.device().dirac_filter_named("Dirac ART"), None);

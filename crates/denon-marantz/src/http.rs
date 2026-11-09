@@ -1,4 +1,5 @@
-//! HTTP client for the web interface of a receiver.
+//! HTTP client for the HTTP interfaces of a receiver: AppCommand, the status
+//! pages and the web interface.
 //!
 //! Receivers speak plain HTTP on the local network. One client keeps a small
 //! pool of connections to one receiver and port.
@@ -46,7 +47,7 @@ impl Default for HttpConfig {
     }
 }
 
-/// Connections to the web interface of one receiver on one port.
+/// Connections to one receiver on one port.
 #[derive(Debug)]
 pub struct HttpClient {
     client: Client<HttpConnector, Full<Bytes>>,

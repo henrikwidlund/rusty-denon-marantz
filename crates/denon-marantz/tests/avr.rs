@@ -386,20 +386,19 @@ async fn update_of_a_2016_receiver_reads_tone_control() {
 }
 
 const DISTANCES_PAGE: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-distances.xml");
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-speakers-distances.xml");
 const CHANNEL_LEVELS_PAGE: &[u8] = include_bytes!(
-    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml"
+    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-option-channel-levels.xml"
 );
 const BASS_PAGE: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-bass.xml");
-const CROSSOVERS_PAGE: &[u8] = include_bytes!(
-    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-crossovers.xml"
-);
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-speakers-bass.xml");
+const CROSSOVERS_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-speakers-crossovers.xml");
 
 #[tokio::test]
 async fn speaker_details_are_read_from_the_web_control_pages() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/speakers/get_config?type=4" => Reply::Body(DISTANCES_PAGE.to_vec()),
         "/ajax/speakers/get_config?type=6" => Reply::Body(CROSSOVERS_PAGE.to_vec()),
         "/ajax/option/get_config?type=3" => Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
@@ -408,8 +407,8 @@ async fn speaker_details_are_read_from_the_web_control_pages() {
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -437,14 +436,14 @@ async fn speaker_details_are_read_from_the_web_control_pages() {
 #[tokio::test]
 async fn a_missing_speaker_page_is_not_an_error() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/speakers/get_config?type=6" => Reply::Body(CROSSOVERS_PAGE.to_vec()),
         _ => Reply::Status(404),
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -466,8 +465,8 @@ async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
     let port = closed.local_addr().unwrap().port();
     drop(closed);
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(port)
-        .ajax_config(config())
+        .web_interface_port(port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -479,22 +478,22 @@ async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
 }
 
 const INPUT_ASSIGN_PAGE: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-inputs-assign.xml");
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-inputs-assign.xml");
 const SOURCE_NAMES_PAGE: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-inputs-names.xml");
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-inputs-names.xml");
 
 #[tokio::test]
 async fn source_details_are_read_from_the_web_control_pages() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/inputs/get_config?type=2" => Reply::Body(INPUT_ASSIGN_PAGE.to_vec()),
         "/ajax/inputs/get_config?type=3" => Reply::Body(SOURCE_NAMES_PAGE.to_vec()),
         _ => Reply::Status(404),
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -516,10 +515,10 @@ async fn source_details_are_read_from_the_web_control_pages() {
 #[tokio::test]
 async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|_| Reply::Status(404)).await;
+    let web_interface = Fake::start(|_| Reply::Status(404)).await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -532,8 +531,8 @@ async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
     let port = closed.local_addr().unwrap().port();
     drop(closed);
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(port)
-        .ajax_config(config())
+        .web_interface_port(port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -548,7 +547,7 @@ async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
 #[tokio::test]
 async fn refused_and_unreadable_pages_are_reported_per_page() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/speakers/get_config?type=4" => Reply::Status(500),
         "/ajax/speakers/get_config?type=6" => Reply::Body(b"<html>sorry</html>".to_vec()),
         "/ajax/option/get_config?type=3" => Reply::Status(403),
@@ -557,8 +556,8 @@ async fn refused_and_unreadable_pages_are_reported_per_page() {
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -576,49 +575,49 @@ async fn settings_availability_are_read_from_the_web_control_pages() {
         (
             "/ajax/audio/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-audio.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-audio.xml"
             ),
         ),
         (
             "/ajax/video/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-video.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-video.xml"
             ),
         ),
         (
             "/ajax/inputs/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-inputs.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-inputs.xml"
             ),
         ),
         (
             "/ajax/speakers/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-speakers.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-speakers.xml"
             ),
         ),
         (
             "/ajax/network/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-network.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-network.xml"
             ),
         ),
         (
             "/ajax/general/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-general.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-general.xml"
             ),
         ),
         (
             "/ajax/option/get_config?type=1",
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-availability-option.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-availability-option.xml"
             ),
         ),
     ];
     let receiver = avr_x_receiver().await;
     // The video group is missing on this fake receiver.
-    let ajax = Fake::start(|seen| {
+    let web_interface = Fake::start(|seen| {
         GROUPS
             .iter()
             .filter(|(path, _)| !path.contains("/video/"))
@@ -627,8 +626,8 @@ async fn settings_availability_are_read_from_the_web_control_pages() {
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();
@@ -666,10 +665,10 @@ async fn settings_availability_are_read_from_the_web_control_pages() {
 #[tokio::test]
 async fn system_settings_are_read_from_the_web_control_page() {
     let receiver = avr_x_receiver().await;
-    let ajax = Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
         "/ajax/advanced/get_config?type=3" => Reply::Body(
             include_bytes!(
-                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-system-settings.xml"
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-system-settings.xml"
             )
             .to_vec(),
         ),
@@ -677,8 +676,8 @@ async fn system_settings_are_read_from_the_web_control_page() {
     })
     .await;
     let avr = builder(&receiver, ReceiverType::AvrX)
-        .ajax_port(ajax.port)
-        .ajax_config(config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
         .connect()
         .await
         .unwrap();

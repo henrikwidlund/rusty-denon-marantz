@@ -1,6 +1,6 @@
 [package]
 name = "denon-marantz-proto"
-description = "Sans-IO protocol for Denon and Marantz AV receivers: telnet, AppCommand XML and state"
+description = "Sans-IO protocol for Denon and Marantz AV receivers: telnet, AppCommand XML, the web interface and state"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

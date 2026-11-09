@@ -1581,15 +1581,15 @@ async fn audyssey_settings_are_not_sent_while_a_dirac_filter_is_selected() {
 }
 
 const DISTANCES_PAGE: &[u8] =
-    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-distances.xml");
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-speakers-distances.xml");
 const CHANNEL_LEVELS_PAGE: &[u8] = include_bytes!(
-    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml"
+    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-option-channel-levels.xml"
 );
 
 #[tokio::test]
 async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
     let receiver = avr_x_receiver().await;
-    let ajax = common::Fake::start(|seen| match seen.path.as_str() {
+    let web_interface = common::Fake::start(|seen| match seen.path.as_str() {
         "/ajax/speakers/get_config?type=4" => common::Reply::Body(DISTANCES_PAGE.to_vec()),
         "/ajax/option/get_config?type=3" => common::Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
         _ => common::Reply::Status(404),
@@ -1598,14 +1598,15 @@ async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
     let telnet = FakeTelnet::start().await;
     let avr = builder(&receiver, ReceiverType::AvrX)
         .telnet_config(telnet_config(telnet.port))
-        .ajax_port(ajax.port)
-        .ajax_config(common::config())
+        .web_interface_port(web_interface.port)
+        .web_interface_config(common::config())
         .connect()
         .await
         .unwrap();
     avr.telnet_connect().await.unwrap();
-    let asked = |ajax: &common::Fake| {
-        ajax.requests()
+    let asked = |web_interface: &common::Fake| {
+        web_interface
+            .requests()
             .iter()
             .filter(|seen| seen.path.ends_with("type=3"))
             .count()
@@ -1613,7 +1614,7 @@ async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
     // The kind of the filter is not known: the page is asked for.
     let result = avr.update_speaker_details().await.unwrap();
     assert_eq!(result.channel_levels, PageStatus::Read);
-    assert_eq!(asked(&ajax), 1);
+    assert_eq!(asked(&web_interface), 1);
     // Dirac ART is active: it is not asked for, and the levels stay.
     telnet.send(b"OPDLSSL2TYP ART\rPSDIRAC 2\r");
     wait_until("the filter", || {
@@ -1626,7 +1627,7 @@ async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
         PageStatus::Skipped(SkipReason::DiracArt)
     );
     assert_eq!(result.distances, PageStatus::Read);
-    assert_eq!(asked(&ajax), 1);
+    assert_eq!(asked(&web_interface), 1);
     assert_eq!(avr.snapshot().device().active_channels.len(), 13);
     // A filter of another kind does not stop it.
     telnet.send(b"OPDLSSL1TYP BC\rPSDIRAC 1\r");
@@ -1636,7 +1637,7 @@ async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
     .await;
     let result = avr.update_speaker_details().await.unwrap();
     assert_eq!(result.channel_levels, PageStatus::Read);
-    assert_eq!(asked(&ajax), 2);
+    assert_eq!(asked(&web_interface), 2);
 }
 
 #[tokio::test]

@@ -63,8 +63,8 @@ pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, Soun
 pub use source_list::{SourceInfo, SourceList};
 pub use speaker_setup::{Crossover, SpeakerGroup, SpeakerSetup};
 pub use speaker_tables::{
-    AJAX_PORT, BASS_PATH, BassSettings, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, DISTANCES_PATH,
-    DistanceUnit, LFE_DISTRIBUTION_OFF, SpeakerTable, TableEntry,
+    BASS_PATH, BassSettings, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, DISTANCES_PATH, DistanceUnit,
+    LFE_DISTRIBUTION_OFF, SpeakerTable, TableEntry, WEB_INTERFACE_PORT,
 };
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};

@@ -1,8 +1,8 @@
-//! Speaker distances and crossovers from the web control pages of a receiver.
+//! Speaker distances and crossovers from the web interface of a receiver.
 //!
 //! The pages are `/ajax/speakers/get_config?type=N` on port 11080. They list
 //! speakers by an index. Each page has its own order of speakers. The orders
-//! come from the script of the web control of an AVC-A10H. Entries with an
+//! were read from an AVC-A10H. Entries with an
 //! index that is not known are skipped.
 
 use crate::channel::Channel;
@@ -10,8 +10,8 @@ use crate::error::Error;
 use crate::speaker_setup::SpeakerGroup;
 use crate::xml::{Node, check_well_formed};
 
-/// Port of the web control pages.
-pub const AJAX_PORT: u16 = 11080;
+/// Port of the web interface.
+pub const WEB_INTERFACE_PORT: u16 = 11080;
 /// Path of the speaker distances page.
 pub const DISTANCES_PATH: &str = "/ajax/speakers/get_config?type=4";
 /// Path of the speaker crossovers page.
@@ -19,7 +19,7 @@ pub const CROSSOVERS_PATH: &str = "/ajax/speakers/get_config?type=6";
 
 /// Path of the bass page.
 pub const BASS_PATH: &str = "/ajax/speakers/get_config?type=7";
-/// Path of the channel level page, the dials of the web control. The levels
+/// Path of the channel level page, the dials of the web interface. The levels
 /// are a temporary change on top of the speaker levels.
 pub const CHANNEL_LEVELS_PATH: &str = "/ajax/option/get_config?type=3";
 
@@ -132,20 +132,20 @@ pub struct TableEntry<K> {
     pub key: K,
     /// Value as the page gives it.
     pub value: i32,
-    /// The `display` attribute of the page. The web control shows an entry
+    /// The `display` attribute of the page. The web interface shows an entry
     /// with `2` or `3` and hides one with `1`. With `3` the value can be
     /// changed, with `2` it is shown but cannot.
     pub display: Option<u8>,
 }
 
 impl<K> TableEntry<K> {
-    /// Returns true if the web control shows the entry.
+    /// Returns true if the web interface shows the entry.
     #[must_use]
     pub const fn is_shown(&self) -> bool {
         matches!(self.display, Some(2 | 3))
     }
 
-    /// Returns true if the web control lets the user change the value.
+    /// Returns true if the web interface lets the user change the value.
     #[must_use]
     pub const fn is_editable(&self) -> bool {
         matches!(self.display, Some(3))
@@ -385,7 +385,7 @@ impl SubwooferOutputMode {
     }
 }
 
-/// The bass page of the web control: subwoofer output, the low pass filter of
+/// The bass page of the web interface: subwoofer output, the low pass filter of
 /// the LFE channel and how much LFE the speakers get.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BassSettings {
@@ -457,12 +457,12 @@ mod tests {
     use super::*;
 
     const DISTANCES: &[u8] =
-        include_bytes!("../tests/data/xml/AVC-A10H-ajax-speakers-distances.xml");
+        include_bytes!("../tests/data/xml/AVC-A10H-web-speakers-distances.xml");
     const CHANNEL_LEVELS: &[u8] =
-        include_bytes!("../tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml");
+        include_bytes!("../tests/data/xml/AVC-A10H-web-option-channel-levels.xml");
     const CROSSOVERS: &[u8] =
-        include_bytes!("../tests/data/xml/AVC-A10H-ajax-speakers-crossovers.xml");
-    const BASS: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-speakers-bass.xml");
+        include_bytes!("../tests/data/xml/AVC-A10H-web-speakers-crossovers.xml");
+    const BASS: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-speakers-bass.xml");
 
     fn entry<K: Copy>(table: &SpeakerTable<K>, index: usize) -> (K, i32, Option<u8>) {
         let entry = table.entries[index];
@@ -473,17 +473,17 @@ mod tests {
     fn distances_of_the_a10h() {
         let table = SpeakerTable::parse_distances(DISTANCES).unwrap();
         assert_eq!(table.unit, Some(3));
-        // The test receiver has two subwoofers.
+        // The page has two subwoofers.
         assert_eq!(table.subwoofer_count, Some(2));
         assert_eq!(table.entries.len(), 13);
-        // Unit 3 is milliseconds: the web page shows 2.5, 2.8, 2.7 and so on.
+        // Unit 3 is milliseconds: the web interface shows 2.5, 2.8, 2.7 and so on.
         let unit = table.distance_unit().unwrap();
         assert_eq!(unit, DistanceUnit::Milliseconds);
         assert!((unit.from_raw(58) - 5.8).abs() < 1e-6);
         assert_eq!(entry(&table, 0), (Channel::FrontLeft, 25, Some(3)));
         assert_eq!(entry(&table, 2), (Channel::Center, 27, Some(3)));
         assert_eq!(entry(&table, 6), (Channel::SurroundRight, 58, Some(3)));
-        // The test receiver has front height and top middle speakers.
+        // The page has front height and top middle speakers.
         assert_eq!(entry(&table, 9), (Channel::FrontHeightLeft, 6, Some(3)));
         assert_eq!(entry(&table, 11), (Channel::TopMiddleLeft, 54, Some(3)));
         assert_eq!(entry(&table, 12), (Channel::TopMiddleRight, 58, Some(3)));
@@ -505,7 +505,7 @@ mod tests {
             .filter(|e| e.is_shown())
             .map(|e| e.key)
             .collect();
-        // The setup of the test receiver: 13 channels like the web page.
+        // The page has 13 channels.
         assert_eq!(shown.len(), 13);
         assert!(shown.contains(&Channel::FrontHeightRight));
         assert!(!shown.contains(&Channel::TopFrontLeft));

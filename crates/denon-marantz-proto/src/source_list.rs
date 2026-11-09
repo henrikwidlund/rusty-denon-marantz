@@ -1,6 +1,6 @@
 //! The input sources of a receiver: their names, if they are in use and the
 //! physical inputs that they use. Telnet reports the names and if a source is
-//! in use. The other values come from the web control pages.
+//! in use. The other values come from the web interface.
 
 use crate::input_pages::{InputAssignment, SourceNameEntry, SourceNames};
 
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn order_is_the_order_of_the_receiver() {
         let mut list = SourceList::default();
-        for line in ["FUNBD Disc", "SODTV DEL", "FUNTV TV Audio", "SODBD USE"] {
+        for line in ["FUNBD Player", "SODTV DEL", "FUNTV TV Audio", "SODBD USE"] {
             list.apply_ss(line);
         }
         let codes: Vec<_> = list.as_slice().iter().map(|s| s.code.as_str()).collect();

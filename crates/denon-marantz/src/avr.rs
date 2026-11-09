@@ -12,10 +12,10 @@ use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
-    AJAX_PORT, BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change,
-    DISTANCES_PATH, DeviceDescription, GroupAvailability, INPUT_ASSIGN_PATH, InputAssignment,
-    ReceiverType, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames,
-    SpeakerTable, State, SystemSettings, Zone,
+    BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
+    DeviceDescription, GroupAvailability, INPUT_ASSIGN_PATH, InputAssignment, ReceiverType,
+    SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames, SpeakerTable, State,
+    SystemSettings, WEB_INTERFACE_PORT, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -85,7 +85,7 @@ pub struct Info {
     pub host: String,
     /// Generation of the receiver.
     pub receiver_type: ReceiverType,
-    /// Port of the web interface.
+    /// HTTP port that is used for AppCommand and the status pages.
     pub port: u16,
     /// How the state is read.
     pub update_method: UpdateMethod,
@@ -111,9 +111,9 @@ pub struct Info {
     pub zones: Vec<Zone>,
 }
 
-/// Settings of the requests to the web control pages. A receiver without them
+/// Settings of the requests to the web interface. A receiver without it
 /// should not slow the caller down.
-const AJAX_CONFIG: HttpConfig = HttpConfig {
+const WEB_INTERFACE_CONFIG: HttpConfig = HttpConfig {
     connect_timeout: Duration::from_secs(1),
     request_timeout: Duration::from_secs(3),
     max_response_bytes: 256 * 1024,
@@ -128,8 +128,8 @@ const AJAX_CONFIG: HttpConfig = HttpConfig {
 pub struct AvrBuilder {
     host: String,
     http: HttpConfig,
-    ajax: HttpConfig,
-    ajax_port: u16,
+    web_interface: HttpConfig,
+    web_interface_port: u16,
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
     #[cfg(feature = "telnet")]
@@ -143,8 +143,8 @@ pub struct AvrBuilder {
 #[derive(Debug)]
 pub struct Avr {
     http: HttpClient,
-    /// The web control pages on their own port.
-    ajax: HttpClient,
+    /// The web interface on its own port.
+    web_interface: HttpClient,
     info: Info,
     /// The queries of [`Avr::update`].
     update_commands: Box<[Definition]>,
@@ -165,8 +165,8 @@ impl Avr {
         AvrBuilder {
             host: host.into(),
             http: HttpConfig::default(),
-            ajax: AJAX_CONFIG,
-            ajax_port: AJAX_PORT,
+            web_interface: WEB_INTERFACE_CONFIG,
+            web_interface_port: WEB_INTERFACE_PORT,
             probes: None,
             description_port: None,
             #[cfg(feature = "telnet")]
@@ -216,7 +216,7 @@ impl Avr {
     }
 
     /// Reads the speaker distances, the crossovers, the channel levels and the
-    /// bass settings from the web control pages on port 11080.
+    /// bass settings from the web interface on port 11080.
     ///
     /// Only these pages have them, and they do not send changes: call it
     /// again to read them again. The values join the telnet values in
@@ -234,18 +234,18 @@ impl Avr {
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`]. Pages that were read
     /// before stay in the state. A receiver without the port gives this error
-    /// after the connect time of [`AvrBuilder::ajax_config`], one second by
+    /// after the connect time of [`AvrBuilder::web_interface_config`], one second by
     /// default, on each call.
     pub async fn update_speaker_details(&self) -> Result<SpeakerDetails, Error> {
         let distances = self
-            .read_ajax(
+            .read_web_interface(
                 DISTANCES_PATH,
                 SpeakerTable::parse_distances,
                 State::apply_speaker_distances,
             )
             .await?;
         let crossovers = self
-            .read_ajax(
+            .read_web_interface(
                 CROSSOVERS_PATH,
                 SpeakerTable::parse_crossovers,
                 |state, table| state.apply_speaker_crossovers(&table),
@@ -254,7 +254,7 @@ impl Avr {
         let channel_levels = if self.dirac_art_active() {
             PageStatus::Skipped(SkipReason::DiracArt)
         } else {
-            self.read_ajax(
+            self.read_web_interface(
                 CHANNEL_LEVELS_PATH,
                 SpeakerTable::parse_channel_levels,
                 |state, table| state.apply_channel_level_table(&table),
@@ -262,7 +262,7 @@ impl Avr {
             .await?
         };
         let bass = self
-            .read_ajax(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
+            .read_web_interface(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
             .await?;
         Ok(SpeakerDetails {
             distances,
@@ -273,7 +273,7 @@ impl Avr {
     }
 
     /// Reads the physical input of each source and the names of the sources
-    /// (default, user and automatic) from the web control pages on port 11080.
+    /// (default, user and automatic) from the web interface on port 11080.
     ///
     /// Telnet has the names that the user gave, but not the others and not the
     /// inputs. The pages do not send changes: call it again to read them
@@ -288,12 +288,12 @@ impl Avr {
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_source_details(&self) -> Result<SourceDetails, Error> {
         let assignments = self
-            .read_ajax(INPUT_ASSIGN_PATH, InputAssignment::parse, |state, list| {
+            .read_web_interface(INPUT_ASSIGN_PATH, InputAssignment::parse, |state, list| {
                 state.apply_input_assignments(&list)
             })
             .await?;
         let names = self
-            .read_ajax(SOURCE_NAMES_PATH, SourceNames::parse, |state, names| {
+            .read_web_interface(SOURCE_NAMES_PATH, SourceNames::parse, |state, names| {
                 state.apply_web_source_names(&names)
             })
             .await?;
@@ -301,7 +301,7 @@ impl Avr {
     }
 
     /// Reads which settings the receiver offers and lets the user change
-    /// right now, from the web control pages on port 11080.
+    /// right now, from the web interface on port 11080.
     ///
     /// This changes with the sound mode, the signal and the Dirac filter, and
     /// the pages do not send changes: call it again to read it again. The
@@ -319,7 +319,7 @@ impl Avr {
         let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
         for group in SettingsGroup::ALL {
             let status = self
-                .read_ajax(
+                .read_web_interface(
                     group.path(),
                     |body| GroupAvailability::parse(group, body),
                     State::apply_settings_availability,
@@ -330,7 +330,7 @@ impl Avr {
         Ok(SettingsAvailabilityDetails { pages })
     }
 
-    /// Reads the settings that telnet does not report from a web control page
+    /// Reads the settings that telnet does not report from the web interface
     /// on port 11080: HDMI control, the menu lock, firmware updates, when the
     /// network answers and the streaming services.
     ///
@@ -343,7 +343,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_system_settings(&self) -> Result<PageStatus, Error> {
-        self.read_ajax(
+        self.read_web_interface(
             SYSTEM_SETTINGS_PATH,
             SystemSettings::parse,
             State::apply_system_settings,
@@ -361,15 +361,15 @@ impl Avr {
             == Some(true)
     }
 
-    /// Reads one web control page into the state. Returns an error only if
+    /// Reads one web interface page into the state. Returns an error only if
     /// the receiver is not reachable.
-    async fn read_ajax<T>(
+    async fn read_web_interface<T>(
         &self,
         path: &str,
         parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
         apply: impl FnOnce(&mut State, T) -> Option<Change>,
     ) -> Result<PageStatus, Error> {
-        match self.ajax.get_parsed(path, parse).await {
+        match self.web_interface.get_parsed(path, parse).await {
             Ok(value) => {
                 self.channels
                     .modify(|state, notify| notify(apply(state, value)));
@@ -377,7 +377,7 @@ impl Avr {
             }
             Err(error) if error.is_unreachable() => Err(error),
             Err(error) => {
-                tracing::debug!(host = %self.info.host, %error, "web control page not read");
+                tracing::debug!(host = %self.info.host, %error, "web interface page not read");
                 Ok(match error {
                     Error::Status { status: 404, .. } => PageStatus::NotFound,
                     Error::Status { status, .. } => PageStatus::Refused(status),
@@ -392,8 +392,8 @@ impl Avr {
     ///
     /// Events from the receiver then change the state at once. If the
     /// connection is lost, a task connects again. Does nothing if the
-    /// connection is open. A receiver allows one telnet connection, so a
-    /// remote control app can take it away; the task takes it back.
+    /// connection is open. Older receivers allow one telnet connection, so
+    /// another client can take it away; the task takes it back.
     ///
     /// # Errors
     ///
@@ -624,26 +624,26 @@ impl AvrBuilder {
         self
     }
 
-    /// Sets timeouts, pacing and limits of the requests to the web control
+    /// Sets timeouts, pacing and limits of the requests to the web interface
     /// pages on port 11080. The default waits 1 second to connect and 3
     /// seconds for an answer, so a receiver without these pages costs little
     /// time.
     #[must_use]
-    pub const fn ajax_config(mut self, config: HttpConfig) -> Self {
-        self.ajax = config;
+    pub const fn web_interface_config(mut self, config: HttpConfig) -> Self {
+        self.web_interface = config;
         self
     }
 
-    /// Sets the port of the web control pages. The default is 11080.
+    /// Sets the port of the web interface. The default is 11080.
     #[must_use]
-    pub const fn ajax_port(mut self, port: u16) -> Self {
-        self.ajax_port = port;
+    pub const fn web_interface_port(mut self, port: u16) -> Self {
+        self.web_interface_port = port;
         self
     }
 
     /// Sets the types and ports to try when identifying the receiver, newest
     /// type first. The default is the usual ports of each generation. Use this
-    /// if the web interface is on another port, for example behind a proxy.
+    /// if the AppCommand port is not a usual one, for example behind a proxy.
     #[must_use]
     pub fn probes(mut self, probes: &[(ReceiverType, u16)]) -> Self {
         self.probes = Some(probes.to_vec());
@@ -737,7 +737,11 @@ impl AvrBuilder {
         let single_zone = device_info.device_zones == Some(1);
         Ok(Avr {
             http,
-            ajax: HttpClient::new(&info.host, self.ajax_port, self.ajax)?,
+            web_interface: HttpClient::new(
+                &info.host,
+                self.web_interface_port,
+                self.web_interface,
+            )?,
             info,
             update_commands: update_commands.into_boxed_slice(),
             update_body,

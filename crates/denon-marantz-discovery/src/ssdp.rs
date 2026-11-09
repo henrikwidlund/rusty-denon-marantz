@@ -222,7 +222,10 @@ mod tests {
     #[test]
     fn an_answer_has_its_values() {
         let response = Response::parse(ANSWER.as_bytes()).unwrap();
-        assert_eq!(response.location, "http://192.168.1.10:8080/description.xml");
+        assert_eq!(
+            response.location,
+            "http://192.168.1.10:8080/description.xml"
+        );
         assert_eq!(
             response.target,
             Some("urn:schemas-upnp-org:device:MediaRenderer:1")
@@ -305,7 +308,10 @@ mod tests {
             location("http://192.168.1.10/"),
             expected("192.168.1.10", 80, "/")
         );
-        assert_eq!(location("http://192.168.1.10"), expected("192.168.1.10", 80, "/"));
+        assert_eq!(
+            location("http://192.168.1.10"),
+            expected("192.168.1.10", 80, "/")
+        );
         assert_eq!(
             location("HTTP://receiver.local:80/a/b?c=1"),
             expected("receiver.local", 80, "/a/b?c=1")

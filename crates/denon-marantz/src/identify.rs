@@ -10,7 +10,7 @@ use crate::http::{HttpClient, HttpConfig};
 pub struct Identified {
     /// Generation of the receiver.
     pub receiver_type: ReceiverType,
-    /// Port of the web interface.
+    /// HTTP port that is used for AppCommand and the status pages.
     pub port: u16,
     /// Values from the device information. Empty if the receiver has none.
     pub device_info: DeviceInfo<'static>,

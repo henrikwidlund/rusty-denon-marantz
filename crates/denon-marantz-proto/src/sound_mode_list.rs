@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn other_lines_are_not_sound_modes() {
         let mut list = SoundModeList::default();
-        assert_eq!(list.apply_op("DLSSL1NAME Comte"), None);
+        assert_eq!(list.apply_op("DLSSL1NAME Cinema"), None);
         assert_eq!(list.apply_op("SML 011Stereo"), None);
         assert_eq!(list.apply_op("STS 0000"), None);
     }

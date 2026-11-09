@@ -14,8 +14,8 @@ use crate::error::{Error, ToneBlocker};
 /// receiver ignores that with any Dirac Live filter selected. It sends no
 /// answer and no error. So these methods return [`Error::ToneControlBlocked`]
 /// and send nothing when the state shows a Dirac filter. Audyssey Dynamic EQ
-/// might also block it, but that is not confirmed, so it is not checked. To send the command anyway, use
-/// [`Avr::send`] with [`Command::ToneControl`].
+/// might also block it, but that is not confirmed, so it is not checked. To
+/// send the command anyway, use [`Avr::send`] with [`Command::ToneControl`].
 ///
 /// Each method returns when the commands are written, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns

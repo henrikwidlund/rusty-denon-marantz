@@ -1,4 +1,4 @@
-//! Inputs from the web control pages: which physical input each source uses,
+//! Inputs from the web interface: which physical input each source uses,
 //! and the names of the sources. The values go into the
 //! [`SourceList`](crate::SourceList) of the state.
 //!
@@ -18,7 +18,7 @@ pub const SOURCE_NAMES_PATH: &str = "/ajax/inputs/get_config?type=3";
 /// Most sources of a page that are kept.
 const MAX_SOURCES: usize = 32;
 
-/// Telnet source name of an index of the web control pages.
+/// Telnet source name of an index of the web interface.
 #[must_use]
 pub const fn source_for_index(index: u8) -> Option<&'static str> {
     Some(match index {
@@ -46,7 +46,7 @@ pub const fn source_for_index(index: u8) -> Option<&'static str> {
 /// The physical inputs that a source uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputAssignment {
-    /// Index of the source on the web control pages.
+    /// Index of the source on the web interface.
     pub index: u8,
     /// Telnet name of the source, if the index is known.
     pub source: Option<&'static str>,
@@ -115,7 +115,7 @@ impl InputAssignment {
 /// The names of one source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceNameEntry {
-    /// Index of the source on the web control pages.
+    /// Index of the source on the web interface.
     pub index: u8,
     /// Telnet name of the source, if the index is known.
     pub source: Option<&'static str>,
@@ -184,8 +184,8 @@ fn text_of(node: Node<'_>, name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    const ASSIGN: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-inputs-assign.xml");
-    const NAMES: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-inputs-names.xml");
+    const ASSIGN: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-inputs-assign.xml");
+    const NAMES: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-inputs-names.xml");
 
     #[test]
     fn input_assign_of_the_a10h() {
@@ -216,7 +216,7 @@ mod tests {
         let bluray = &names.entries[1];
         assert_eq!(bluray.source, Some("BD"));
         assert_eq!(bluray.default_name.as_deref(), Some("Blu-ray"));
-        assert_eq!(bluray.rename.as_deref(), Some("Blu-ray Disc"));
+        assert_eq!(bluray.rename.as_deref(), Some("Blu-ray"));
         assert_eq!(bluray.auto_name.as_deref(), Some("UDP-203"));
     }
 

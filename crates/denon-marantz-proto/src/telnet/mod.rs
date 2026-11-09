@@ -2,7 +2,7 @@
 //!
 //! The client writes lines made with [`Command::write_line`]. Bytes from the
 //! receiver go through a [`LineDecoder`], and each line through
-//! [`Message::parse`]. A receiver allows one telnet connection at a time.
+//! [`Message::parse`].
 
 mod command;
 mod decoder;

@@ -1,9 +1,9 @@
 //! Telnet connection on port 23: live events from the receiver, and commands.
 //!
-//! A receiver allows one telnet connection at a time. `Avr::telnet_connect`
-//! opens it and keeps it open in a background task. The task reads events into
-//! the state, sends commands and queries, sends a query when the connection is
-//! idle, and connects again when the connection is lost.
+//! `Avr::telnet_connect` opens the connection and keeps it open in a
+//! background task. The task reads events into the state, sends commands and
+//! queries, sends a query when the connection is idle, and connects again when
+//! the connection is lost.
 //!
 //! Commands from the caller go first. The queries that fill the state after a
 //! connect are background work: they wait for the commands and for a short

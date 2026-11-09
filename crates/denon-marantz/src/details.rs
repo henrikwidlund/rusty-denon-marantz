@@ -1,4 +1,4 @@
-//! What happened to each page of a read from the web control pages.
+//! What happened to each page of a read from the web interface.
 
 use denon_marantz_proto::SettingsGroup;
 
@@ -11,7 +11,7 @@ pub enum SkipReason {
     DiracArt,
 }
 
-/// The result for one page of the web control.
+/// The result for one page of the web interface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum PageStatus {
@@ -44,7 +44,7 @@ pub struct SpeakerDetails {
     pub distances: PageStatus,
     /// Speaker crossovers.
     pub crossovers: PageStatus,
-    /// The channel levels, the dials of the web control.
+    /// The channel levels, the dials of the web interface.
     pub channel_levels: PageStatus,
     /// Subwoofer output, low pass filter and LFE distribution.
     pub bass: PageStatus,

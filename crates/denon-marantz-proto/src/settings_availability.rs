@@ -1,7 +1,7 @@
 //! Which settings the receiver offers and lets the user change right now.
 //!
-//! The web control pages `/ajax/<group>/get_config?type=1` list the settings
-//! of a group, for example the speaker settings. Each setting has a number
+//! The pages `/ajax/<group>/get_config?type=1` of the web interface list the
+//! settings of a group, for example the speaker settings. Each setting has a number
 //! that says if the receiver offers it and can be used now, and, for a setting
 //! that is offered but blocked, a code for the reason.
 
@@ -11,7 +11,7 @@ use crate::speaker_tables::root;
 /// Most settings of a group that are kept.
 const MAX_ITEMS: usize = 64;
 
-/// A group of settings, as the web control orders them.
+/// A group of settings, as the web interface orders them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SettingsGroup {
@@ -194,11 +194,11 @@ mod tests {
     use super::*;
 
     const SPEAKERS: &[u8] =
-        include_bytes!("../tests/data/xml/AVC-A10H-ajax-availability-speakers.xml");
-    const AUDIO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-availability-audio.xml");
-    const OPTION: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-availability-option.xml");
+        include_bytes!("../tests/data/xml/AVC-A10H-web-availability-speakers.xml");
+    const AUDIO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-availability-audio.xml");
+    const OPTION: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-availability-option.xml");
     const NETWORK: &[u8] =
-        include_bytes!("../tests/data/xml/AVC-A10H-ajax-availability-network.xml");
+        include_bytes!("../tests/data/xml/AVC-A10H-web-availability-network.xml");
 
     #[test]
     fn speaker_settings_of_the_a10h() {

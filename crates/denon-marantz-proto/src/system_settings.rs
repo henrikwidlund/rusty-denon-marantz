@@ -1,4 +1,4 @@
-//! Settings that only the web control pages give: the menu lock, HDMI
+//! Settings that only the web interface gives: the menu lock, HDMI
 //! control, updates, network control and the streaming services.
 //!
 //! The page does not send changes. Read it again to read it again.
@@ -90,7 +90,7 @@ impl SystemSettings {
 mod tests {
     use super::*;
 
-    const A10H: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-system-settings.xml");
+    const A10H: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-system-settings.xml");
 
     #[test]
     fn page_of_the_a10h() {

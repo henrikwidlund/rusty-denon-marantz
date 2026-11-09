@@ -1,6 +1,6 @@
 //! Speaker crossovers, speaker configuration and graphic EQ that a receiver
 //! reports on telnet as `SS` events. The spec does not describe them. The
-//! texts come from the answers of an AVC-A10H. The web control pages add the
+//! texts come from the answers of an AVC-A10H. The web interface add the
 //! distances, the bass settings and the crossover choices.
 
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ pub enum Crossover {
 }
 
 impl Crossover {
-    /// A value of the web control pages: `0` is full range, other values are
+    /// A value of the web interface: `0` is full range, other values are
     /// Hz. `None` for a value below 0 or above 65535.
     #[must_use]
     pub fn from_page_value(value: i32) -> Option<Self> {
@@ -80,16 +80,16 @@ pub struct SpeakerSetup {
     /// Graphic EQ values of each group, for example `FRO` is
     /// `500:500:500:500:500:500:500:500:500`. The unit is not documented.
     pub graphic_eq: BTreeMap<String, String>,
-    /// The crossovers that the receiver offers. Empty until the web control
+    /// The crossovers that the receiver offers. Empty until the web interface
     /// page has been read.
     pub crossover_choices: Vec<Crossover>,
-    /// Distances of the speakers from the web control page. `None` until it
+    /// Distances of the speakers from the web interface page. `None` until it
     /// has been read.
     pub distances: Option<SpeakerTable<Channel>>,
-    /// Number of subwoofers, from 1 to 4. `None` until the web control page
+    /// Number of subwoofers, from 1 to 4. `None` until the web interface page
     /// has been read.
     pub subwoofer_count: Option<u8>,
-    /// Bass settings from the web control page. `None` until it has been
+    /// Bass settings from the web interface page. `None` until it has been
     /// read.
     pub bass: Option<BassSettings>,
 }
@@ -160,7 +160,7 @@ impl SpeakerSetup {
     }
 
     /// Stores the crossovers and the choices of the crossovers page of the
-    /// web control. Returns true if anything changed.
+    /// web interface. Returns true if anything changed.
     pub(crate) fn apply_crossover_table(&mut self, table: &SpeakerTable<SpeakerGroup>) -> bool {
         let mut changed = false;
         for entry in &table.entries {
@@ -180,7 +180,7 @@ impl SpeakerSetup {
         changed
     }
 
-    /// Stores the distances of the web control page. Returns true if anything
+    /// Stores the distances of the web interface page. Returns true if anything
     /// changed.
     pub(crate) fn apply_distances(&mut self, table: SpeakerTable<Channel>) -> bool {
         let count = table.subwoofer_count;
@@ -194,7 +194,7 @@ impl SpeakerSetup {
         changed
     }
 
-    /// Stores the bass page of the web control. Returns true if it changed.
+    /// Stores the bass page of the web interface. Returns true if it changed.
     pub(crate) fn apply_bass(&mut self, bass: BassSettings) -> bool {
         let bass = Some(bass);
         let changed = self.bass != bass;
