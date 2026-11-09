@@ -17,6 +17,8 @@ pub const DISTANCES_PATH: &str = "/ajax/speakers/get_config?type=4";
 /// Path of the speaker crossovers page.
 pub const CROSSOVERS_PATH: &str = "/ajax/speakers/get_config?type=6";
 
+/// Path of the bass page.
+pub const BASS_PATH: &str = "/ajax/speakers/get_config?type=7";
 /// Path of the channel level page, the dials of the web control. The levels
 /// are a temporary change on top of the speaker levels.
 pub const CHANNEL_LEVELS_PATH: &str = "/ajax/option/get_config?type=3";
@@ -226,6 +228,8 @@ pub struct SpeakerTables {
     pub crossovers: Option<SpeakerTable<SpeakerGroup>>,
     /// Channel levels, if the receiver has the page.
     pub channel_levels: Option<SpeakerTable<Channel>>,
+    /// Bass settings, if the receiver has the page.
+    pub bass: Option<BassSettings>,
 }
 
 impl<K> SpeakerTable<K> {
@@ -277,7 +281,8 @@ impl SpeakerTable<SpeakerGroup> {
     }
 }
 
-fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTable<K>, Error> {
+/// Checks the body and returns the root element.
+fn root(body: &[u8]) -> Result<crate::xml::Child<'_>, Error> {
     check_well_formed(body)?;
     let root = Node::new(body)
         .children()
@@ -286,56 +291,174 @@ fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTabl
     if root.is("html") {
         return Err(Error::HtmlResponse);
     }
-    let node = root.node();
-    let number = |name: &str| {
-        node.child(name)
-            .and_then(|child| child.node().text())
-            .and_then(|text| text.trim().parse().ok())
-    };
-    let mut table = SpeakerTable {
-        mode: root.attribute("mode").map(std::borrow::Cow::into_owned),
-        entries: Vec::new(),
-        choices: Vec::new(),
-        unit: number("Unit").and_then(|unit| u8::try_from(unit).ok()),
-        max_msec: number("MsecMax"),
-    };
-    if let Some(list) = node.child("List") {
-        for speaker in list.node().children().filter(|c| c.is("Speaker")) {
-            let index = speaker
-                .attribute("index")
-                .and_then(|index| index.trim().parse::<usize>().ok());
-            let value = speaker
-                .node()
-                .text()
-                .and_then(|text| text.trim().parse().ok());
-            if let (Some(key), Some(value)) = (index.and_then(&key), value) {
-                if table.entries.len() == MAX_ENTRIES {
-                    break;
-                }
-                table.entries.push(TableEntry {
-                    key,
-                    value,
-                    display: speaker
-                        .attribute("display")
-                        .and_then(|display| display.trim().parse().ok()),
-                });
+    Ok(root)
+}
+
+/// Number in the text of the child `name`.
+fn number<T: std::str::FromStr>(node: Node<'_>, name: &str) -> Option<T> {
+    node.child(name)
+        .and_then(|child| child.node().text())
+        .and_then(|text| text.trim().parse().ok())
+}
+
+/// Reads the `Speaker` elements of a `List`. Entries that are not known or
+/// have no number are skipped.
+fn read_entries<K>(list: Node<'_>, key: impl Fn(usize) -> Option<K>) -> Vec<TableEntry<K>> {
+    let mut entries = Vec::new();
+    for speaker in list.children().filter(|c| c.is("Speaker")) {
+        let index = speaker
+            .attribute("index")
+            .and_then(|index| index.trim().parse::<usize>().ok());
+        let value = speaker
+            .node()
+            .text()
+            .and_then(|text| text.trim().parse().ok());
+        if let (Some(key), Some(value)) = (index.and_then(&key), value) {
+            if entries.len() == MAX_ENTRIES {
+                break;
             }
+            entries.push(TableEntry {
+                key,
+                value,
+                display: speaker
+                    .attribute("display")
+                    .and_then(|display| display.trim().parse().ok()),
+            });
         }
     }
-    if let Some(items) = node
-        .child("SelectableValue")
-        .and_then(|selectable| selectable.node().child("List"))
-    {
-        table.choices.extend(
-            items
-                .node()
-                .children()
-                .filter(|c| c.is("Item"))
-                .filter_map(|item| item.node().text()?.trim().parse::<i32>().ok())
-                .take(MAX_ENTRIES),
-        );
+    entries
+}
+
+/// Reads the `Item` elements of a `List`.
+fn read_choices(list: Node<'_>) -> Vec<i32> {
+    list.children()
+        .filter(|c| c.is("Item"))
+        .filter_map(|item| item.node().text()?.trim().parse().ok())
+        .take(MAX_ENTRIES)
+        .collect()
+}
+
+fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTable<K>, Error> {
+    let root = root(body)?;
+    let node = root.node();
+    Ok(SpeakerTable {
+        mode: root.attribute("mode").map(std::borrow::Cow::into_owned),
+        entries: node
+            .child("List")
+            .map(|list| read_entries(list.node(), key))
+            .unwrap_or_default(),
+        choices: node
+            .child("SelectableValue")
+            .and_then(|selectable| selectable.node().child("List"))
+            .map(|list| read_choices(list.node()))
+            .unwrap_or_default(),
+        unit: number::<i32>(node, "Unit").and_then(|unit| u8::try_from(unit).ok()),
+        max_msec: number(node, "MsecMax"),
+    })
+}
+
+/// Groups of the LFE distribution, in the order of the index. The indexes
+/// 2 and 5 are not used.
+const LFE_DISTRIBUTION_ORDER: [Option<SpeakerGroup>; 7] = [
+    Some(SpeakerGroup::Front),
+    Some(SpeakerGroup::Center),
+    None,
+    Some(SpeakerGroup::Surround),
+    Some(SpeakerGroup::SurroundBack),
+    None,
+    Some(SpeakerGroup::FrontWide),
+];
+
+/// A value of the LFE distribution that means no LFE for the group.
+pub const LFE_DISTRIBUTION_OFF: i32 = 99;
+
+/// Which low frequencies go to the subwoofer outputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SubwooferOutputMode {
+    /// Only the LFE channel.
+    Lfe,
+    /// The LFE channel and the low frequencies of the main channels.
+    LfeAndMain,
+}
+
+impl SubwooferOutputMode {
+    /// The mode for the number of the page: `1` or `2`.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Lfe),
+            2 => Some(Self::LfeAndMain),
+            _ => None,
+        }
     }
-    Ok(table)
+}
+
+/// The bass page of the web control: subwoofer output, the low pass filter of
+/// the LFE channel and how much LFE the speakers get.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BassSettings {
+    /// Which low frequencies go to the subwoofers.
+    pub subwoofer_output: Option<SubwooferOutputMode>,
+    /// The `display` attribute of the subwoofer output, see
+    /// [`TableEntry::is_shown`].
+    pub subwoofer_output_display: Option<u8>,
+    /// Low pass filter of the LFE channel in Hz.
+    pub lpf_for_lfe: Option<u16>,
+    /// The `display` attribute of the low pass filter.
+    pub lpf_for_lfe_display: Option<u8>,
+    /// Frequencies that the receiver offers for the low pass filter.
+    pub lpf_choices: Vec<u16>,
+    /// LFE that each group of speakers gets in dB, from -20 to 0 in steps of
+    /// 2, or [`LFE_DISTRIBUTION_OFF`]. The speakers need to be full range.
+    pub lfe_distribution: Vec<TableEntry<SpeakerGroup>>,
+    /// The `display` attribute of the whole distribution.
+    pub lfe_distribution_display: Option<u8>,
+}
+
+impl BassSettings {
+    /// Reads the bass page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is not valid XML or is an HTML page.
+    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+        let node = root(body)?.node();
+        let display = |child: &crate::xml::Child<'_>| {
+            child
+                .attribute("display")
+                .and_then(|display| display.trim().parse().ok())
+        };
+        let output = node.child("SubwooferOutput");
+        let lpf = node.child("LPFforLFE");
+        let distribution = node.child("LFEDistribution");
+        Ok(Self {
+            subwoofer_output: number::<u8>(node, "SubwooferOutput")
+                .and_then(SubwooferOutputMode::from_code),
+            subwoofer_output_display: output.as_ref().and_then(display),
+            lpf_for_lfe: number(node, "LPFforLFE"),
+            lpf_for_lfe_display: lpf.as_ref().and_then(display),
+            lpf_choices: node
+                .child("SelectableValue")
+                .and_then(|selectable| selectable.node().child("LPFforLFE"))
+                .and_then(|lpf| lpf.node().child("List"))
+                .map(|list| read_choices(list.node()))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|hz| u16::try_from(hz).ok())
+                .collect(),
+            lfe_distribution: distribution
+                .as_ref()
+                .and_then(|d| d.node().child("List"))
+                .map(|list| {
+                    read_entries(list.node(), |index| {
+                        LFE_DISTRIBUTION_ORDER.get(index).copied().flatten()
+                    })
+                })
+                .unwrap_or_default(),
+            lfe_distribution_display: distribution.as_ref().and_then(display),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -348,6 +471,7 @@ mod tests {
         include_bytes!("../tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml");
     const CROSSOVERS: &[u8] =
         include_bytes!("../tests/data/xml/AVC-A10H-ajax-speakers-crossovers.xml");
+    const BASS: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-ajax-speakers-bass.xml");
 
     fn entry<K: Copy>(table: &SpeakerTable<K>, index: usize) -> (K, i32, Option<u8>) {
         let entry = table.entries[index];
@@ -394,6 +518,52 @@ mod tests {
         assert_eq!(shown.len(), 13);
         assert!(shown.contains(&Channel::FrontHeightRight));
         assert!(!shown.contains(&Channel::TopFrontLeft));
+    }
+
+    #[test]
+    fn bass_page_of_the_a10h() {
+        let bass = BassSettings::parse(BASS).unwrap();
+        assert_eq!(bass.subwoofer_output, Some(SubwooferOutputMode::Lfe));
+        assert_eq!(bass.subwoofer_output_display, Some(3));
+        assert_eq!(bass.lpf_for_lfe, Some(120));
+        assert_eq!(
+            bass.lpf_choices,
+            [70, 80, 90, 100, 110, 120, 150, 180, 200, 250]
+        );
+        assert_eq!(bass.lfe_distribution_display, Some(1));
+        let groups: Vec<_> = bass.lfe_distribution.iter().map(|e| e.key).collect();
+        assert_eq!(
+            groups,
+            [
+                SpeakerGroup::Front,
+                SpeakerGroup::Center,
+                SpeakerGroup::Surround,
+                SpeakerGroup::SurroundBack,
+                SpeakerGroup::FrontWide,
+            ]
+        );
+        assert!(
+            bass.lfe_distribution
+                .iter()
+                .all(|e| e.value == LFE_DISTRIBUTION_OFF)
+        );
+        assert!(bass.lfe_distribution[0].is_editable());
+        assert!(!bass.lfe_distribution[1].is_shown());
+    }
+
+    #[test]
+    fn a_bass_page_with_missing_parts_is_empty() {
+        let bass = BassSettings::parse(b"<Bass><LPFforLFE>x</LPFforLFE></Bass>").unwrap();
+        assert_eq!(bass.lpf_for_lfe, None);
+        assert_eq!(bass.subwoofer_output, None);
+        assert_eq!(bass.lpf_choices.len(), 0);
+        assert_eq!(bass.lfe_distribution.len(), 0);
+        assert!(BassSettings::parse(b"<html/>").is_err());
+        assert_eq!(
+            SubwooferOutputMode::from_code(2),
+            Some(SubwooferOutputMode::LfeAndMain)
+        );
+        assert_eq!(SubwooferOutputMode::from_code(0), None);
     }
 
     #[test]

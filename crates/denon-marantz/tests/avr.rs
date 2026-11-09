@@ -389,6 +389,8 @@ const DISTANCES_PAGE: &[u8] =
 const CHANNEL_LEVELS_PAGE: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-option-channel-levels.xml"
 );
+const BASS_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-bass.xml");
 const CROSSOVERS_PAGE: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-crossovers.xml"
 );
@@ -400,6 +402,7 @@ async fn speaker_tables_are_read_from_the_web_control_pages() {
         "/ajax/speakers/get_config?type=4" => Reply::Body(DISTANCES_PAGE.to_vec()),
         "/ajax/speakers/get_config?type=6" => Reply::Body(CROSSOVERS_PAGE.to_vec()),
         "/ajax/option/get_config?type=3" => Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
+        "/ajax/speakers/get_config?type=7" => Reply::Body(BASS_PAGE.to_vec()),
         _ => Reply::Status(404),
     })
     .await;
@@ -416,6 +419,7 @@ async fn speaker_tables_are_read_from_the_web_control_pages() {
     assert_eq!(tables.distances.as_ref().unwrap().entries.len(), 13);
     assert_eq!(tables.crossovers.as_ref().unwrap().entries.len(), 6);
     assert_eq!(tables.channel_levels.as_ref().unwrap().entries.len(), 34);
+    assert_eq!(tables.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
     // The same pages again change nothing.
     let mut changes = avr.changes();
     assert!(avr.update_speaker_tables().await);

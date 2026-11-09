@@ -17,7 +17,7 @@ use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
-use crate::speaker_tables::{SpeakerTable, SpeakerTables};
+use crate::speaker_tables::{BassSettings, SpeakerTable, SpeakerTables};
 use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
@@ -500,6 +500,15 @@ impl State {
         let new = Some(table);
         (self.device.speaker_tables.channel_levels != new).then(|| {
             self.device.speaker_tables.channel_levels = new;
+            speaker_tables_change()
+        })
+    }
+
+    /// Stores the bass page of the web control.
+    pub fn apply_bass_settings(&mut self, bass: BassSettings) -> Option<Change> {
+        let new = Some(bass);
+        (self.device.speaker_tables.bass != new).then(|| {
+            self.device.speaker_tables.bass = new;
             speaker_tables_change()
         })
     }
