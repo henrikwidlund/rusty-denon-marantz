@@ -23,6 +23,9 @@ pub const BASS_PATH: &str = "/ajax/speakers/get_config?type=7";
 /// are a temporary change on top of the speaker levels.
 pub const CHANNEL_LEVELS_PATH: &str = "/ajax/option/get_config?type=3";
 
+/// The subwoofer setup code is this number plus the number of subwoofers.
+const SUBWOOFER_CODE_BASE: u8 = 5;
+
 /// Most entries of a table that are kept.
 const MAX_ENTRIES: usize = 64;
 
@@ -217,6 +220,9 @@ pub struct SpeakerTable<K> {
     pub unit: Option<u8>,
     /// The `MsecMax` of the page. Only the distances page has it.
     pub max_msec: Option<i32>,
+    /// Number of subwoofers, from 1 to 4. The distances page has it. The
+    /// receiver sends a setup code that is 5 plus the number.
+    pub subwoofer_count: Option<u8>,
 }
 
 /// The speaker tables of the web control pages that a receiver gave.
@@ -230,6 +236,16 @@ pub struct SpeakerTables {
     pub channel_levels: Option<SpeakerTable<Channel>>,
     /// Bass settings, if the receiver has the page.
     pub bass: Option<BassSettings>,
+}
+
+impl SpeakerTables {
+    /// Number of subwoofers, if a page gave it.
+    #[must_use]
+    pub fn subwoofer_count(&self) -> Option<u8> {
+        self.distances
+            .as_ref()
+            .and_then(|table| table.subwoofer_count)
+    }
 }
 
 impl<K> SpeakerTable<K> {
@@ -354,6 +370,11 @@ fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTabl
             .unwrap_or_default(),
         unit: number::<i32>(node, "Unit").and_then(|unit| u8::try_from(unit).ok()),
         max_msec: number(node, "MsecMax"),
+        subwoofer_count: node
+            .child("SubwooferType")
+            .and_then(|kind| number::<u8>(kind.node(), "CurrentNumber"))
+            .and_then(|code| code.checked_sub(SUBWOOFER_CODE_BASE))
+            .filter(|count| (1..=4).contains(count)),
     })
 }
 
@@ -484,6 +505,8 @@ mod tests {
         assert_eq!(table.mode.as_deref(), Some("diracmenulock"));
         assert_eq!(table.unit, Some(3));
         assert_eq!(table.max_msec, Some(50));
+        // The test receiver has two subwoofers.
+        assert_eq!(table.subwoofer_count, Some(2));
         assert_eq!(table.entries.len(), 13);
         // Unit 3 is milliseconds: the web page shows 2.5, 2.8, 2.7 and so on.
         let unit = table.distance_unit().unwrap();
@@ -606,6 +629,14 @@ mod tests {
         assert_eq!(table.entries.len(), 1);
         assert_eq!(table.mode, None);
         assert_eq!(table.unit, None);
+        assert_eq!(table.subwoofer_count, None);
+        for code in ["4", "10", "x"] {
+            let xml = format!(
+                "<D><SubwooferType><CurrentNumber>{code}</CurrentNumber></SubwooferType></D>"
+            );
+            let table = SpeakerTable::parse_distances(xml.as_bytes()).unwrap();
+            assert_eq!(table.subwoofer_count, None, "{code}");
+        }
     }
 
     #[test]

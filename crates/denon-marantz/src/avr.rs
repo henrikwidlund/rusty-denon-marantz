@@ -1,6 +1,5 @@
 //! A receiver: identification, state and updates over HTTP.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -141,8 +140,6 @@ pub struct Avr {
     http: HttpClient,
     /// The web control pages on their own port.
     ajax: HttpClient,
-    /// Set when the receiver did not answer on the port of `ajax`.
-    ajax_missing: AtomicBool,
     info: Info,
     /// The queries of [`Avr::update`].
     update_commands: Box<[Definition]>,
@@ -217,90 +214,71 @@ impl Avr {
     /// bass settings from the web control pages on port 11080.
     ///
     /// Only these pages have them, and they do not send changes: call it
-    /// again to read them again. Not every receiver has the pages. Returns
-    /// true if at least one page was read. Missing pages are not an error:
-    /// the values stay empty. If the receiver does not answer on the port, a
-    /// later call returns false at once. The result is in
+    /// again to read them again. The result is in
     /// [`DeviceState::speaker_tables`](denon_marantz_proto::DeviceState::speaker_tables).
-    pub async fn update_speaker_tables(&self) -> bool {
-        if self.ajax_missing.load(Ordering::Relaxed) {
-            return false;
-        }
+    ///
+    /// Returns true if at least one page was read. Not every receiver has the
+    /// pages, and the receiver can refuse one for a while, for example the
+    /// channel levels while a Dirac filter is on. Such a page is skipped and
+    /// is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receiver does not answer in time or the
+    /// connection fails, see [`Error::is_unreachable`]. Pages that were read
+    /// before stay in the state. A receiver without the port gives this error
+    /// after the connect time of [`AvrBuilder::ajax_config`], one second by
+    /// default, on each call.
+    pub async fn update_speaker_tables(&self) -> Result<bool, Error> {
         let mut read = false;
-        match self
-            .ajax
-            .get_parsed(DISTANCES_PATH, SpeakerTable::parse_distances)
-            .await
-        {
-            Ok(table) => {
-                read = true;
-                self.channels.modify(|state, notify| {
-                    notify(state.apply_speaker_distances(table));
-                });
-            }
-            Err(error) => {
-                if self.ajax_unreachable(&error) {
-                    return false;
-                }
-            }
-        }
-        match self
-            .ajax
-            .get_parsed(CROSSOVERS_PATH, SpeakerTable::parse_crossovers)
-            .await
-        {
-            Ok(table) => {
-                read = true;
-                self.channels.modify(|state, notify| {
-                    notify(state.apply_speaker_crossovers(table));
-                });
-            }
-            Err(error) => {
-                if self.ajax_unreachable(&error) {
-                    return read;
-                }
-            }
-        }
-        match self
-            .ajax
-            .get_parsed(CHANNEL_LEVELS_PATH, SpeakerTable::parse_channel_levels)
-            .await
-        {
-            Ok(table) => {
-                read = true;
-                self.channels.modify(|state, notify| {
-                    notify(state.apply_channel_level_table(table));
-                });
-            }
-            Err(error) => {
-                if self.ajax_unreachable(&error) {
-                    return read;
-                }
-            }
-        }
-        match self.ajax.get_parsed(BASS_PATH, BassSettings::parse).await {
-            Ok(bass) => {
-                read = true;
-                self.channels.modify(|state, notify| {
-                    notify(state.apply_bass_settings(bass));
-                });
-            }
-            Err(error) => {
-                self.ajax_unreachable(&error);
-            }
-        }
-        read
+        read |= self
+            .read_ajax(
+                DISTANCES_PATH,
+                SpeakerTable::parse_distances,
+                State::apply_speaker_distances,
+            )
+            .await?;
+        read |= self
+            .read_ajax(
+                CROSSOVERS_PATH,
+                SpeakerTable::parse_crossovers,
+                State::apply_speaker_crossovers,
+            )
+            .await?;
+        read |= self
+            .read_ajax(
+                CHANNEL_LEVELS_PATH,
+                SpeakerTable::parse_channel_levels,
+                State::apply_channel_level_table,
+            )
+            .await?;
+        read |= self
+            .read_ajax(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
+            .await?;
+        Ok(read)
     }
 
-    /// Logs an error of the web control pages. Remembers that the receiver
-    /// does not answer if the error says so. Returns true then.
-    fn ajax_unreachable(&self, error: &Error) -> bool {
-        tracing::debug!(host = %self.info.host, %error, "web control page not read");
-        let unreachable = error.is_unreachable();
-        if unreachable {
-            self.ajax_missing.store(true, Ordering::Relaxed);
+    /// Reads one web control page into the state. Returns false if the page
+    /// is not available. Returns an error only if the receiver is not
+    /// reachable.
+    async fn read_ajax<T>(
+        &self,
+        path: &str,
+        parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
+        apply: impl FnOnce(&mut State, T) -> Option<Change>,
+    ) -> Result<bool, Error> {
+        match self.ajax.get_parsed(path, parse).await {
+            Ok(value) => {
+                self.channels
+                    .modify(|state, notify| notify(apply(state, value)));
+                Ok(true)
+            }
+            Err(error) if error.is_unreachable() => Err(error),
+            Err(error) => {
+                tracing::debug!(host = %self.info.host, %error, "web control page not read");
+                Ok(false)
+            }
         }
-        unreachable
     }
 
     /// Opens the telnet connection and keeps it open.
@@ -653,7 +631,6 @@ impl AvrBuilder {
         Ok(Avr {
             http,
             ajax: HttpClient::new(&info.host, self.ajax_port, self.ajax)?,
-            ajax_missing: AtomicBool::new(false),
             info,
             update_commands: update_commands.into_boxed_slice(),
             update_body,

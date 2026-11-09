@@ -413,7 +413,7 @@ async fn speaker_tables_are_read_from_the_web_control_pages() {
         .await
         .unwrap();
     assert!(avr.snapshot().device().speaker_tables.distances.is_none());
-    assert!(avr.update_speaker_tables().await);
+    assert!(avr.update_speaker_tables().await.unwrap());
     let state = avr.snapshot();
     let tables = &state.device().speaker_tables;
     assert_eq!(tables.distances.as_ref().unwrap().entries.len(), 13);
@@ -422,7 +422,7 @@ async fn speaker_tables_are_read_from_the_web_control_pages() {
     assert_eq!(tables.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
     // The same pages again change nothing.
     let mut changes = avr.changes();
-    assert!(avr.update_speaker_tables().await);
+    assert!(avr.update_speaker_tables().await.unwrap());
     assert!(changes.try_recv().is_err());
 }
 
@@ -440,7 +440,7 @@ async fn a_missing_speaker_page_is_not_an_error() {
         .connect()
         .await
         .unwrap();
-    assert!(avr.update_speaker_tables().await);
+    assert!(avr.update_speaker_tables().await.unwrap());
     let state = avr.snapshot();
     let tables = &state.device().speaker_tables;
     assert!(tables.distances.is_none());
@@ -448,7 +448,7 @@ async fn a_missing_speaker_page_is_not_an_error() {
 }
 
 #[tokio::test]
-async fn a_receiver_without_the_port_is_asked_once() {
+async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
     let receiver = avr_x_receiver().await;
     // A port that nothing listens on.
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -460,7 +460,9 @@ async fn a_receiver_without_the_port_is_asked_once() {
         .connect()
         .await
         .unwrap();
-    assert!(!avr.update_speaker_tables().await);
-    assert!(!avr.update_speaker_tables().await);
+    for _ in 0..2 {
+        let error = avr.update_speaker_tables().await.unwrap_err();
+        assert!(error.is_unreachable(), "{error}");
+    }
     assert!(avr.snapshot().device().speaker_tables.distances.is_none());
 }

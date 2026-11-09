@@ -438,7 +438,7 @@ async fn sound_extra_command(
         }
         "channel-reset" => avr.sound().reset_channel_volumes().await?,
         "speaker-tables" => {
-            let read = avr.update_speaker_tables().await;
+            let read = avr.update_speaker_tables().await?;
             println!("read from the web control pages: {read}");
             println!("{:#?}", avr.snapshot().device().speaker_tables);
         }
