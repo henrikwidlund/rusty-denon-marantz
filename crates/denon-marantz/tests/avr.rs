@@ -383,3 +383,75 @@ async fn update_of_a_2016_receiver_reads_tone_control() {
     // The other values are still read.
     assert_eq!(state.zone(Zone::Main).power, Some(Power::On));
 }
+
+const DISTANCES_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-distances.xml");
+const CROSSOVERS_PAGE: &[u8] = include_bytes!(
+    "../../denon-marantz-proto/tests/data/xml/AVC-A10H-ajax-speakers-crossovers.xml"
+);
+
+#[tokio::test]
+async fn speaker_tables_are_read_from_the_web_control_pages() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/speakers/get_config?type=4" => Reply::Body(DISTANCES_PAGE.to_vec()),
+        "/ajax/speakers/get_config?type=6" => Reply::Body(CROSSOVERS_PAGE.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(avr.snapshot().device().speaker_tables.distances.is_none());
+    assert!(avr.update_speaker_tables().await);
+    let state = avr.snapshot();
+    let tables = &state.device().speaker_tables;
+    assert_eq!(tables.distances.as_ref().unwrap().entries.len(), 13);
+    assert_eq!(tables.crossovers.as_ref().unwrap().entries.len(), 6);
+    // The same pages again change nothing.
+    let mut changes = avr.changes();
+    assert!(avr.update_speaker_tables().await);
+    assert!(changes.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn a_missing_speaker_page_is_not_an_error() {
+    let receiver = avr_x_receiver().await;
+    let ajax = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/speakers/get_config?type=6" => Reply::Body(CROSSOVERS_PAGE.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(ajax.port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(avr.update_speaker_tables().await);
+    let state = avr.snapshot();
+    let tables = &state.device().speaker_tables;
+    assert!(tables.distances.is_none());
+    assert!(tables.crossovers.is_some());
+}
+
+#[tokio::test]
+async fn a_receiver_without_the_port_is_asked_once() {
+    let receiver = avr_x_receiver().await;
+    // A port that nothing listens on.
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .ajax_port(port)
+        .ajax_config(config())
+        .connect()
+        .await
+        .unwrap();
+    assert!(!avr.update_speaker_tables().await);
+    assert!(!avr.update_speaker_tables().await);
+    assert!(avr.snapshot().device().speaker_tables.distances.is_none());
+}

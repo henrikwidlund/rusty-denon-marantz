@@ -101,16 +101,27 @@ pub struct SpeakerTable<K> {
     /// Values that the page offers for the setting, for example crossover
     /// frequencies. Empty if the page has no list.
     pub choices: Vec<i32>,
-    /// The `Unit` of the page. Only the distances page has it.
+    /// The `Unit` of the page. Only the distances page has it. With `3` the
+    /// page shows milliseconds and a value is tenths of a millisecond: `25`
+    /// is 2.5 ms. The other units are not known.
     pub unit: Option<u8>,
     /// The `MsecMax` of the page. Only the distances page has it.
     pub max_msec: Option<i32>,
 }
 
+/// The speaker tables of the web control pages that a receiver gave.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SpeakerTables {
+    /// Distances, if the receiver has the page.
+    pub distances: Option<SpeakerTable<Channel>>,
+    /// Crossovers, if the receiver has the page.
+    pub crossovers: Option<SpeakerTable<SpeakerGroup>>,
+}
+
 impl SpeakerTable<Channel> {
     /// Reads the distances page.
     ///
-    /// The unit of the values is not documented: see [`Self::unit`].
+    /// The unit of the values depends on [`Self::unit`].
     ///
     /// # Errors
     ///
@@ -213,8 +224,10 @@ mod tests {
         assert_eq!(table.unit, Some(3));
         assert_eq!(table.max_msec, Some(50));
         assert_eq!(table.entries.len(), 13);
+        // Unit 3 is milliseconds: the web page shows 2.5, 2.8, 2.7 and so on.
         assert_eq!(entry(&table, 0), (Channel::FrontLeft, 25, Some(3)));
         assert_eq!(entry(&table, 2), (Channel::Center, 27, Some(3)));
+        assert_eq!(entry(&table, 6), (Channel::SurroundRight, 58, Some(3)));
         // The test receiver has front height and top middle speakers.
         assert_eq!(entry(&table, 9), (Channel::FrontHeightLeft, 6, Some(3)));
         assert_eq!(entry(&table, 11), (Channel::TopMiddleLeft, 54, Some(3)));

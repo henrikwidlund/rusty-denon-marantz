@@ -1,5 +1,8 @@
 //! A receiver: identification, state and updates over HTTP.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
 use bytes::Bytes;
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::Trigger;
@@ -9,7 +12,10 @@ use denon_marantz_proto::appcommand::{
 use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{Command, QueryGroup};
-use denon_marantz_proto::{Brand, Change, DeviceDescription, ReceiverType, State, Zone};
+use denon_marantz_proto::{
+    AJAX_PORT, Brand, CROSSOVERS_PATH, Change, DISTANCES_PATH, DeviceDescription, ReceiverType,
+    SpeakerTable, State, Zone,
+};
 use tokio::sync::{broadcast, watch};
 
 #[cfg(feature = "telnet")]
@@ -22,6 +28,7 @@ use crate::dirac::Dirac;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
+use crate::pacer::Pacing;
 #[cfg(feature = "telnet")]
 use crate::sound_control::SoundControl;
 #[cfg(feature = "telnet")]
@@ -100,11 +107,25 @@ pub struct Info {
     pub zones: Vec<Zone>,
 }
 
+/// Settings of the requests to the web control pages. A receiver without them
+/// should not slow the caller down.
+const AJAX_CONFIG: HttpConfig = HttpConfig {
+    connect_timeout: Duration::from_secs(1),
+    request_timeout: Duration::from_secs(3),
+    max_response_bytes: 256 * 1024,
+    idle_timeout: Duration::from_secs(30),
+    pacing: Pacing::Fixed {
+        interval: Duration::from_millis(50),
+    },
+};
+
 /// Settings for a connection. Start with [`Avr::builder`].
 #[derive(Debug, Clone)]
 pub struct AvrBuilder {
     host: String,
     http: HttpConfig,
+    ajax: HttpConfig,
+    ajax_port: u16,
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
     #[cfg(feature = "telnet")]
@@ -118,6 +139,10 @@ pub struct AvrBuilder {
 #[derive(Debug)]
 pub struct Avr {
     http: HttpClient,
+    /// The web control pages on their own port.
+    ajax: HttpClient,
+    /// Set when the receiver did not answer on the port of `ajax`.
+    ajax_missing: AtomicBool,
     info: Info,
     /// The queries of [`Avr::update`].
     update_commands: Box<[Definition]>,
@@ -138,6 +163,8 @@ impl Avr {
         AvrBuilder {
             host: host.into(),
             http: HttpConfig::default(),
+            ajax: AJAX_CONFIG,
+            ajax_port: AJAX_PORT,
             probes: None,
             description_port: None,
             #[cfg(feature = "telnet")]
@@ -184,6 +211,66 @@ impl Avr {
             UpdateMethod::AppCommand => self.update_with_appcommand().await,
             UpdateMethod::StatusPages => self.update_with_status_pages().await,
         }
+    }
+
+    /// Reads the speaker distances and crossovers from the web control pages
+    /// on port 11080.
+    ///
+    /// Only these pages have them, and they do not send changes: call it
+    /// again to read them again. Not every receiver has the pages. Returns
+    /// true if at least one page was read. Missing pages are not an error:
+    /// the values stay empty. If the receiver does not answer on the port, a
+    /// later call returns false at once. The result is in
+    /// [`DeviceState::speaker_tables`](denon_marantz_proto::DeviceState::speaker_tables).
+    pub async fn update_speaker_tables(&self) -> bool {
+        if self.ajax_missing.load(Ordering::Relaxed) {
+            return false;
+        }
+        let mut read = false;
+        match self
+            .ajax
+            .get_parsed(DISTANCES_PATH, SpeakerTable::parse_distances)
+            .await
+        {
+            Ok(table) => {
+                read = true;
+                self.channels.modify(|state, notify| {
+                    notify(state.apply_speaker_distances(table));
+                });
+            }
+            Err(error) => {
+                if self.ajax_unreachable(&error) {
+                    return false;
+                }
+            }
+        }
+        match self
+            .ajax
+            .get_parsed(CROSSOVERS_PATH, SpeakerTable::parse_crossovers)
+            .await
+        {
+            Ok(table) => {
+                read = true;
+                self.channels.modify(|state, notify| {
+                    notify(state.apply_speaker_crossovers(table));
+                });
+            }
+            Err(error) => {
+                self.ajax_unreachable(&error);
+            }
+        }
+        read
+    }
+
+    /// Logs an error of the web control pages. Remembers that the receiver
+    /// does not answer if the error says so. Returns true then.
+    fn ajax_unreachable(&self, error: &Error) -> bool {
+        tracing::debug!(host = %self.info.host, %error, "web control page not read");
+        let unreachable = error.is_unreachable();
+        if unreachable {
+            self.ajax_missing.store(true, Ordering::Relaxed);
+        }
+        unreachable
     }
 
     /// Opens the telnet connection and keeps it open.
@@ -422,6 +509,23 @@ impl AvrBuilder {
         self
     }
 
+    /// Sets timeouts, pacing and limits of the requests to the web control
+    /// pages on port 11080. The default waits 1 second to connect and 3
+    /// seconds for an answer, so a receiver without these pages costs little
+    /// time.
+    #[must_use]
+    pub const fn ajax_config(mut self, config: HttpConfig) -> Self {
+        self.ajax = config;
+        self
+    }
+
+    /// Sets the port of the web control pages. The default is 11080.
+    #[must_use]
+    pub const fn ajax_port(mut self, port: u16) -> Self {
+        self.ajax_port = port;
+        self
+    }
+
     /// Sets the types and ports to try when identifying the receiver, newest
     /// type first. The default is the usual ports of each generation. Use this
     /// if the web interface is on another port, for example behind a proxy.
@@ -518,6 +622,8 @@ impl AvrBuilder {
         let single_zone = device_info.device_zones == Some(1);
         Ok(Avr {
             http,
+            ajax: HttpClient::new(&info.host, self.ajax_port, self.ajax)?,
+            ajax_missing: AtomicBool::new(false),
             info,
             update_commands: update_commands.into_boxed_slice(),
             update_body,

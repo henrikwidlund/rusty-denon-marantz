@@ -16,7 +16,8 @@ use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
-use crate::speaker_setup::SpeakerSetup;
+use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
+use crate::speaker_tables::{SpeakerTable, SpeakerTables};
 use crate::telnet::{Event, Message};
 use crate::tuner::TunerState;
 use crate::video::VideoSettings;
@@ -51,6 +52,8 @@ pub enum Setting {
     InputMode,
     /// Speaker crossovers, configuration or graphic EQ.
     SpeakerSetup,
+    /// Speaker distances or crossovers from the web control pages.
+    SpeakerTables,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -290,6 +293,9 @@ pub struct DeviceState {
     pub input_mode: Option<InputMode>,
     /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
     pub speaker_setup: SpeakerSetup,
+    /// Speaker distances and crossovers. Only the web control pages have
+    /// them, so they are read on request and not kept up to date.
+    pub speaker_tables: SpeakerTables,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -478,6 +484,27 @@ impl State {
             Event::Op => self.apply_option(parameter),
             _ => None,
         }
+    }
+
+    /// Stores the speaker distances of the web control page.
+    pub fn apply_speaker_distances(&mut self, table: SpeakerTable<Channel>) -> Option<Change> {
+        let new = Some(table);
+        (self.device.speaker_tables.distances != new).then(|| {
+            self.device.speaker_tables.distances = new;
+            speaker_tables_change()
+        })
+    }
+
+    /// Stores the speaker crossovers of the web control page.
+    pub fn apply_speaker_crossovers(
+        &mut self,
+        table: SpeakerTable<SpeakerGroup>,
+    ) -> Option<Change> {
+        let new = Some(table);
+        (self.device.speaker_tables.crossovers != new).then(|| {
+            self.device.speaker_tables.crossovers = new;
+            speaker_tables_change()
+        })
     }
 
     /// Applies one entry of the `AppCommand` answer to `GetRenameSource`: the
@@ -1125,6 +1152,13 @@ fn on_off(text: &str) -> Option<bool> {
 }
 
 /// `1` is on and `0` is off, as in an `AppCommand` answer.
+const fn speaker_tables_change() -> Change {
+    Change {
+        zone: None,
+        setting: Setting::SpeakerTables,
+    }
+}
+
 fn on_off_digit(text: &str) -> Option<bool> {
     match text.trim() {
         "1" => Some(true),
@@ -2343,6 +2377,27 @@ mod tests {
         assert_eq!(speakers.crossovers.len(), 1);
         assert_eq!(speakers.config["SBK-SP"], "2SP");
         assert_eq!(speakers.graphic_eq["FRO"], "500:500");
+    }
+
+    #[test]
+    fn speaker_tables_are_stored_when_they_change() {
+        let mut state = State::new(false);
+        let distances = SpeakerTable::parse_distances(
+            br#"<Distances><List><Speaker index="0">25</Speaker></List></Distances>"#,
+        )
+        .unwrap();
+        let crossovers = SpeakerTable::parse_crossovers(
+            br#"<Crossovers><List><Speaker index="1">80</Speaker></List></Crossovers>"#,
+        )
+        .unwrap();
+        let tables = || change(None, Setting::SpeakerTables);
+        assert_eq!(state.apply_speaker_distances(distances.clone()), tables());
+        assert_eq!(state.apply_speaker_distances(distances), None);
+        assert_eq!(state.apply_speaker_crossovers(crossovers.clone()), tables());
+        assert_eq!(state.apply_speaker_crossovers(crossovers), None);
+        let stored = &state.device().speaker_tables;
+        assert_eq!(stored.distances.as_ref().unwrap().entries[0].value, 25);
+        assert_eq!(stored.crossovers.as_ref().unwrap().entries[0].value, 80);
     }
 
     #[test]

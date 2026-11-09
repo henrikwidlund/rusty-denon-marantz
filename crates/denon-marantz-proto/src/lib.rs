@@ -52,7 +52,9 @@ pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
 pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, SoundStep};
 pub use source_list::{SourceInfo, SourceList};
 pub use speaker_setup::{Crossover, SpeakerGroup, SpeakerSetup};
-pub use speaker_tables::{AJAX_PORT, CROSSOVERS_PATH, DISTANCES_PATH, SpeakerTable, TableEntry};
+pub use speaker_tables::{
+    AJAX_PORT, CROSSOVERS_PATH, DISTANCES_PATH, SpeakerTable, SpeakerTables, TableEntry,
+};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use tone::ToneLevel;
 pub use tuner::{TUNER_QUERIES, TunerCommand, TunerFrequency, TunerState};
