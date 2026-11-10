@@ -13,6 +13,10 @@ use crate::zone::Zone;
 /// Lowest and highest channel level in whole dB.
 const MAX_CHANNEL_DB: i8 = 12;
 
+/// The highest quick select (or SMART select) number. The protocol spec has
+/// five, and some models have six.
+pub const MAX_QUICK_SELECT: u8 = 6;
+
 /// A zone setting with the value to set.
 ///
 /// Every zone has the auto standby, the sleep timer, the volume limit, the
@@ -68,9 +72,10 @@ pub enum ZoneSettingValue {
     AutoStandby(AutoStandby),
     /// Sleep timer.
     Sleep(Sleep),
-    /// Calls quick select 1 to 5. Marantz receivers call it smart select.
+    /// Calls quick select 1 to [`MAX_QUICK_SELECT`]. Marantz receivers call it
+    /// smart select.
     QuickSelect(u8),
-    /// Stores the current settings in quick select 1 to 5.
+    /// Stores the current settings in quick select 1 to [`MAX_QUICK_SELECT`].
     StoreQuickSelect(u8),
 }
 
@@ -200,7 +205,7 @@ fn write_quick_select(
     store: bool,
     out: &mut String,
 ) -> Result<(), Error> {
-    if !(1..=5).contains(&number) {
+    if !(1..=MAX_QUICK_SELECT).contains(&number) {
         return Err(Error::ValueOutOfRange {
             what: "quick select",
         });
@@ -520,6 +525,18 @@ mod tests {
             ),
             (
                 Brand::Denon,
+                Zone::Main,
+                ZoneSettingValue::QuickSelect(6),
+                "MSQUICK6",
+            ),
+            (
+                Brand::Marantz,
+                Zone::Zone3,
+                ZoneSettingValue::StoreQuickSelect(6),
+                "Z3SMART6 MEMORY",
+            ),
+            (
+                Brand::Denon,
                 Zone::Zone3,
                 ZoneSettingValue::StoreQuickSelect(3),
                 "Z3QUICK3 MEMORY",
@@ -550,7 +567,7 @@ mod tests {
                 "{value:?}"
             );
         }
-        for number in [0, 6] {
+        for number in [0, MAX_QUICK_SELECT + 1] {
             assert_eq!(
                 write(
                     Brand::Denon,

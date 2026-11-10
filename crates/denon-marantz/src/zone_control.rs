@@ -146,13 +146,13 @@ impl<'a> ZoneControl<'a> {
         self.send(Command::SelectSource(name)).await
     }
 
-    /// Calls quick select 1 to 5 of the zone. A Marantz receiver calls it
-    /// smart select.
+    /// Calls quick select 1 to 6 of the zone. A Marantz receiver calls it
+    /// smart select. Some models have only 5.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
-    /// that is not from 1 to 5. See also [`ZoneControl`].
+    /// that is not from 1 to 6. See also [`ZoneControl`].
     pub async fn select_quick_select(&self, number: u8) -> Result<(), Error> {
         self.send(Command::SetZoneSetting(ZoneSettingValue::QuickSelect(
             number,
@@ -160,13 +160,13 @@ impl<'a> ZoneControl<'a> {
         .await
     }
 
-    /// Stores the current settings of the zone in quick select 1 to 5. This
-    /// replaces what the quick select had.
+    /// Stores the current settings of the zone in quick select 1 to 6. This
+    /// replaces what the quick select had. Some models have only 5.
     ///
     /// # Errors
     ///
     /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
-    /// that is not from 1 to 5. See also [`ZoneControl`].
+    /// that is not from 1 to 6. See also [`ZoneControl`].
     pub async fn store_quick_select(&self, number: u8) -> Result<(), Error> {
         self.send(Command::SetZoneSetting(ZoneSettingValue::StoreQuickSelect(
             number,

@@ -30,6 +30,7 @@ use crate::system_settings::SystemSettings;
 use crate::telnet::{Event, Message};
 use crate::tuner::{TunerPage, TunerState};
 use crate::video::VideoSettings;
+use crate::zone_settings::MAX_QUICK_SELECT;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
     DimmerMode, DiracFilter, DynamicVolume, EcoMode, Illumination, InputMode, MultiEq, MuteLevel,
@@ -909,7 +910,7 @@ impl State {
             .trim()
             .parse()
             .ok()
-            .filter(|n| *n <= 5)?;
+            .filter(|n| *n <= MAX_QUICK_SELECT)?;
         self.zone_change(zone, Setting::QuickSelect, |z| {
             set(&mut z.quick_select, Some(number))
         })
@@ -2446,6 +2447,16 @@ mod tests {
             change(Some(Zone::Main), Setting::QuickSelect)
         );
         assert_eq!(state.zone(Zone::Main).quick_select, Some(3));
+        // Some models have six.
+        assert_eq!(
+            apply(&mut state, "MSQUICK6"),
+            change(Some(Zone::Main), Setting::QuickSelect)
+        );
+        assert_eq!(state.zone(Zone::Main).quick_select, Some(6));
+        assert_eq!(
+            apply(&mut state, "MSQUICK3"),
+            change(Some(Zone::Main), Setting::QuickSelect)
+        );
         assert_eq!(
             apply(&mut state, "MSQUICK0"),
             change(Some(Zone::Main), Setting::QuickSelect)
@@ -2460,6 +2471,7 @@ mod tests {
             "BTTX ?",
             "BTTX MAYBE",
             "ILB ?",
+            "MSQUICK7",
             "MSQUICK9",
             "MSQUICK",
             "Z3QUICKX",

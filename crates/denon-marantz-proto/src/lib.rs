@@ -93,4 +93,4 @@ pub use values::{
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};
-pub use zone_settings::ZoneSettingValue;
+pub use zone_settings::{MAX_QUICK_SELECT, ZoneSettingValue};

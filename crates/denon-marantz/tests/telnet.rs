@@ -1029,7 +1029,7 @@ async fn bluetooth_and_quick_select_are_sent_and_read() {
     let zone2 = avr.zone(Zone::Zone2).unwrap();
     main.select_quick_select(3).await.unwrap();
     zone2.store_quick_select(2).await.unwrap();
-    let error = main.select_quick_select(6).await.unwrap_err();
+    let error = main.select_quick_select(7).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
     assert_eq!(
