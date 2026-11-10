@@ -342,3 +342,26 @@ async fn a_failed_read_ends_the_start_and_closes_telnet() {
     assert!(avr.start().await.is_err());
     wait_until("telnet closed", || telnet.closed_by_client() == 1).await;
 }
+
+#[tokio::test]
+async fn a_page_that_does_not_answer_is_only_that_page() {
+    let web = Fake::start(|seen| match seen.path.as_str() {
+        VIDEO_SIGNAL_PATH => Reply::Hang,
+        AUDIO_CHANNELS_PATH => Reply::Body(AUDIO_PAGE.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = started(&web, &telnet).await;
+    let report = avr.start().await.unwrap().finished().await;
+    // The web interface answered, so the report has the pages that were read.
+    let pages = report.web_interface.unwrap();
+    assert_eq!(pages.availability.pages.len(), 7);
+    assert_eq!(pages.video_signal, PageStatus::NoAnswer);
+    assert_eq!(pages.audio_channels, PageStatus::Read);
+    // Telnet is asked for the video values that the page did not give.
+    wait_until("the video queries", || {
+        lines(&telnet.received()).contains(&"SSINFSIGRES ?")
+    })
+    .await;
+}

@@ -28,6 +28,9 @@ pub enum PageStatus {
     /// The receiver refused the page with this HTTP status. A receiver with a
     /// Dirac ART filter answers the channel level page with 500.
     Refused(u16),
+    /// The receiver did not answer in time. This is only used when it answered
+    /// another page before, so the receiver is there but busy.
+    NoAnswer,
     /// The receiver answered, but the answer is not a page that the library
     /// can read.
     Unreadable,

@@ -123,7 +123,7 @@ pub struct Info {
 /// should not slow the caller down.
 const WEB_INTERFACE_CONFIG: HttpConfig = HttpConfig {
     connect_timeout: Duration::from_secs(1),
-    request_timeout: Duration::from_secs(3),
+    request_timeout: Duration::from_secs(5),
     max_response_bytes: 256 * 1024,
     idle_timeout: Duration::from_secs(30),
     pacing: Pacing::Fixed {
@@ -881,7 +881,7 @@ impl AvrBuilder {
     }
 
     /// Sets timeouts, pacing and limits of the requests to the web interface
-    /// pages on port 11080. The default waits 1 second to connect and 3
+    /// pages on port 11080. The default waits 1 second to connect and 5
     /// seconds for an answer, so a receiver without these pages costs little
     /// time.
     #[must_use]

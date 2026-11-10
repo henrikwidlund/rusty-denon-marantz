@@ -143,7 +143,8 @@ impl Avr {
     /// also reads, one after the other, the pages that say which settings are
     /// available, and the signal pages, with one more try for a page that
     /// fails. The telnet queries for the signal that the pages answer are not
-    /// sent, unless a page could not be read.
+    /// sent, unless a page could not be read. A page that does not answer after
+    /// another page did is reported as [`PageStatus::NoAnswer`].
     ///
     /// Use [`Started::finished`] to wait for the rest. The values from
     /// telnet arrive as events later. Calls that follow, for example commands,
@@ -226,20 +227,26 @@ impl Avr {
         }
     }
 
+    async fn read_video_page(&self) -> Result<PageStatus, Error> {
+        self.read_web_interface(VIDEO_SIGNAL_PATH, VideoSignalPage::parse, |state, page| {
+            state.apply_video_signal_page(&page)
+        })
+        .await
+    }
+
+    async fn read_channels_page(&self) -> Result<PageStatus, Error> {
+        self.read_web_interface(
+            AUDIO_CHANNELS_PATH,
+            AudioChannelsPage::parse,
+            |state, page| state.apply_audio_channels_page(&page),
+        )
+        .await
+    }
+
     /// Reads the video page and the channel page of the web interface.
     async fn read_signal_pages(&self) -> Result<(PageStatus, PageStatus), Error> {
-        let video = self
-            .read_web_interface(VIDEO_SIGNAL_PATH, VideoSignalPage::parse, |state, page| {
-                state.apply_video_signal_page(&page)
-            })
-            .await?;
-        let channels = self
-            .read_web_interface(
-                AUDIO_CHANNELS_PATH,
-                AudioChannelsPage::parse,
-                |state, page| state.apply_audio_channels_page(&page),
-            )
-            .await?;
+        let video = self.read_video_page().await?;
+        let channels = self.read_channels_page().await?;
         Ok((video, channels))
     }
 
@@ -282,17 +289,30 @@ impl Avr {
     async fn read_start_pages(&self, options: StartOptions) -> Result<StartPages, Error> {
         let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
         for group in SettingsGroup::ALL {
-            let status = self
+            let result = self
                 .read_web_interface(
                     group.path(),
                     |body| GroupAvailability::parse(group, body),
                     State::apply_settings_availability,
                 )
-                .await?;
+                .await;
+            // The first answer shows that the web interface is there. A page
+            // that does not answer after that is a problem of the page: the
+            // receiver is busy, and the other pages are still read.
+            let status = if pages.is_empty() {
+                result?
+            } else {
+                result.unwrap_or(PageStatus::NoAnswer)
+            };
             pages.push((group, status));
         }
         let (video_signal, audio_channels) = if options.signal_pages {
-            self.read_signal_pages().await?
+            (
+                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer),
+                self.read_channels_page()
+                    .await
+                    .unwrap_or(PageStatus::NoAnswer),
+            )
         } else {
             (
                 PageStatus::Skipped(SkipReason::NotAsked),
