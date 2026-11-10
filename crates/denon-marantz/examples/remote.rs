@@ -244,7 +244,7 @@ const SOUND_COMMANDS: [&str; 43] = [
     "step",
 ];
 
-/// The other commands, sent with `Avr::send`.
+/// The other commands, sent with `Avr::telnet_send`.
 fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, String> {
     Ok(match name {
         "device-power-on" => Command::DevicePowerOn,
@@ -341,7 +341,7 @@ async fn sound_command(
             let filter = DiracFilter::from_code(need()?).ok_or_else(|| unknown("Dirac filter"))?;
             avr.dirac()?.set_filter(filter).await?;
         }
-        "dirac-name" => avr.dirac()?.set_slot_by_name(need()?).await?,
+        "dirac-name" => avr.dirac()?.select_slot_by_name(need()?).await?,
         "room-size" => {
             let size = RoomSize::from_code(need()?).ok_or_else(|| unknown("room size"))?;
             avr.sound().set_room_size(size).await?;
@@ -411,7 +411,7 @@ async fn print_availability(avr: &Avr, name: &str) -> Result<(), denon_marantz::
     use denon_marantz_proto::{Availability, SettingsGroup};
     let (result, groups) = if name == "setting-details" {
         (
-            avr.update_setting_details().await?,
+            avr.update_detailed_availability().await?,
             &SettingsGroup::DETAILS[..],
         )
     } else {
@@ -516,7 +516,7 @@ async fn sound_extra_command(
             } else {
                 SoundSettingValue::StepDown(step)
             };
-            avr.send(Zone::Main, Command::SetSoundSetting(value))
+            avr.telnet_send(Zone::Main, Command::SetSoundSetting(value))
                 .await?;
         }
         other => return Err(format!("unknown command {other}").into()),
@@ -651,7 +651,7 @@ async fn tuner_command(
         }
         "tuner-preset-up" => tuner.preset_up().await?,
         "tuner-preset-down" => tuner.preset_down().await?,
-        "tuner-preset" => tuner.set_preset(number()?).await?,
+        "tuner-preset" => tuner.select_preset(number()?).await?,
         "tuner-store" => tuner.store_preset(number()?).await?,
         other => return Err(format!("unknown command {other}").into()),
     }
@@ -962,7 +962,7 @@ async fn run(
     } else if typed(&ZONE_COMMANDS) {
         zone_command(avr.zone(zone)?, name, argument).await
     } else {
-        avr.send(zone, command(name, argument)?).await?;
+        avr.telnet_send(zone, command(name, argument)?).await?;
         Ok(())
     }
 }
@@ -1091,7 +1091,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let stamp = move || start.elapsed().as_secs_f64();
 
-    let mut events = avr.events();
+    let mut events = avr.telnet_events();
     avr.telnet_connect().await?;
     let printer = tokio::spawn(async move {
         loop {

@@ -233,3 +233,108 @@ fn web_interface_pages_allocate_little() {
         black_box(state.apply_video_signal_page(&page));
     });
 }
+
+/// The lines that the receiver sends about what plays and about the signal.
+const PLAYING_AND_SIGNAL_LINES: [&str; 22] = [
+    "NSE0Now Playing",
+    "NSE1\u{1}Song title",
+    "NSE2Artist",
+    "NSE4Album",
+    "HDARTISTBand",
+    "HDTITLESong",
+    "HDALBUMRecord",
+    "HDST NAMEWXYZ",
+    "SSINFSIGRES I4K50",
+    "SSINFSIGHDR I HDR10",
+    "SSINFSIGFRL O---",
+    "SSINFSIGPIX 11",
+    "SSINFSIGCOS 22",
+    "SSINFSIGECI 00",
+    "SSINFAISFSV 48K",
+    "SYSDA PCM",
+    "SYSMI Stereo",
+    "SYSDVIN 4K50",
+    "SYSDVOUT 4K50",
+    "SYHDMIDIAGMAXRES NO",
+    "OPINFINS 22000000",
+    "OPINFASP 22200000",
+];
+
+/// A value that did not change does not allocate, and the first value
+/// allocates only for its own text.
+#[test]
+fn unchanged_now_playing_and_signal_events_do_not_allocate() {
+    let mut state = State::new(false);
+    for line in PLAYING_AND_SIGNAL_LINES {
+        state.apply_message(&Message::parse(line).unwrap());
+    }
+    assert_no_allocation("events with the same values", || {
+        for line in PLAYING_AND_SIGNAL_LINES {
+            if let Some(message) = Message::parse(black_box(line)) {
+                black_box(state.apply_message(&message));
+            }
+        }
+    });
+}
+
+#[test]
+fn changed_now_playing_text_reuses_the_buffer() {
+    let mut state = State::new(false);
+    state.apply_message(&Message::parse("NSE1A long first title").unwrap());
+    let longer = Message::parse("NSE1Short").unwrap();
+    // A shorter text fits in the buffer that is there.
+    assert_no_allocation("a changed title", || {
+        black_box(state.apply_message(&longer));
+    });
+}
+
+#[test]
+fn the_other_pages_allocate_little() {
+    use denon_marantz_proto::{BassSettings, InputAssignment, SourceNames, SpeakerTable};
+    let tuner = fixture("Own-formTuner_TunerXml-fm.xml");
+    let bass = fixture("AVC-A10H-web-speakers-bass.xml");
+    let assign = fixture("AVC-A10H-web-inputs-assign.xml");
+    let names = fixture("AVC-A10H-web-inputs-names.xml");
+    let distances = fixture("AVC-A10H-web-speakers-distances.xml");
+    let count = |work: &mut dyn FnMut()| measure(work).count_total;
+    let cases = [
+        (
+            "tuner page",
+            50,
+            count(&mut || {
+                black_box(denon_marantz_proto::TunerPage::parse(&tuner).unwrap());
+            }),
+        ),
+        (
+            "bass page",
+            100,
+            count(&mut || {
+                black_box(BassSettings::parse(&bass).unwrap());
+            }),
+        ),
+        (
+            "input assignment page",
+            450,
+            count(&mut || {
+                black_box(InputAssignment::parse(&assign).unwrap());
+            }),
+        ),
+        (
+            "source names page",
+            130,
+            count(&mut || {
+                black_box(SourceNames::parse(&names).unwrap());
+            }),
+        ),
+        (
+            "distances page",
+            70,
+            count(&mut || {
+                black_box(SpeakerTable::parse_distances(&distances).unwrap());
+            }),
+        ),
+    ];
+    for (what, limit, count) in cases {
+        assert!(count < limit, "{what} used {count} allocations");
+    }
+}

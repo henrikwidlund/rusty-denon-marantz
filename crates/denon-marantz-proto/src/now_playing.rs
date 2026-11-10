@@ -5,6 +5,8 @@
 //! Receivers also have status pages with the same values. A receiver that is
 //! new enough to use HEOS for network audio gives neither.
 
+use std::borrow::Cow;
+
 use crate::error::Error;
 use crate::speaker_tables::root;
 use crate::xml::Node;
@@ -83,7 +85,7 @@ impl NowPlaying {
         let line = |index: usize| {
             lines
                 .and_then(|lines| lines.children().filter(|c| c.is("value")).nth(index))
-                .and_then(|value| clean(&value.node().text()?))
+                .and_then(|value| clean(&value.node().text()?).map(Cow::into_owned))
         };
         Ok(Self {
             status: line(0),
@@ -125,7 +127,7 @@ impl NowPlaying {
             '4' => &mut self.album,
             _ => return None,
         };
-        Some(replace(field, text))
+        Some(put(field, text))
     }
 
     /// Applies the text of an `HD` event that is not about zone 2 or 3, for
@@ -140,31 +142,48 @@ impl NowPlaying {
         ]
         .into_iter()
         .find_map(|(prefix, field)| Some((field, parameter.strip_prefix(prefix)?)))?;
-        Some(replace(field, clean(rest)))
+        Some(put(field, clean(rest)))
     }
 }
 
 /// Text of the `value` element in the element `tag`.
 fn value_of(node: Node<'_>, tag: &str) -> Option<String> {
     let value = node.child(tag)?.node().child("value")?;
-    clean(&value.node().text()?)
+    clean(&value.node().text()?).map(Cow::into_owned)
 }
 
 /// Removes control characters and the space around the text. `None` if
 /// nothing is left. Receivers send a control character at the start of some
-/// lines.
-fn clean(text: &str) -> Option<String> {
-    let text: String = text.chars().filter(|c| !c.is_control()).collect();
-    let text = text.trim();
-    (!text.is_empty()).then(|| text.to_owned())
+/// lines. The text is borrowed unless a control character is inside it.
+fn clean(text: &str) -> Option<Cow<'_, str>> {
+    let trimmed = text.trim_matches(|c: char| c.is_control() || c.is_whitespace());
+    let cleaned = if trimmed.chars().any(char::is_control) {
+        Cow::Owned(trimmed.chars().filter(|c| !c.is_control()).collect())
+    } else {
+        Cow::Borrowed(trimmed)
+    };
+    (!cleaned.is_empty()).then_some(cleaned)
 }
 
-fn replace(field: &mut Option<String>, value: Option<String>) -> bool {
-    if *field == value {
-        false
-    } else {
-        *field = value;
-        true
+/// Stores the value. Returns true if it was different. The buffer of the old
+/// value is reused, and an unchanged value does not allocate.
+fn put(field: &mut Option<String>, value: Option<Cow<'_, str>>) -> bool {
+    match (field.as_mut(), value) {
+        (Some(current), Some(value)) if *current == *value => false,
+        (Some(current), Some(value)) => {
+            current.clear();
+            current.push_str(&value);
+            true
+        }
+        (None, Some(value)) => {
+            *field = Some(value.into_owned());
+            true
+        }
+        (Some(_), None) => {
+            *field = None;
+            true
+        }
+        (None, None) => false,
     }
 }
 
@@ -238,6 +257,8 @@ mod tests {
         assert_eq!(now.apply_net_audio_line("0Now Playing"), Some(true));
         assert_eq!(now.apply_net_audio_line("0Now Playing"), Some(false));
         assert_eq!(now.apply_net_audio_line("1\u{1}Song  "), Some(true));
+        // A control character inside the text is removed, one at the end too.
+        assert_eq!(now.apply_net_audio_line("1So\u{2}ng\u{1}"), Some(false));
         assert_eq!(now.apply_net_audio_line("2Band"), Some(true));
         assert_eq!(now.apply_net_audio_line("4Record"), Some(true));
         // Other lines of the display are not used.

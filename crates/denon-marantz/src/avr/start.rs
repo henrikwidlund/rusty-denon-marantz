@@ -70,10 +70,16 @@ impl StartOptions {
 pub enum TelnetStart {
     /// Telnet was not asked for, or the crate is built without it.
     Disabled,
-    /// The connection is open.
+    /// This start opened the connection.
     Open,
+    /// A connection was already open or being opened, for example by
+    /// `Avr::telnet_connect`. It keeps its own queries.
+    AlreadyRunning,
     /// The first connection failed. Nothing keeps trying.
     Failed(Error),
+    /// The start was stopped before it finished, so this is not known. It
+    /// happens only when the runtime shuts down.
+    Unknown,
 }
 
 /// The pages of the web interface that the start reads.
@@ -117,7 +123,7 @@ impl Started {
             Ok(report) => report,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(_) => StartReport {
-                telnet: TelnetStart::Disabled,
+                telnet: TelnetStart::Unknown,
                 web_interface: Err(Error::Stopped),
             },
         }
@@ -152,8 +158,9 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// The errors of [`Avr::update`]. The telnet connection is closed again
-    /// then. A failure of telnet or of the web interface is in the report.
+    /// The errors of [`Avr::update`]. A telnet connection that this call
+    /// opened is closed again then. A failure of telnet or of the web
+    /// interface is in the report.
     pub async fn start_with(self: &Arc<Self>, options: StartOptions) -> Result<Started, Error> {
         #[cfg(feature = "telnet")]
         let (read, telnet) = if options.telnet {
@@ -163,8 +170,9 @@ impl Avr {
         };
         #[cfg(not(feature = "telnet"))]
         let (read, telnet) = (self.update().await, TelnetStart::Disabled);
+        // Close only the connection that this start opened.
         #[cfg(feature = "telnet")]
-        if read.is_err() {
+        if read.is_err() && matches!(telnet, TelnetStart::Open) {
             self.telnet_disconnect().await;
         }
         read?;
@@ -189,7 +197,8 @@ impl Avr {
             .connect(&self.info.host, &self.channels, first)
             .await
         {
-            Ok(()) => TelnetStart::Open,
+            Ok(true) => TelnetStart::Open,
+            Ok(false) => TelnetStart::AlreadyRunning,
             Err(error) => TelnetStart::Failed(error),
         }
     }
@@ -228,26 +237,37 @@ impl Avr {
     }
 
     async fn read_video_page(&self) -> Result<PageStatus, Error> {
-        self.read_web_interface(VIDEO_SIGNAL_PATH, VideoSignalPage::parse, |state, page| {
-            state.apply_video_signal_page(&page)
-        })
-        .await
+        let result = self
+            .read_web_interface(VIDEO_SIGNAL_PATH, VideoSignalPage::parse, |state, page| {
+                state.apply_video_signal_page(&page)
+            })
+            .await;
+        self.forget_telnet_values(&result).await;
+        result
     }
 
     async fn read_channels_page(&self) -> Result<PageStatus, Error> {
-        self.read_web_interface(
-            AUDIO_CHANNELS_PATH,
-            AudioChannelsPage::parse,
-            |state, page| state.apply_audio_channels_page(&page),
-        )
-        .await
+        let result = self
+            .read_web_interface(
+                AUDIO_CHANNELS_PATH,
+                AudioChannelsPage::parse,
+                |state, page| state.apply_audio_channels_page(&page),
+            )
+            .await;
+        self.forget_telnet_values(&result).await;
+        result
     }
 
-    /// Reads the video page and the channel page of the web interface.
-    async fn read_signal_pages(&self) -> Result<(PageStatus, PageStatus), Error> {
-        let video = self.read_video_page().await?;
-        let channels = self.read_channels_page().await?;
-        Ok((video, channels))
+    /// After a page set values, the next telnet event with the old value is a
+    /// real change, so telnet must not drop it as a repeat.
+    #[cfg_attr(not(feature = "telnet"), allow(clippy::unused_async))]
+    pub(super) async fn forget_telnet_values(&self, result: &Result<PageStatus, Error>) {
+        #[cfg(feature = "telnet")]
+        if matches!(result, Ok(PageStatus::Read)) {
+            self.telnet.forget_values().await;
+        }
+        #[cfg(not(feature = "telnet"))]
+        let _ = result;
     }
 
     /// Reads the video and audio signal again, in the way that fits.
@@ -264,15 +284,17 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// Returns an error if nothing could be asked: the web interface does
-    /// not answer and telnet is not open.
+    /// Returns an error if nothing could be asked or read: telnet is not open
+    /// and the web interface does not answer, or answers with no page that
+    /// can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal(&self) -> Result<(), Error> {
-        let pages = self.read_signal_pages().await;
+        let video = self.read_video_page().await;
+        let channels = self.read_channels_page().await;
+        let is_read =
+            |result: &Result<PageStatus, Error>| result.as_ref().is_ok_and(|s| s.is_read());
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
-            let (video, channels) = pages.as_ref().map_or((false, false), |(video, channels)| {
-                (video.is_read(), channels.is_read())
-            });
+            let (video, channels) = (is_read(&video), is_read(&channels));
             let mut queries: Vec<&'static str> =
                 signal_queries(self.info.brand, SignalPart::Audio).collect();
             if !video {
@@ -283,7 +305,13 @@ impl Avr {
             }
             return self.telnet.ask(queries).await;
         }
-        pages.map(|_| ())
+        if is_read(&video) || is_read(&channels) {
+            return Ok(());
+        }
+        // Nothing was read: say why.
+        video?;
+        channels?;
+        Err(Error::NothingRead("signal"))
     }
 
     async fn read_start_pages(&self, options: StartOptions) -> Result<StartPages, Error> {

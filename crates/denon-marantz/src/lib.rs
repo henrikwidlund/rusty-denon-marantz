@@ -2,12 +2,32 @@
 //!
 //! The types of the protocol are in the `denon-marantz-proto` crate. This
 //! crate has them too: the types that most programs need are at the top, for
-//! example [`Zone`] and [`Volume`], and all others are in [`proto`].
+//! example [`Zone`] and [`Volume`], and all others are in [`proto`]. This
+//! includes the values that the setters take, for example `DimmerMode`,
+//! `DiracFilter` and `TunerBand`.
+//!
+//! # Naming
+//!
+//! The names of the calls say which way they use:
+//! - `update_*` reads over HTTP: `update` reads the zones, the others read
+//!   pages of the web interface on port 11080 or the status pages.
+//! - `telnet_*` uses the telnet connection: `telnet_connect`, `telnet_send`,
+//!   `telnet_refresh`, `telnet_events`.
+//! - `refresh*` picks the way for you: `refresh`, `refresh_signal` and
+//!   `refresh_now_playing`.
+//! - The setters are in the controls: `Avr::zone`, `sound`, `device`, `tone`,
+//!   `tuner`, `video`, `audyssey` and `dirac`. `select_` chooses an item from
+//!   a list, `set_` sets a value, `store_` saves the current setting in an
+//!   item, `_next` and `_previous` step in a list and `_up` and `_down` step
+//!   a number.
+//!
+//! `HttpClient`, `Pacer` and `identify` are for programs that need more
+//! control. Most programs only use `Avr`.
 //!
 //! # Example
 //!
-//! [`Avr::start`] reads the zones and returns. Telnet and the web interface
-//! fill in the rest in the background, and [`Avr::changes`] reports each
+//! `Avr::start` reads the zones and returns. Telnet and the web interface
+//! fill in the rest in the background, and `Avr::changes` reports each
 //! change of the state.
 //!
 //! ```no_run

@@ -126,7 +126,7 @@ async fn changes_and_events_are_published() {
         .await
         .unwrap();
     let mut changes = avr.changes();
-    let mut events = avr.events();
+    let mut events = avr.telnet_events();
     avr.telnet_connect().await.unwrap();
 
     telnet.send(b"SIGAME\r");
@@ -174,7 +174,7 @@ async fn repeated_events_from_a_query_are_left_out() {
         .connect()
         .await
         .unwrap();
-    let mut events = avr.events();
+    let mut events = avr.telnet_events();
     avr.telnet_connect().await.unwrap();
 
     telnet.send(b"SSINFSIGRES I 4K\rSSINFSIGRES I 4K\rSSINFSIGRES I 8K\r");
@@ -464,7 +464,7 @@ async fn a_repeated_event_is_shown_again_after_a_refresh() {
         .connect()
         .await
         .unwrap();
-    let mut events = avr.events();
+    let mut events = avr.telnet_events();
     avr.telnet_connect().await.unwrap();
     telnet.send(b"SSINFSIGRES I 4K\rSSINFSIGRES I 4K\r");
     timeout(Duration::from_secs(2), events.recv())
@@ -488,9 +488,13 @@ async fn a_repeated_event_is_shown_again_after_a_refresh() {
 async fn send_writes_the_command_for_the_zone() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
-    avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
-    avr.send(Zone::Zone2, Command::Mute(true)).await.unwrap();
-    avr.send(Zone::Main, Command::SelectSource("GAME"))
+    avr.telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap();
+    avr.telnet_send(Zone::Zone2, Command::Mute(true))
+        .await
+        .unwrap();
+    avr.telnet_send(Zone::Main, Command::SelectSource("GAME"))
         .await
         .unwrap();
     wait_until("the commands", || {
@@ -516,7 +520,9 @@ async fn commands_go_before_the_remaining_queries() {
     let (avr, _http) = connected(config).await;
     // The queries take about 1.6 s at this speed.
     wait_until("a few queries", || sent(&telnet).len() >= 3).await;
-    avr.send(Zone::Main, Command::VolumeDown).await.unwrap();
+    avr.telnet_send(Zone::Main, Command::VolumeDown)
+        .await
+        .unwrap();
     wait_until("the command", || {
         sent(&telnet).iter().any(|line| line == "MVDOWN")
     })
@@ -546,7 +552,9 @@ async fn queries_wait_after_a_command() {
     };
     let (avr, _http) = connected(config).await;
     wait_until("a few queries", || sent(&telnet).len() >= 3).await;
-    avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
+    avr.telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap();
     wait_until("the command", || {
         sent(&telnet).iter().any(|line| line == "MVUP")
     })
@@ -569,7 +577,9 @@ async fn writes_keep_the_spacing() {
     // The first query is sent at once. Wait for the commands to be next in line.
     let started = tokio::time::Instant::now();
     for _ in 0..4 {
-        avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
+        avr.telnet_send(Zone::Main, Command::VolumeUp)
+            .await
+            .unwrap();
     }
     // Four commands and the queries in between need at least three gaps.
     assert!(
@@ -589,23 +599,34 @@ async fn nothing_is_sent_while_the_connection_is_not_open() {
         .await
         .unwrap();
     // Not connected yet.
-    let error = avr.send(Zone::Main, Command::VolumeUp).await.unwrap_err();
+    let error = avr
+        .telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap_err();
     assert!(error.is_not_connected(), "{error:?}");
     assert!(avr.telnet_refresh().await.unwrap_err().is_not_connected());
 
     avr.telnet_connect().await.unwrap();
-    avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
+    avr.telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap();
 
     // While the task connects again.
     telnet.close();
     status_is(&avr, TelnetStatus::Disconnected).await;
-    let error = avr.send(Zone::Main, Command::VolumeUp).await.unwrap_err();
+    let error = avr
+        .telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap_err();
     assert!(error.is_not_connected(), "{error:?}");
 
     // After a disconnect.
     status_is(&avr, TelnetStatus::Connected).await;
     avr.telnet_disconnect().await;
-    let error = avr.send(Zone::Main, Command::VolumeUp).await.unwrap_err();
+    let error = avr
+        .telnet_send(Zone::Main, Command::VolumeUp)
+        .await
+        .unwrap_err();
     assert!(error.is_not_connected(), "{error:?}");
 }
 
@@ -615,7 +636,10 @@ async fn invalid_commands_are_refused_before_anything_is_sent() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     wait_until("the queries", || sent(&telnet).len() >= 79).await;
     for text in ["", "A\rMVUP", "A\nB"] {
-        let error = avr.send(Zone::Main, Command::Raw(text)).await.unwrap_err();
+        let error = avr
+            .telnet_send(Zone::Main, Command::Raw(text))
+            .await
+            .unwrap_err();
         assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
         assert!(error.is_invalid_input());
     }
@@ -634,7 +658,7 @@ async fn a_waiting_command_fails_when_the_connection_ends() {
     };
     let (avr, _http) = connected(config).await;
     wait_until("the first query", || !sent(&telnet).is_empty()).await;
-    let waiting = avr.send(Zone::Main, Command::VolumeUp);
+    let waiting = avr.telnet_send(Zone::Main, Command::VolumeUp);
     let (result, ()) = tokio::join!(waiting, async {
         tokio::time::sleep(Duration::from_millis(100)).await;
         telnet.close();
@@ -799,16 +823,16 @@ async fn tuner_methods_send_their_commands_and_events_fill_the_state() {
     let tuner = avr.tuner();
     tuner.set_band(TunerBand::Fm).await.unwrap();
     tuner.frequency_up().await.unwrap();
-    tuner.set_preset(3).await.unwrap();
+    tuner.select_preset(3).await.unwrap();
     tuner.store_preset(12).await.unwrap();
-    let error = tuner.set_preset(57).await.unwrap_err();
+    let error = tuner.select_preset(57).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
     assert_eq!(
         commands_sent(&telnet),
         ["TMANFM", "TFANUP", "TPAN03", "TPANMEM12"]
     );
-    tuner.refresh().await.unwrap();
+    tuner.request().await.unwrap();
     wait_until("the queries", || {
         sent(&telnet).contains(&"TMAN?".to_owned())
     })
@@ -1694,15 +1718,15 @@ async fn dirac_slots_are_chosen_by_number_and_by_name() {
         .unwrap();
     avr.telnet_connect().await.unwrap();
     let dirac = avr.dirac().unwrap();
-    dirac.set_slot(1).await.unwrap();
+    dirac.select_slot(1).await.unwrap();
     dirac.set_filter(DiracFilter::Off).await.unwrap();
     for number in [0, 4] {
-        let error = dirac.set_slot(number).await.unwrap_err();
+        let error = dirac.select_slot(number).await.unwrap_err();
         assert!(matches!(error, Error::DiracSlotOutOfRange(n) if n == number));
         assert!(error.is_invalid_input());
     }
     // Names come from the state.
-    let error = dirac.set_slot_by_name("Dirac ART").await.unwrap_err();
+    let error = dirac.select_slot_by_name("Dirac ART").await.unwrap_err();
     assert!(matches!(error, Error::UnknownDiracSlot(_)), "{error:?}");
     telnet.send(b"OPDLSSL3NAME Dirac ART      \rOPDLSSL3IMP ON\rOPDLSSL3TYP ART\rOPDLS END\r");
     wait_until("the slot", || {
@@ -1712,7 +1736,7 @@ async fn dirac_slots_are_chosen_by_number_and_by_name() {
             .is_some()
     })
     .await;
-    dirac.set_slot_by_name("dirac art").await.unwrap();
+    dirac.select_slot_by_name("dirac art").await.unwrap();
     wait_until("the commands", || commands_sent(&telnet).len() >= 3).await;
     assert_eq!(
         commands_sent(&telnet),
@@ -1959,6 +1983,87 @@ async fn refresh_reads_http_and_asks_on_telnet_when_it_is_open() {
     );
     wait_until("the queries again", || {
         telnet.received().matches("SI?\r").count() > asked
+    })
+    .await;
+}
+
+const VIDEO_PATH: &str = "/ajax/info/get_config?type=3";
+const CHANNELS_PATH: &str = "/ajax/info/get_config?type=2";
+const CHANNELS_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-audio-channels.xml");
+
+#[tokio::test]
+async fn repeated_group_requests_do_not_grow_the_queue() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        query_interval: Duration::from_millis(60),
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    // The queue is slower than the requests, so these would pile up.
+    for _ in 0..5 {
+        avr.telnet_refresh_group(QueryGroup::Signal).await.unwrap();
+    }
+    wait_until("the last query of the group", || {
+        sent(&telnet).contains(&"SSINFSIGECI ?".to_owned())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let lines = sent(&telnet);
+    let count = |query: &str| lines.iter().filter(|line| line.as_str() == query).count();
+    assert_eq!(count("SYSDA ?"), 1, "{lines:?}");
+    assert_eq!(count("SSINFSIGRES ?"), 1, "{lines:?}");
+}
+
+#[tokio::test]
+async fn a_page_does_not_hide_the_next_telnet_event_with_the_old_value() {
+    let telnet = FakeTelnet::start().await;
+    let web = common::Fake::start(|seen| match seen.path.as_str() {
+        VIDEO_PATH => common::Reply::Body(
+            b"<Video><Resolution><Input>1080p60</Input><Output>1080p60</Output></Resolution></Video>"
+                .to_vec(),
+        ),
+        CHANNELS_PATH => common::Reply::Body(CHANNELS_PAGE.to_vec()),
+        _ => common::Reply::Status(404),
+    })
+    .await;
+    let http = avr_x_receiver().await;
+    let avr = std::sync::Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .web_interface_port(web.port)
+            .web_interface_config(common::config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let video = |avr: &Avr| avr.snapshot().device().signal.video.input.clone();
+    avr.telnet_connect().await.unwrap();
+    telnet.send(b"SSINFSIGRES I4K50\r");
+    wait_until("the telnet value", || {
+        video(&avr).as_deref() == Some("4K50")
+    })
+    .await;
+
+    // The start reads the page, and telnet is already open, so telnet is not asked.
+    let report = avr.start().await.unwrap().finished().await;
+    assert!(matches!(
+        report.telnet,
+        denon_marantz::TelnetStart::AlreadyRunning
+    ));
+    assert_eq!(video(&avr).as_deref(), Some("1080p60"));
+
+    // The old value is a real change now.
+    telnet.send(b"SSINFSIGRES I4K50\r");
+    wait_until("the old value again", || {
+        video(&avr).as_deref() == Some("4K50")
     })
     .await;
 }

@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let avr = Avr::builder(host).connect().await?;
     println!("connected to {}", avr.info().friendly_name);
-    let mut events = avr.events();
+    let mut events = avr.telnet_events();
     let mut changes = avr.changes();
     avr.update().await?;
     avr.telnet_connect().await?;

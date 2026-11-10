@@ -18,11 +18,11 @@ use crate::error::Error;
 /// [`Audyssey::set_multi_eq`] returns [`Error::AudysseyBlockedByDirac`] and
 /// sends nothing while the state shows a Dirac filter. Selecting a MultEQ mode
 /// is the way to go back to Audyssey, so it is sent. To send an Audyssey
-/// command anyway, use [`Avr::send`].
+/// command anyway, use [`Avr::telnet_send`].
 ///
-/// Each method returns when the command is written, as [`Avr::send`] does.
+/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::send`].
+/// the errors of [`Avr::telnet_send`].
 #[derive(Debug, Clone, Copy)]
 pub struct Audyssey<'a> {
     avr: &'a Avr,
@@ -159,6 +159,6 @@ impl<'a> Audyssey<'a> {
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {
-        self.avr.send(Zone::Main, command).await
+        self.avr.telnet_send(Zone::Main, command).await
     }
 }

@@ -11,8 +11,8 @@ use crate::error::Error;
 /// Only receivers with a tuner accept the commands, and the source must be
 /// the tuner. A receiver sends no error otherwise.
 ///
-/// Each method returns when the command is written, as [`Avr::send`] does.
-/// Each method returns the errors of [`Avr::send`]. A preset that is not from
+/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
+/// Each method returns the errors of [`Avr::telnet_send`]. A preset that is not from
 /// 1 to 56 gives [`Error::InvalidCommand`], and nothing is sent.
 #[derive(Debug, Clone, Copy)]
 pub struct TunerControl<'a> {
@@ -83,7 +83,7 @@ impl<'a> TunerControl<'a> {
     /// # Errors
     ///
     /// See [`TunerControl`].
-    pub async fn set_preset(&self, number: u8) -> Result<(), Error> {
+    pub async fn select_preset(&self, number: u8) -> Result<(), Error> {
         self.send(TunerCommand::Preset(number)).await
     }
 
@@ -101,19 +101,24 @@ impl<'a> TunerControl<'a> {
     /// The answers fill the tuner state. The connection also asks once when
     /// the source changes to the tuner. Call this again to follow changes
     /// that the receiver does not report, for example the station name. The
-    /// receiver answers for the tuner source only.
+    /// receiver answers for the tuner source only. This always uses telnet.
+    /// `Avr::refresh_now_playing` picks telnet or HTTP for you.
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
-    pub async fn refresh(&self) -> Result<(), Error> {
+    pub async fn request(&self) -> Result<(), Error> {
         for query in TUNER_QUERIES {
-            self.avr.send(Zone::Main, Command::Raw(query)).await?;
+            self.avr
+                .telnet_send(Zone::Main, Command::Raw(query))
+                .await?;
         }
         Ok(())
     }
 
     async fn send(&self, command: TunerCommand) -> Result<(), Error> {
-        self.avr.send(Zone::Main, Command::Tuner(command)).await
+        self.avr
+            .telnet_send(Zone::Main, Command::Tuner(command))
+            .await
     }
 }

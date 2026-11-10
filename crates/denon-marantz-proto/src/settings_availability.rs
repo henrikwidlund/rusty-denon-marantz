@@ -171,6 +171,12 @@ impl GroupAvailability {
                     .filter(|&code| code != 0),
             });
         }
+        if items.is_empty() {
+            // A page of another kind must not replace what is known.
+            return Err(Error::UnexpectedDocument {
+                expected: "a list of settings",
+            });
+        }
         Ok(Self { group, items })
     }
 

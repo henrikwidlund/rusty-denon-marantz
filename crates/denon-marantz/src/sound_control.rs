@@ -17,9 +17,9 @@ use crate::error::Error;
 /// a sound mode or a Dirac Live filter turns off. It sends no error then, so
 /// the state keeps the old value.
 ///
-/// Each method returns when the command is written, as [`Avr::send`] does.
+/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::send`]. A number that the receiver does not accept
+/// the errors of [`Avr::telnet_send`]. A number that the receiver does not accept
 /// gives [`Error::InvalidCommand`], and nothing is sent.
 #[derive(Debug, Clone, Copy)]
 pub struct SoundControl<'a> {
@@ -272,7 +272,9 @@ impl<'a> SoundControl<'a> {
     ///
     /// See [`SoundControl`].
     pub async fn set_input_mode(&self, mode: InputMode) -> Result<(), Error> {
-        self.avr.send(Zone::Main, Command::SetInputMode(mode)).await
+        self.avr
+            .telnet_send(Zone::Main, Command::SetInputMode(mode))
+            .await
     }
 
     /// Sends the command with the name that the receiver reported, or both.
@@ -300,13 +302,13 @@ impl<'a> SoundControl<'a> {
 
     async fn channel_volume(&self, command: ChannelVolumeCommand) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetChannelVolume(command))
+            .telnet_send(Zone::Main, Command::SetChannelVolume(command))
             .await
     }
 
     async fn send(&self, value: SoundSettingValue) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetSoundSetting(value))
+            .telnet_send(Zone::Main, Command::SetSoundSetting(value))
             .await
     }
 }

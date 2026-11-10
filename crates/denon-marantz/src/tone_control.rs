@@ -15,11 +15,11 @@ use crate::error::{Error, ToneBlocker};
 /// answer and no error. So these methods return [`Error::ToneControlBlocked`]
 /// and send nothing when the state shows a Dirac filter. Audyssey Dynamic EQ
 /// might also block it, but that is not confirmed, so it is not checked. To
-/// send the command anyway, use [`Avr::send`] with [`Command::ToneControl`].
+/// send the command anyway, use [`Avr::telnet_send`] with [`Command::ToneControl`].
 ///
-/// Each method returns when the commands are written, as [`Avr::send`] does.
+/// Each method returns when the commands are written, as [`Avr::telnet_send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::send`].
+/// the errors of [`Avr::telnet_send`].
 #[derive(Debug, Clone, Copy)]
 pub struct ToneControl<'a> {
     avr: &'a Avr,
@@ -167,7 +167,7 @@ impl<'a> ToneControl<'a> {
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {
-        self.avr.send(Zone::Main, command).await
+        self.avr.telnet_send(Zone::Main, command).await
     }
 }
 

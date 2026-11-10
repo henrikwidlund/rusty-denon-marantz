@@ -15,9 +15,9 @@ use crate::error::Error;
 /// aspect ratio and the resolution are for older receivers. It sends no error
 /// for a setting that it does not have, so the state keeps the old value.
 ///
-/// Each method returns when the command is written, as [`Avr::send`] does.
+/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::send`].
+/// the errors of [`Avr::telnet_send`].
 #[derive(Debug, Clone, Copy)]
 pub struct VideoControl<'a> {
     avr: &'a Avr,
@@ -99,13 +99,13 @@ impl<'a> VideoControl<'a> {
 
     async fn send_picture(&self, value: PictureSettingValue) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetPictureSetting(value))
+            .telnet_send(Zone::Main, Command::SetPictureSetting(value))
             .await
     }
 
     async fn send(&self, value: VideoSettingValue) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetVideoSetting(value))
+            .telnet_send(Zone::Main, Command::SetVideoSetting(value))
             .await
     }
 }

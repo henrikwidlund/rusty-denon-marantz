@@ -48,6 +48,13 @@ pub enum Error {
         /// Number of items in the response.
         actual: usize,
     },
+    /// A page of the web interface is well-formed XML, but it is not the page
+    /// that was asked for.
+    #[error("the page is not the expected one: {expected}")]
+    UnexpectedDocument {
+        /// What the page should have.
+        expected: &'static str,
+    },
     /// The response has an element other than `cmd` or `error`.
     #[error("response has an unexpected element at item {index}")]
     UnexpectedElement {

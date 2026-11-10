@@ -67,5 +67,54 @@ fn decode(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, decode);
+/// What the receiver sends about what plays and about the signal. Most of
+/// these repeat, so the value of a repeated line is the common case.
+fn events(c: &mut Criterion) {
+    let lines = [
+        "NSE0Now Playing",
+        "NSE1Song title",
+        "NSE2Artist",
+        "HDTITLESong",
+        "SSINFSIGRES I4K50",
+        "SSINFSIGCOS 22",
+        "SYSDA PCM",
+        "OPINFINS 22000000",
+        "OPINFASP 22200000",
+    ];
+    let mut group = c.benchmark_group("telnet_events");
+    group.throughput(Throughput::Elements(lines.len() as u64));
+    group.bench_function("apply_unchanged", |b| {
+        let mut state = State::new(false);
+        for line in lines {
+            state.apply_message(&Message::parse(line).unwrap());
+        }
+        b.iter(|| {
+            for line in lines {
+                if let Some(message) = Message::parse(black_box(line)) {
+                    black_box(state.apply_message(&message));
+                }
+            }
+        });
+    });
+    group.bench_function("apply_changing", |b| {
+        let mut state = State::new(false);
+        let mut flip = false;
+        b.iter(|| {
+            flip = !flip;
+            let changing = if flip {
+                ["NSE1Song one", "SSINFSIGRES I4K50"]
+            } else {
+                ["NSE1Song two", "SSINFSIGRES I1080p60"]
+            };
+            for line in changing {
+                if let Some(message) = Message::parse(black_box(line)) {
+                    black_box(state.apply_message(&message));
+                }
+            }
+        });
+    });
+    group.finish();
+}
+
+criterion_group!(benches, decode, events);
 criterion_main!(benches);

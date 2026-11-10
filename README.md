@@ -2,8 +2,6 @@
 
 Async Rust library to monitor and control Denon and Marantz AV receivers.
 
-> Work in progress. Nothing is published and the API will change.
-
 ## What it does
 
 The client keeps one state of the receiver. Telnet events change it at once.
@@ -90,7 +88,7 @@ send changes:
 avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
-avr.update_setting_details().await?; // surround parameters, HDMI setup, video output
+avr.update_detailed_availability().await?; // surround parameters, HDMI setup, video output
 avr.update_system_settings().await?;
 ```
 
@@ -107,6 +105,11 @@ the connection is open and reads the status page if not, so your code does not
 choose. The values reach `snapshot()` and `changes()` either way. Nothing asks
 again by itself: call it again to see changes, for example on a timer.
 
+The names say which way a call uses. `update_*` reads over HTTP, `telnet_*` uses
+telnet, and `refresh*` picks the way for you. The setters are in the controls
+(`avr.zone(..)`, `sound()`, `device()` and others). The values that the setters
+take are in `denon_marantz::proto`.
+
 Each call says what happened to each page. A page that the receiver does not
 have or refuses is not an error. A receiver that cannot be reached is an error,
 see `Error::is_unreachable`.
@@ -115,9 +118,9 @@ see `Error::is_unreachable`.
 
 | Feature | Default | Adds |
 |---|---|---|
-| `telnet` | yes | Live events and commands on port 23. |
+| `telnet` | yes | Live events and commands on port 23. Needs `http`. |
 | `http` | yes | AppCommand XML and the web interface. |
-| `discovery` | yes | Receiver search with SSDP. |
+| `discovery` | yes | Receiver search with SSDP. Needs `http`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
 
 ## Tested

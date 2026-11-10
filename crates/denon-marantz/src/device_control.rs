@@ -63,9 +63,9 @@ impl ResetKeys {
 
 /// Controls the settings of the whole receiver. Get it from [`Avr::device`].
 ///
-/// Each method returns when the command is written, as [`Avr::send`] does.
+/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::send`].
+/// the errors of [`Avr::telnet_send`].
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceControl<'a> {
     avr: &'a Avr,
@@ -205,7 +205,7 @@ impl<'a> DeviceControl<'a> {
     /// See [`DeviceControl`].
     pub async fn set_trigger(&self, trigger: Trigger, on: bool) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetTrigger(trigger, on))
+            .telnet_send(Zone::Main, Command::SetTrigger(trigger, on))
             .await
     }
 
@@ -261,7 +261,7 @@ impl<'a> DeviceControl<'a> {
 
     async fn send(&self, value: DeviceSettingValue) -> Result<(), Error> {
         self.avr
-            .send(Zone::Main, Command::SetDeviceSetting(value))
+            .telnet_send(Zone::Main, Command::SetDeviceSetting(value))
             .await
     }
 }

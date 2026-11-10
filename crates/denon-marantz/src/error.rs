@@ -86,7 +86,12 @@ pub enum Error {
         /// The limit in bytes.
         limit: usize,
     },
-    /// The runtime stopped the task of a start before it was finished.
+    /// The receiver answered, but nothing was read: every page that was asked
+    /// for was missing, refused or not readable.
+    #[error("nothing was read for the {0}")]
+    NothingRead(&'static str),
+    /// The runtime stopped the task of a start before it was finished. It
+    /// is only in the report of that start.
     #[error("the start was stopped before it finished")]
     Stopped,
     /// The telnet connection is not open, so nothing was sent.
@@ -159,6 +164,7 @@ impl Error {
             | Self::Protocol { request, .. }
             | Self::ResponseTooLarge { request, .. } => Some(request),
             Self::Stopped
+            | Self::NothingRead(_)
             | Self::NotConnected
             | Self::InvalidCommand(_)
             | Self::InvalidRequest(_)

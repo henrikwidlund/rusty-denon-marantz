@@ -51,6 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let telnet = match &report.telnet {
         TelnetStart::Open => "Open".to_owned(),
+        TelnetStart::AlreadyRunning => "AlreadyRunning".to_owned(),
         TelnetStart::Disabled => "Disabled".to_owned(),
         TelnetStart::Failed(error) => format!("Failed ({error})"),
         _ => "Unknown".to_owned(),

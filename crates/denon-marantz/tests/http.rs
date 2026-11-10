@@ -125,6 +125,27 @@ async fn garbage_is_an_invalid_response() {
 }
 
 #[tokio::test]
+async fn a_body_that_ends_early_is_a_network_error() {
+    // The head promises 100 bytes, and the connection ends after 5.
+    let fake = Fake::start(|_| {
+        Reply::Raw(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort".to_vec())
+    })
+    .await;
+    let error = client(&fake, config()).get("/x").await.unwrap_err();
+    assert!(error.is_network(), "{error:?}");
+    assert!(error.is_unreachable());
+}
+
+#[tokio::test]
+async fn a_forbidden_page_is_its_own_error() {
+    let fake = Fake::start(|_| Reply::Status(403)).await;
+    let error = client(&fake, config()).get("/x").await.unwrap_err();
+    assert!(matches!(error, Error::Forbidden { .. }), "{error:?}");
+    assert!(error.is_status());
+    assert!(!error.is_unreachable());
+}
+
+#[tokio::test]
 async fn refused_connection_is_a_network_error() {
     let fake = Fake::start(|_| Reply::Body(Vec::new())).await;
     let port = fake.port;

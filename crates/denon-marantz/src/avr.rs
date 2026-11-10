@@ -150,8 +150,10 @@ pub struct AvrBuilder {
 
 /// A receiver that is read over HTTP.
 ///
-/// The state is in a [`watch`] channel. [`Avr::update`] reads it from the
-/// receiver. Everything is `&self`, so one value can be shared between tasks.
+/// The state is in a [`watch`] channel. [`Avr::start`] or [`Avr::update`]
+/// reads it from the receiver. Everything is `&self`, so one value can be
+/// shared between tasks. See the crate docs for the meaning of the prefixes
+/// `update_`, `telnet_` and `refresh`.
 #[derive(Debug)]
 pub struct Avr {
     http: HttpClient,
@@ -195,7 +197,8 @@ impl Avr {
         &self.info
     }
 
-    /// Watches the state. It is empty until [`Avr::update`] has run.
+    /// Watches the state. It is empty until the first [`Avr::start`] or
+    /// [`Avr::update`] has run.
     #[must_use]
     pub fn state(&self) -> watch::Receiver<State> {
         self.channels.watch_state()
@@ -380,7 +383,7 @@ impl Avr {
     /// # Errors
     ///
     /// The same as [`Avr::update_speaker_details`].
-    pub async fn update_setting_details(&self) -> Result<SettingsAvailabilityDetails, Error> {
+    pub async fn update_detailed_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
         self.read_availability(&SettingsGroup::DETAILS).await
     }
 
@@ -438,9 +441,15 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// The same as [`Avr::update_speaker_details`], for the HTTP port of the
-    /// receiver.
+    /// Returns an error if the receiver cannot be reached, see
+    /// [`Error::is_unreachable`].
     pub async fn update_now_playing(&self) -> Result<PageStatus, Error> {
+        let result = self.read_now_playing_page().await;
+        self.forget_telnet_values(&result).await;
+        result
+    }
+
+    async fn read_now_playing_page(&self) -> Result<PageStatus, Error> {
         match self.playing_kind() {
             Some(PlayingKind::NetAudio) => {
                 self.read_page(
@@ -520,10 +529,13 @@ impl Avr {
         let port = self.info.port;
         match self.playing_kind()? {
             PlayingKind::NetAudio => {
-                let state = self.snapshot();
-                let now = &state.device().now_playing;
                 let mut hasher = std::hash::DefaultHasher::new();
-                (&now.title, &now.artist, &now.album).hash(&mut hasher);
+                {
+                    let state = self.channels.watch_state();
+                    let state = state.borrow();
+                    let now = &state.device().now_playing;
+                    (&now.title, &now.artist, &now.album).hash(&mut hasher);
+                }
                 Some(format!(
                     "http://{host}:{port}{}?{}",
                     denon_marantz_proto::COVER_ARTWORK_PATH,
@@ -540,7 +552,8 @@ impl Avr {
     /// What the source of the main zone plays, from its name or its telnet
     /// name. A source that has a name of the user is found by that name.
     fn playing_kind(&self) -> Option<PlayingKind> {
-        let state = self.snapshot();
+        let state = self.channels.watch_state();
+        let state = state.borrow();
         let source = state.zone(Zone::Main).source.as_deref()?;
         denon_marantz_proto::source::playing_kind(source).or_else(|| {
             state
@@ -628,6 +641,7 @@ impl Avr {
         self.telnet
             .connect(&self.info.host, &self.channels, None)
             .await
+            .map(|_| ())
     }
 
     /// Closes the telnet connection and stops the task that keeps it open.
@@ -659,7 +673,7 @@ impl Avr {
     /// Nothing is queued then, so a command is never sent late. Returns
     /// [`Error::InvalidCommand`] if the command has text that cannot be sent.
     #[cfg(feature = "telnet")]
-    pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
+    pub async fn telnet_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet
             .send(telnet::encode(self.info.brand, zone, &command)?)
             .await
@@ -676,23 +690,25 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// The same as [`Avr::send`].
+    /// The same as [`Avr::telnet_send`].
     #[cfg(feature = "telnet")]
     pub async fn telnet_request_now_playing(&self) -> Result<(), Error> {
         match self.playing_kind() {
-            Some(PlayingKind::NetAudio) => self.send(Zone::Main, Command::Raw("NSE")).await,
-            Some(PlayingKind::HdRadio) => self.send(Zone::Main, Command::Raw("HD?")).await,
+            Some(PlayingKind::NetAudio) => self.telnet_send(Zone::Main, Command::Raw("NSE")).await,
+            Some(PlayingKind::HdRadio) => self.telnet_send(Zone::Main, Command::Raw("HD?")).await,
             Some(PlayingKind::Tuner) => {
                 for query in denon_marantz_proto::TUNER_QUERIES {
-                    self.send(Zone::Main, Command::Raw(query)).await?;
+                    self.telnet_send(Zone::Main, Command::Raw(query)).await?;
                 }
-                self.send(Zone::Main, Command::Raw("TFANNAME?")).await
+                self.telnet_send(Zone::Main, Command::Raw("TFANNAME?"))
+                    .await
             }
             _ => Ok(()),
         }
     }
 
-    /// Controls one zone on telnet with typed methods.
+    /// Controls one zone on telnet with typed methods. The `Result` is for
+    /// the zone: not every receiver has zones 2 and 3.
     ///
     /// # Errors
     ///
@@ -754,7 +770,8 @@ impl Avr {
         VideoControl::new(self)
     }
 
-    /// Controls Dirac Live on telnet with typed methods.
+    /// Controls Dirac Live on telnet with typed methods. The `Result` is for
+    /// the receiver: not every receiver has Dirac Live.
     ///
     /// # Errors
     ///
@@ -800,7 +817,7 @@ impl Avr {
     /// loses the oldest events and gets [`broadcast::error::RecvError::Lagged`].
     #[cfg(feature = "telnet")]
     #[must_use]
-    pub fn events(&self) -> broadcast::Receiver<TelnetEvent> {
+    pub fn telnet_events(&self) -> broadcast::Receiver<TelnetEvent> {
         self.telnet.subscribe_events()
     }
 

@@ -688,7 +688,7 @@ async fn setting_details_are_read_from_the_detail_pages() {
         .connect()
         .await
         .unwrap();
-    let result = avr.update_setting_details().await.unwrap();
+    let result = avr.update_detailed_availability().await.unwrap();
     assert_eq!(
         result.status(SettingsGroup::SurroundParameters),
         Some(PageStatus::Read)

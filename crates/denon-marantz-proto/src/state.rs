@@ -159,7 +159,8 @@ pub enum Setting {
     VideoSettings,
 }
 
-/// A value that changed.
+/// A value that changed. It names the setting and the zone, not the new
+/// value: read the state to get it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct Change {
@@ -408,6 +409,10 @@ impl DeviceState {
 }
 
 /// State of a receiver.
+///
+/// A value of `None` means that the receiver has not reported it yet, or that
+/// it does not have the setting. The doc of a field says if `None` also has
+/// another meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
     single_zone: bool,

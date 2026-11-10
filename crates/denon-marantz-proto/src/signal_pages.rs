@@ -42,9 +42,14 @@ impl VideoSignalPage {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, or is
+    /// not the video page.
     pub fn parse(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let root = root(body)?;
+        if !root.is("Video") {
+            return Err(Error::UnexpectedDocument { expected: "Video" });
+        }
+        let node = root.node();
         let text = |name: &str| {
             let side = node.child(name).map(|child| child.node());
             let read = |side_name: &str| {
@@ -89,9 +94,14 @@ impl AudioChannelsPage {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, or is
+    /// not the channels page.
     pub fn parse(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let root = root(body)?;
+        if !root.is("Audio") {
+            return Err(Error::UnexpectedDocument { expected: "Audio" });
+        }
+        let node = root.node();
         let layout = |name: &str| {
             let list = node.child(name)?.node().child("List")?.node();
             let active = list
@@ -200,5 +210,32 @@ mod tests {
     fn html_is_an_error() {
         assert!(VideoSignalPage::parse(b"<html><body>no</body></html>").is_err());
         assert!(AudioChannelsPage::parse(b"<html><body>no</body></html>").is_err());
+    }
+
+    #[test]
+    fn another_document_is_not_an_empty_page() {
+        // Valid XML of another page must not clear the state.
+        assert_eq!(
+            VideoSignalPage::parse(b"<Error/>").unwrap_err(),
+            Error::UnexpectedDocument { expected: "Video" }
+        );
+        assert!(AudioChannelsPage::parse(VIDEO).is_err());
+        assert!(VideoSignalPage::parse(AUDIO).is_err());
+    }
+
+    #[test]
+    fn many_or_repeated_channels_do_not_overflow() {
+        let mut page = String::from("<Audio><InputSignal><List>");
+        for _ in 0..300 {
+            page.push_str("<Speaker index=\"20\">2</Speaker>");
+        }
+        page.push_str("<Speaker index=\"70000\">2</Speaker></List></InputSignal></Audio>");
+        let layout = AudioChannelsPage::parse(page.as_bytes())
+            .unwrap()
+            .channels
+            .input
+            .unwrap();
+        // One position counts once, and an unknown position is ignored.
+        assert_eq!(layout.to_string(), "0.0.1");
     }
 }

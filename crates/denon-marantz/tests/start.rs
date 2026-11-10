@@ -365,3 +365,70 @@ async fn a_page_that_does_not_answer_is_only_that_page() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_failed_start_keeps_a_telnet_connection_that_it_did_not_open() {
+    let http = Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
+            Reply::Body(friendly_name_answer("X"))
+        }
+        ("POST", _) => Reply::Body(b"nothing".to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    avr.telnet_connect().await.unwrap();
+    assert!(avr.start().await.is_err());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(telnet.closed_by_client(), 0);
+    assert_eq!(
+        *avr.telnet_status().borrow(),
+        denon_marantz::TelnetStatus::Connected
+    );
+}
+
+#[tokio::test]
+async fn refresh_signal_says_when_nothing_was_read() {
+    let good = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let web = {
+        let good = good.clone();
+        Fake::start(move |seen| match seen.path.as_str() {
+            VIDEO_SIGNAL_PATH if good.load(Ordering::SeqCst) => Reply::Body(VIDEO_PAGE.to_vec()),
+            AUDIO_CHANNELS_PATH if good.load(Ordering::SeqCst) => Reply::Body(AUDIO_PAGE.to_vec()),
+            // Valid XML, but not the page.
+            VIDEO_SIGNAL_PATH | AUDIO_CHANNELS_PATH => Reply::Body(b"<x/>".to_vec()),
+            _ => Reply::Status(404),
+        })
+        .await
+    };
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    avr.refresh_signal().await.unwrap();
+    assert!(avr.snapshot().device().signal.video.input.is_some());
+
+    good.store(false, Ordering::SeqCst);
+    let error = avr.refresh_signal().await.unwrap_err();
+    assert!(
+        matches!(error, denon_marantz::Error::NothingRead(_)),
+        "{error:?}"
+    );
+    // The other page did not clear what was known.
+    assert_eq!(
+        avr.snapshot().device().signal.video.input.as_deref(),
+        Some("4K50")
+    );
+    assert!(avr.snapshot().device().signal.channels.input.is_some());
+}

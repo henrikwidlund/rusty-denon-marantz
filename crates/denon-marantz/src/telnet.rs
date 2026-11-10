@@ -164,6 +164,9 @@ enum Request {
     RefreshGroup(QueryGroup),
     /// Ask the receiver these queries.
     Queries(Vec<&'static str>),
+    /// Forget the last values that were seen. A page of the web interface has
+    /// set values, so the next event with the old value is a real change.
+    ForgetValues,
 }
 
 /// The telnet connection of one receiver.
@@ -237,15 +240,18 @@ impl Telnet {
     /// `first` replaces the queries of the first session: the groups of the
     /// settings are not asked then. A session after a lost connection asks for
     /// the groups of the settings again.
+    ///
+    /// Returns true if this call opened the connection, and false if a task
+    /// already runs. A running task keeps its queries.
     pub(crate) async fn connect(
         &self,
         host: &str,
         channels: &Channels,
         first: Option<Vec<&'static str>>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         let mut task = self.task.lock().await;
         if task.as_ref().is_some_and(|task| !task.handle.is_finished()) {
-            return Ok(());
+            return Ok(false);
         }
         let stream = open(host, &self.config).await?;
         let (shutdown, shutdown_receiver) = watch::channel(false);
@@ -267,7 +273,7 @@ impl Telnet {
             requests,
             handle,
         });
-        Ok(())
+        Ok(true)
     }
 
     /// Stops the task and closes the connection.
@@ -298,6 +304,12 @@ impl Telnet {
     /// Asks the task to query one group of values.
     pub(crate) async fn refresh_group(&self, group: QueryGroup) -> Result<(), Error> {
         self.request(Request::RefreshGroup(group)).await
+    }
+
+    /// Asks the task to forget the last values that it saw. It does nothing if
+    /// there is no connection.
+    pub(crate) async fn forget_values(&self) {
+        let _ = self.request(Request::ForgetValues).await;
     }
 
     /// Asks the task to send these queries after the ones that wait.
@@ -437,6 +449,17 @@ impl Queue {
         }
     }
 
+    /// Adds queries that wait for a write. A query that already waits is not
+    /// added again, so repeated requests cannot make the queue grow without
+    /// limit.
+    fn add(&mut self, queries: impl IntoIterator<Item = &'static str>) {
+        for query in queries {
+            if !self.background.contains(&query) {
+                self.background.push_back(query);
+            }
+        }
+    }
+
     /// Tells every caller that is waiting that the line is not sent.
     fn fail_all(&mut self) {
         for outgoing in self.user.drain(..) {
@@ -531,7 +554,7 @@ impl Worker {
                             self.handle_line(text, &mut filter);
                         });
                         if tuner {
-                            queue.background.extend(TUNER_QUERIES);
+                            queue.add(TUNER_QUERIES);
                         }
                     }
                     Err(error) => break End::Failed(error),
@@ -544,12 +567,13 @@ impl Worker {
                     }
                     Some(Request::RefreshGroup(group)) => {
                         filter.clear();
-                        queue.background.extend(group_queries(self.queries.brand, group));
+                        queue.add(group_queries(self.queries.brand, group));
                     }
                     Some(Request::Queries(queries)) => {
                         filter.clear();
-                        queue.background.extend(queries);
+                        queue.add(queries);
                     }
+                    Some(Request::ForgetValues) => filter.clear(),
                     None => break End::Shutdown,
                 },
                 () = tokio::time::sleep_until(idle_since + self.config.keep_alive) => {

@@ -41,7 +41,14 @@ impl ChannelLayout {
             lfe: 0,
             immersive: 0,
         };
+        // Receiver data decides the positions: count each one once, and
+        // ignore the ones after the last known channel.
+        let mut seen = 0_u64;
         for index in positions {
+            if index >= u64::BITS as usize || seen & (1 << index) != 0 {
+                continue;
+            }
+            seen |= 1 << index;
             match index {
                 0..=2 | 4..=8 => layout.bed += 1,
                 3 => layout.lfe += 1,
@@ -428,6 +435,18 @@ mod tests {
             ss(&mut signal, text);
             assert_eq!(signal.sampling_rate.as_deref(), expected, "{text}");
         }
+    }
+
+    #[test]
+    fn a_long_text_does_not_overflow() {
+        // A line can have thousands of positions. Only the known ones count.
+        let long = "2".repeat(8000);
+        assert_eq!(
+            ChannelLayout::from_status(&long)
+                .map(|l| l.to_string())
+                .as_deref(),
+            Some("8.1.56")
+        );
     }
 
     #[test]
