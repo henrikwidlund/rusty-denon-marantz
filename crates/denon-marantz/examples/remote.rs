@@ -42,7 +42,7 @@
 //! noise-reduction CODE (OFF, LOW, MID, HI), enhancer N, enhancer-up, enhancer-down,
 //! digital-codec CODE (AUTO, PCM, DTS), favorite N, favorite-store N (N is 1 to 3),
 //! bluetooth on or off, bluetooth-output SP or BT, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
-//! illumination-next, quick-select N, quick-select-store N (N is 1 to 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
+//! illumination-next, quick-select N, quick-select-store N (N is 1 to 6, some models have only 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
 //! sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
 //! sleep off or MINUTES, zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
 //! zone-treble-down, zone-left DB, zone-left-up, zone-left-down, zone-right DB, zone-right-up,
@@ -50,7 +50,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels and bass from port 11080), source-details (reads the physical inputs and the source names from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels and bass from port 11080), source-details (reads the physical inputs and the source names from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
@@ -198,7 +198,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 42] = [
+const SOUND_COMMANDS: [&str; 43] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -234,6 +234,7 @@ const SOUND_COMMANDS: [&str; 42] = [
     "speaker-details",
     "source-details",
     "settings-availability",
+    "setting-details",
     "system-settings",
     "signal",
     "refresh-signal",
@@ -405,6 +406,38 @@ async fn sound_command(
 }
 
 /// The sound commands that do not fit in `sound_command`: effect, center image and gain, steps.
+/// Reads the availability pages and lists the settings that cannot be used now.
+async fn print_availability(avr: &Avr, name: &str) -> Result<(), denon_marantz::Error> {
+    use denon_marantz_proto::{Availability, SettingsGroup};
+    let (result, groups) = if name == "setting-details" {
+        (
+            avr.update_setting_details().await?,
+            &SettingsGroup::DETAILS[..],
+        )
+    } else {
+        (
+            avr.update_settings_availability().await?,
+            &SettingsGroup::ALL[..],
+        )
+    };
+    println!("pages: {result:?}");
+    let state = avr.snapshot();
+    for group in groups
+        .iter()
+        .filter_map(|group| state.device().settings_availability.group(*group))
+    {
+        for item in &group.items {
+            if item.availability != Availability::Available {
+                println!(
+                    "{:?} {}: {:?} {:?}",
+                    group.group, item.name, item.availability, item.reason_code
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn sound_extra_command(
     avr: &Avr,
     name: &str,
@@ -463,24 +496,7 @@ async fn sound_extra_command(
             println!("page: {:?}", avr.update_system_settings().await?);
             println!("{:#?}", avr.snapshot().device().system_settings);
         }
-        "settings-availability" => {
-            let result = avr.update_settings_availability().await?;
-            println!("pages: {result:?}");
-            let state = avr.snapshot();
-            for group in denon_marantz_proto::SettingsGroup::ALL
-                .iter()
-                .filter_map(|group| state.device().settings_availability.group(*group))
-            {
-                for item in &group.items {
-                    if item.availability != denon_marantz_proto::Availability::Available {
-                        println!(
-                            "{:?} {}: {:?} {:?}",
-                            group.group, item.name, item.availability, item.reason_code
-                        );
-                    }
-                }
-            }
-        }
+        "settings-availability" | "setting-details" => print_availability(avr, name).await?,
         "source-details" => {
             let result = avr.update_source_details().await?;
             println!("pages: {result:?}");

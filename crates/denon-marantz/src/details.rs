@@ -85,7 +85,7 @@ impl SourceDetails {
 /// The pages of [`Avr::update_settings_availability`](crate::Avr::update_settings_availability).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsAvailabilityDetails {
-    /// The result for each group of settings, in the order of [`SettingsGroup::ALL`].
+    /// The result for each group of settings, in the order that they were read.
     pub pages: Vec<(SettingsGroup, PageStatus)>,
 }
 

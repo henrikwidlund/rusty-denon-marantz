@@ -30,10 +30,17 @@ pub enum SettingsGroup {
     General,
     /// The options: settings that are quick to reach during playback.
     Option,
+    /// The surround parameters, the settings of the sound mode. The page is
+    /// one of [`SettingsGroup::DETAILS`].
+    SurroundParameters,
+    /// The HDMI setup. One of [`SettingsGroup::DETAILS`].
+    HdmiSetup,
+    /// The video output settings. One of [`SettingsGroup::DETAILS`].
+    OutputSettings,
 }
 
 impl SettingsGroup {
-    /// All groups.
+    /// The groups of the settings menu, one page for each. A start reads these.
     pub const ALL: [Self; 7] = [
         Self::Audio,
         Self::Video,
@@ -42,6 +49,14 @@ impl SettingsGroup {
         Self::Network,
         Self::General,
         Self::Option,
+    ];
+
+    /// The pages with the settings of one menu, for example the surround
+    /// parameters. They say for each setting if it can be used now.
+    pub const DETAILS: [Self; 3] = [
+        Self::SurroundParameters,
+        Self::HdmiSetup,
+        Self::OutputSettings,
     ];
 
     /// Path of the page of the group.
@@ -55,7 +70,19 @@ impl SettingsGroup {
             Self::Network => "/ajax/network/get_config?type=1",
             Self::General => "/ajax/general/get_config?type=1",
             Self::Option => "/ajax/option/get_config?type=1",
+            Self::SurroundParameters => "/ajax/audio/get_config?type=4",
+            Self::HdmiSetup => "/ajax/video/get_config?type=3",
+            Self::OutputSettings => "/ajax/video/get_config?type=4",
         }
+    }
+
+    /// The detail pages give the flag in the attribute `display`. The pages
+    /// of the menu groups give it as the text of each item.
+    const fn is_detail(self) -> bool {
+        matches!(
+            self,
+            Self::SurroundParameters | Self::HdmiSetup | Self::OutputSettings
+        )
     }
 }
 
@@ -111,7 +138,8 @@ pub struct GroupAvailability {
 
 impl GroupAvailability {
     /// Reads the page of a group. A setting without a known number is left
-    /// out.
+    /// out. On a detail page (see [`SettingsGroup::DETAILS`]) the number is
+    /// the attribute `display`, and the values of the page are not read.
     ///
     /// # Errors
     ///
@@ -123,12 +151,15 @@ impl GroupAvailability {
             if items.len() == MAX_ITEMS {
                 break;
             }
-            let Some(availability) = item
-                .node()
-                .text()
-                .and_then(|text| text.trim().parse::<u8>().ok())
-                .and_then(Availability::from_code)
-            else {
+            let code = if group.is_detail() {
+                item.attribute("display")
+                    .and_then(|display| display.trim().parse::<u8>().ok())
+            } else {
+                item.node()
+                    .text()
+                    .and_then(|text| text.trim().parse::<u8>().ok())
+            };
+            let Some(availability) = code.and_then(Availability::from_code) else {
                 continue;
             };
             items.push(SettingAvailability {
@@ -246,6 +277,64 @@ mod tests {
         assert_eq!(
             option.item("Tone").unwrap().availability,
             Availability::NotOffered
+        );
+    }
+
+    #[test]
+    fn detail_pages_use_the_display_attribute() {
+        let surround = GroupAvailability::parse(
+            SettingsGroup::SurroundParameters,
+            include_bytes!("../tests/data/xml/AVC-A10H-web-details-surround.xml"),
+        )
+        .unwrap();
+        // Only these two are editable in this sound mode.
+        assert_eq!(
+            surround.item("CinemaEQ").unwrap().availability,
+            Availability::Available
+        );
+        assert_eq!(
+            surround.item("LowFrequencyEffects").unwrap().availability,
+            Availability::Available
+        );
+        assert_eq!(
+            surround.item("DialogControl").unwrap().availability,
+            Availability::NotOffered
+        );
+        assert_eq!(
+            surround.item("HighPassFilter").unwrap().availability,
+            Availability::NotOffered
+        );
+        // An element without the attribute is not a setting.
+        assert!(surround.item("Auro3DPresetListMovie").is_none());
+        let hdmi = GroupAvailability::parse(
+            SettingsGroup::HdmiSetup,
+            include_bytes!("../tests/data/xml/AVC-A10H-web-details-hdmi-setup.xml"),
+        )
+        .unwrap();
+        assert_eq!(
+            hdmi.item("HDMIControl").unwrap().availability,
+            Availability::Available
+        );
+        assert_eq!(
+            hdmi.item("TVAudioSwitching").unwrap().availability,
+            Availability::Blocked
+        );
+        assert_eq!(
+            hdmi.item("VerticalStretch").unwrap().availability,
+            Availability::NotOffered
+        );
+        let output = GroupAvailability::parse(
+            SettingsGroup::OutputSettings,
+            include_bytes!("../tests/data/xml/AVC-A10H-web-details-output.xml"),
+        )
+        .unwrap();
+        assert_eq!(
+            output.item("VideoMode").unwrap().availability,
+            Availability::Available
+        );
+        assert_eq!(
+            output.item("HDMIUpscaler").unwrap().availability,
+            Availability::Blocked
         );
     }
 

@@ -360,8 +360,39 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_settings_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
-        let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
-        for group in SettingsGroup::ALL {
+        self.read_availability(&SettingsGroup::ALL).await
+    }
+
+    /// Reads for each setting of the surround parameters, the HDMI setup and
+    /// the video output settings if the receiver lets the user change it now,
+    /// from the web interface on port 11080. For example, the dialog control
+    /// is not offered in a sound mode that has none.
+    ///
+    /// A receiver ignores the telnet command for a setting that is not
+    /// offered, and sends no answer. The pages do not send changes: call it
+    /// again after the sound mode changed. It asks for one page for each group
+    /// in [`SettingsGroup::DETAILS`]. The values are in
+    /// [`DeviceState::settings_availability`](denon_marantz_proto::DeviceState::settings_availability),
+    /// with the groups of [`Avr::update_settings_availability`]. The values of
+    /// the pages are not read.
+    ///
+    /// The result says what happened to each page. A page that the receiver
+    /// does not have or refuses is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_setting_details(&self) -> Result<SettingsAvailabilityDetails, Error> {
+        self.read_availability(&SettingsGroup::DETAILS).await
+    }
+
+    /// Reads the pages of these groups, one after the other.
+    async fn read_availability(
+        &self,
+        groups: &[SettingsGroup],
+    ) -> Result<SettingsAvailabilityDetails, Error> {
+        let mut pages = Vec::with_capacity(groups.len());
+        for &group in groups {
             let status = self
                 .read_web_interface(
                     group.path(),

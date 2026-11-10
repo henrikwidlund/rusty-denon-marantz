@@ -27,7 +27,7 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(names) = SourceNames::parse(data) {
         let _ = state.apply_web_source_names(&names);
     }
-    for group in SettingsGroup::ALL {
+    for group in SettingsGroup::ALL.into_iter().chain(SettingsGroup::DETAILS) {
         if let Ok(group) = GroupAvailability::parse(group, data) {
             let _ = state.apply_settings_availability(group);
         }

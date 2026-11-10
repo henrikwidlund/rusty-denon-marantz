@@ -663,6 +663,66 @@ async fn settings_availability_are_read_from_the_web_control_pages() {
 }
 
 #[tokio::test]
+async fn setting_details_are_read_from_the_detail_pages() {
+    let receiver = avr_x_receiver().await;
+    // The HDMI setup page is missing on this fake receiver.
+    let web_interface = Fake::start(|seen| match seen.path.as_str() {
+        "/ajax/audio/get_config?type=4" => Reply::Body(
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-details-surround.xml"
+            )
+            .to_vec(),
+        ),
+        "/ajax/video/get_config?type=4" => Reply::Body(
+            include_bytes!(
+                "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-details-output.xml"
+            )
+            .to_vec(),
+        ),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    let result = avr.update_setting_details().await.unwrap();
+    assert_eq!(
+        result.status(SettingsGroup::SurroundParameters),
+        Some(PageStatus::Read)
+    );
+    assert_eq!(
+        result.status(SettingsGroup::HdmiSetup),
+        Some(PageStatus::NotFound)
+    );
+    let state = avr.snapshot();
+    let settings = &state.device().settings_availability;
+    assert_eq!(
+        settings
+            .item(SettingsGroup::SurroundParameters, "DialogControl")
+            .unwrap()
+            .availability,
+        Availability::NotOffered
+    );
+    assert_eq!(
+        settings
+            .item(SettingsGroup::OutputSettings, "HDMIUpscaler")
+            .unwrap()
+            .availability,
+        Availability::Blocked
+    );
+    // Only the pages of the details were asked for.
+    assert!(
+        web_interface
+            .requests()
+            .iter()
+            .all(|seen| seen.path.contains("type=4") || seen.path.contains("type=3"))
+    );
+}
+
+#[tokio::test]
 async fn system_settings_are_read_from_the_web_control_page() {
     let receiver = avr_x_receiver().await;
     let web_interface = Fake::start(|seen| match seen.path.as_str() {

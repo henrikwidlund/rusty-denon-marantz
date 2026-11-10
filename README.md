@@ -21,7 +21,8 @@ state with `Avr::snapshot` and watch it with `Avr::changes`.
 - Receiver: eco, dimmer, locks, triggers, Bluetooth transmitter, tuner, remote
   keys.
 - Which settings the receiver offers or blocks now, for example the crossovers
-  while a Dirac ART filter is on.
+  while a Dirac ART filter is on, or the dialog control in a sound mode that
+  has none.
 - HDMI control, menu lock, firmware update permission, when the network
   answers, and the streaming services (AirPlay, Spotify Connect, Roon Ready,
   TIDAL Connect, Qobuz Connect).
@@ -89,6 +90,7 @@ send changes:
 avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
+avr.update_setting_details().await?; // surround parameters, HDMI setup, video output
 avr.update_system_settings().await?;
 ```
 
