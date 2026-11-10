@@ -273,15 +273,15 @@ async fn nothing_answering_is_an_error() {
 }
 
 #[tokio::test]
-async fn silence_during_setup_is_an_error() {
+async fn silence_from_the_description_is_not_an_error() {
     let fake = Fake::start(|seen| match seen.path.as_str() {
         "/goform/Deviceinfo.xml" => Reply::Body(AVR_X_INFO.to_vec()),
         "/description.xml" => Reply::Hang,
         _ => Reply::Status(404),
     })
     .await;
-    let error = connect(&fake, ReceiverType::AvrX).await.unwrap_err();
-    assert!(error.is_timeout(), "{error:?}");
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(avr.info().model_name, None);
 }
 
 #[tokio::test]

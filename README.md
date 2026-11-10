@@ -37,19 +37,34 @@ a Dirac filter that blocks tone control or Audyssey settings.
 ## Usage
 
 ```rust
+use std::sync::Arc;
 use denon_marantz::{Avr, Zone};
 
-let avr = Avr::builder("192.168.1.20").connect().await?;
-avr.update().await?; // the state of the zones, over HTTP
-avr.telnet_connect().await?; // live events and commands
+let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
+let started = avr.start().await?; // the zones are in the state when this returns
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
+let report = started.finished().await; // optional: wait for the rest
 
 let mut changes = avr.changes();
 while let Ok(change) = changes.recv().await {
     println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main));
 }
 ```
+
+`start` reads the zones over HTTP and returns. In the background it opens
+telnet, asks it first for what HTTP does not give (quick select, toggles, the
+sound modes and the Dirac Live slots), and reads the web interface pages that
+say which settings are available, the video signal and the channels. A page
+that fails is asked once more. Telnet is asked for the signal values only if a
+page could not be read. The report says what happened to each part. Use
+`StartOptions` to leave telnet closed or to skip the signal pages.
+
+Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
+opens telnet. The connection then fetches the groups in
+`QueryGroup::START_ORDER` (core, names, toggles and signal). The other groups
+are fetched with `telnet_refresh_group`, or all of them by setting
+`TelnetConfig::query_groups` to `QueryGroup::DEFAULT_ORDER`.
 
 The web interface (port 11080) is read on request, because it does not
 send changes:
@@ -64,6 +79,10 @@ avr.update_system_settings().await?;
 To read all values again, call `avr.refresh().await?`. If telnet is open it asks on
 telnet and reads only the zone names over HTTP. If not, it reads everything over
 HTTP. Your code does not choose.
+
+To see the video and audio signal now, call `avr.refresh_signal().await?`. It
+reads the video signal and the channels from the web interface, and asks telnet
+for the rest if it is open. Your code does not choose.
 
 To see what plays, call `avr.refresh_now_playing().await?`. It asks on telnet if
 the connection is open and reads the status page if not, so your code does not
@@ -98,6 +117,9 @@ have not run on a receiver:
 - What plays (`refresh_now_playing`, `update_now_playing`,
   `request_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
   from other receivers and with fake receivers. The `NSA` text is not used.
+- The signal pages of the web interface with an HDR signal or an FRL rate: the
+  text of these values is only seen as no signal. The values of `ALLM` and
+  `QFT` (1 is on) were only seen as off.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver

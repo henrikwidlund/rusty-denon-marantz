@@ -86,6 +86,9 @@ pub enum Error {
         /// The limit in bytes.
         limit: usize,
     },
+    /// The runtime stopped the task of a start before it was finished.
+    #[error("the start was stopped before it finished")]
+    Stopped,
     /// The telnet connection is not open, so nothing was sent.
     #[error("the telnet connection is not open")]
     NotConnected,
@@ -155,7 +158,8 @@ impl Error {
             | Self::InvalidResponse { request, .. }
             | Self::Protocol { request, .. }
             | Self::ResponseTooLarge { request, .. } => Some(request),
-            Self::NotConnected
+            Self::Stopped
+            | Self::NotConnected
             | Self::InvalidCommand(_)
             | Self::InvalidRequest(_)
             | Self::NoSuchZone(_)

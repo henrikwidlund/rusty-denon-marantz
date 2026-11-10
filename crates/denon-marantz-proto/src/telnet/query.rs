@@ -76,8 +76,8 @@ labeled_enum! {
 }
 
 impl QueryGroup {
-    /// The default order of the groups that the connection fetches, the most
-    /// important first.
+    /// All groups, the most important first. Fetch them all with
+    /// `TelnetConfig::query_groups` or one by one when they are needed.
     ///
     /// 1. [`Core`](Self::Core): power, source, volume and mute of the zones,
     ///    and the sound mode.
@@ -104,6 +104,12 @@ impl QueryGroup {
         Self::Picture,
         Self::Speakers,
     ];
+
+    /// The groups that a connection fetches by default: the ones that most
+    /// clients show or toggle at once. The others stay empty until the
+    /// receiver reports a change, or until a client fetches them.
+    pub const START_ORDER: &'static [Self] =
+        &[Self::Core, Self::Names, Self::Toggles, Self::Signal];
 }
 
 /// Queries of the chosen groups, in the order of `groups`. A group that is
@@ -129,6 +135,58 @@ pub fn group_queries(
         .iter()
         .filter(move |query| query.group == group && query.is_for(brand))
         .map(|query| query.text)
+}
+
+/// Which read answers a query of the [`Signal`](QueryGroup::Signal) group.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SignalPart {
+    /// The video signal. The web interface page
+    /// [`VIDEO_SIGNAL_PATH`](crate::VIDEO_SIGNAL_PATH) answers it.
+    Video,
+    /// The channels. The web interface page
+    /// [`AUDIO_CHANNELS_PATH`](crate::AUDIO_CHANNELS_PATH) answers it.
+    Channels,
+    /// The audio signal, the sampling rate and the HDMI limit. Only telnet
+    /// answers it.
+    Audio,
+}
+
+impl SignalPart {
+    fn of(text: &str) -> Self {
+        match text {
+            "SSINFSIGRES ?" | "SYSDVIN ?" | "SYSDVOUT ?" | "SSINFSIGHDR ?" | "SSINFSIGPIX ?"
+            | "SSINFSIGFRL ?" | "SSINFSIGCOS ?" => Self::Video,
+            "OPINFASP ?" | "OPINFINS ?" => Self::Channels,
+            _ => Self::Audio,
+        }
+    }
+}
+
+/// The queries of the signal group that belong to one part, in the order of
+/// the group.
+pub fn signal_queries(
+    brand: Brand,
+    part: SignalPart,
+) -> impl Iterator<Item = &'static str> + Clone {
+    group_queries(brand, Signal).filter(move |text| SignalPart::of(text) == part)
+}
+
+/// The queries to send first when the state was read with `AppCommand`.
+///
+/// `AppCommand` does not answer these, and clients need them soon: the quick
+/// select (or the SMART select), the toggles, the sound modes that the
+/// receiver offers and the Dirac Live slots.
+pub fn after_appcommand_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone {
+    let only = |texts: &'static [&'static str]| {
+        QUERIES
+            .iter()
+            .filter(move |query| query.is_for(brand) && texts.contains(&query.text))
+            .map(|query| query.text)
+    };
+    only(&["MSSMART ?", "MSQUICK ?"])
+        .chain(group_queries(brand, Toggles))
+        .chain(only(&["OPSMLALL ?", "OPDLS ?"]))
 }
 
 /// Queries to send after connect with the default order of the groups.
@@ -400,6 +458,42 @@ mod tests {
         assert!(group_queries(Brand::Denon, Core).any(|q| q == "MSQUICK ?"));
         assert!(group_queries(Brand::Marantz, Core).any(|q| q == "MSSMART ?"));
         assert!(!group_queries(Brand::Denon, Core).any(|q| q == "MSSMART ?"));
+    }
+
+    #[test]
+    fn the_parts_of_the_signal_group_cover_it() {
+        for brand in [Brand::Denon, Brand::Marantz] {
+            let all = group_queries(brand, Signal).count();
+            let parts: usize = [SignalPart::Video, SignalPart::Channels, SignalPart::Audio]
+                .into_iter()
+                .map(|part| signal_queries(brand, part).count())
+                .sum();
+            assert_eq!(all, parts);
+            assert_eq!(signal_queries(brand, SignalPart::Channels).count(), 2);
+            assert!(signal_queries(brand, SignalPart::Audio).any(|q| q == "SYSDA ?"));
+            assert!(!signal_queries(brand, SignalPart::Video).any(|q| q == "SYSDA ?"));
+        }
+    }
+
+    #[test]
+    fn queries_after_appcommand_are_not_what_it_answers() {
+        let denon: Vec<_> = after_appcommand_queries(Brand::Denon).collect();
+        let marantz: Vec<_> = after_appcommand_queries(Brand::Marantz).collect();
+        assert_eq!(denon[0], "MSQUICK ?");
+        assert_eq!(marantz[0], "MSSMART ?");
+        assert!(denon.ends_with(&["OPDLS ?", "OPSMLALL ?"]));
+        for list in [&denon, &marantz] {
+            // AppCommand answers these.
+            for answered in ["MV?", "MU?", "SI?", "MS?", "Z2?"] {
+                assert!(!list.contains(&answered), "{answered}");
+            }
+            assert!(list.contains(&"PSDYNEQ ?"));
+        }
+    }
+
+    #[test]
+    fn the_start_groups_are_the_first_of_the_default_order() {
+        assert!(QueryGroup::DEFAULT_ORDER.starts_with(QueryGroup::START_ORDER));
     }
 
     #[test]

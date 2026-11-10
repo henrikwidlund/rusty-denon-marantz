@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::values::{ColorSpace, PixelDepth};
 
 /// The channels of an audio signal, as they are usually written: `5.1` or
@@ -23,15 +24,24 @@ impl ChannelLayout {
     /// no channel is active.
     #[must_use]
     pub fn from_status(text: &str) -> Option<Self> {
+        Self::from_active(
+            text.trim()
+                .bytes()
+                .enumerate()
+                .filter(|&(_, status)| status == b'2')
+                .map(|(index, _)| index),
+        )
+    }
+
+    /// Counts the channels at these positions, the same positions as in
+    /// [`ChannelLayout::from_status`]. Returns `None` if there are none.
+    pub(crate) fn from_active(positions: impl Iterator<Item = usize>) -> Option<Self> {
         let mut layout = Self {
             bed: 0,
             lfe: 0,
             immersive: 0,
         };
-        for (index, status) in text.trim().bytes().enumerate() {
-            if status != b'2' {
-                continue;
-            }
+        for index in positions {
             match index {
                 0..=2 | 4..=8 => layout.bed += 1,
                 3 => layout.lfe += 1,
@@ -74,7 +84,7 @@ impl<T> Default for InOut<T> {
 
 impl<T: PartialEq> InOut<T> {
     /// Sets the input or the output. Returns true if the value was different.
-    fn set(&mut self, is_input: bool, value: Option<T>) -> bool {
+    pub(crate) fn set(&mut self, is_input: bool, value: Option<T>) -> bool {
         let slot = if is_input {
             &mut self.input
         } else {
@@ -116,6 +126,10 @@ pub struct SignalState {
     pub sampling_rate: Option<String>,
     /// Active channels of the audio that the receiver gets and plays.
     pub channels: InOut<ChannelLayout>,
+    /// Auto low latency mode is on. Only the web interface reports it.
+    pub allm: Option<bool>,
+    /// Quick frame transport is on. Only the web interface reports it.
+    pub qft: Option<bool>,
 }
 
 impl SignalState {
@@ -187,6 +201,28 @@ impl SignalState {
         }
     }
 
+    /// Applies the video page of the web interface. Returns true if a value
+    /// changed. A side with no signal clears its values.
+    pub(crate) fn apply_video_page(&mut self, page: &VideoSignalPage) -> bool {
+        let mut changed = self.video.set_both(&page.resolution);
+        changed |= self.hdr.set_both(&page.hdr);
+        changed |= self.max_frl.set_both(&page.frl_rate);
+        changed |= self.color_space.set(true, page.color_space.input)
+            | self.color_space.set(false, page.color_space.output);
+        changed |= self.pixel_depth.set(true, page.pixel_depth.input)
+            | self.pixel_depth.set(false, page.pixel_depth.output);
+        changed |= replace(&mut self.allm, page.allm);
+        changed |= replace(&mut self.qft, page.qft);
+        changed
+    }
+
+    /// Applies the channel page of the web interface. Returns true if a value
+    /// changed.
+    pub(crate) fn apply_channels_page(&mut self, page: &AudioChannelsPage) -> bool {
+        self.channels.set(true, page.channels.input)
+            | self.channels.set(false, page.channels.output)
+    }
+
     fn set_video(&mut self, rest: &str) -> bool {
         let Some((side, value)) = split_side(rest) else {
             return false;
@@ -196,7 +232,12 @@ impl SignalState {
 }
 
 impl InOut<String> {
-    fn set_text(&mut self, is_input: bool, value: Option<&str>) -> bool {
+    /// Sets the input and the output. Returns true if a value changed.
+    fn set_both(&mut self, new: &Self) -> bool {
+        self.set_text(true, new.input.as_deref()) | self.set_text(false, new.output.as_deref())
+    }
+
+    pub(crate) fn set_text(&mut self, is_input: bool, value: Option<&str>) -> bool {
         let slot = if is_input {
             &mut self.input
         } else {
@@ -248,6 +289,16 @@ fn sampling_rate(text: &str) -> Option<&str> {
         "441" => Some("44.1"),
         "176" => Some("176.4"),
         value => Some(value.strip_suffix('K').unwrap_or(value)),
+    }
+}
+
+/// Replaces a value. Returns true if it was different.
+fn replace<T: PartialEq>(slot: &mut Option<T>, value: Option<T>) -> bool {
+    if *slot == value {
+        false
+    } else {
+        *slot = value;
+        true
     }
 }
 

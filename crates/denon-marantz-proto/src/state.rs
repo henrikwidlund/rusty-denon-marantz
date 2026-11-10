@@ -19,6 +19,7 @@ use crate::now_playing::NowPlaying;
 use crate::picture::PictureSettings;
 use crate::settings_availability::{GroupAvailability, SettingsAvailability};
 use crate::signal::SignalState;
+use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
@@ -576,6 +577,18 @@ impl State {
                 zone: None,
                 setting: Setting::SettingsAvailability,
             })
+    }
+
+    /// Stores the video signal of the web interface page. It is
+    /// [`DeviceState::signal`], with the values of telnet.
+    pub fn apply_video_signal_page(&mut self, page: &VideoSignalPage) -> Option<Change> {
+        self.signal_change(|signal| signal.apply_video_page(page))
+    }
+
+    /// Stores the channels of the web interface page. They are
+    /// [`DeviceState::signal`], with the values of telnet.
+    pub fn apply_audio_channels_page(&mut self, page: &AudioChannelsPage) -> Option<Change> {
+        self.signal_change(|signal| signal.apply_channels_page(page))
     }
 
     /// Stores the system settings of the web interface. They are
@@ -2750,6 +2763,36 @@ mod tests {
         assert_eq!(state.apply_system_settings(settings("2")), None);
         assert_eq!(state.apply_system_settings(settings("1")), changed());
         assert_eq!(state.device().system_settings.menu_lock, Some(true));
+    }
+
+    #[test]
+    fn signal_pages_join_the_values_of_telnet() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::Signal);
+        let video = VideoSignalPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-video-signal.xml"
+        ))
+        .unwrap();
+        assert_eq!(state.apply_video_signal_page(&video), changed());
+        assert_eq!(state.apply_video_signal_page(&video), None);
+        let signal = &state.device().signal;
+        assert_eq!(signal.video.input.as_deref(), Some("4K50"));
+        assert_eq!(signal.allm, Some(false));
+        // Telnet gives the same value, so nothing changes.
+        assert_eq!(apply(&mut state, "SSINFSIGRES I4K50"), None);
+        // A page without a signal clears the values.
+        let none = VideoSignalPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-video-no-signal.xml"
+        ))
+        .unwrap();
+        assert_eq!(state.apply_video_signal_page(&none), changed());
+        assert_eq!(state.device().signal.video.input, None);
+        let audio = AudioChannelsPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-audio-channels.xml"
+        ))
+        .unwrap();
+        assert_eq!(state.apply_audio_channels_page(&audio), changed());
+        assert_eq!(state.apply_audio_channels_page(&audio), None);
     }
 
     #[test]

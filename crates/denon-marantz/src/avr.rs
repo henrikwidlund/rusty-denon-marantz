@@ -47,6 +47,10 @@ use crate::video_control::VideoControl;
 #[cfg(feature = "telnet")]
 use crate::zone_control::ZoneControl;
 
+mod start;
+
+pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart};
+
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
 
@@ -128,6 +132,10 @@ const WEB_INTERFACE_CONFIG: HttpConfig = HttpConfig {
         interval: Duration::from_millis(50),
     },
 };
+
+/// Time allowed for one request of the device description. The receiver
+/// sometimes does not answer it, and the description is optional.
+const DESCRIPTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Settings for a connection. Start with [`Avr::builder`].
 #[derive(Debug, Clone)]
@@ -288,7 +296,9 @@ impl Avr {
         let channel_levels = if self.dirac_art_active() {
             PageStatus::Skipped(SkipReason::DiracArt)
         } else {
-            self.read_web_interface(
+            // No second try: a Dirac ART filter makes this page fail each time.
+            self.read_page(
+                &self.web_interface,
                 CHANNEL_LEVELS_PATH,
                 SpeakerTable::parse_channel_levels,
                 |state, table| state.apply_channel_level_table(&table),
@@ -525,15 +535,24 @@ impl Avr {
     }
 
     /// Reads one web interface page into the state. Returns an error only if
-    /// the receiver is not reachable.
+    /// the receiver is not reachable. A page that fails with a server error
+    /// or an unreadable answer is asked for once more: the receiver does this
+    /// at random, about once in 90 requests, and answers the second time.
     async fn read_web_interface<T>(
         &self,
         path: &str,
-        parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
-        apply: impl FnOnce(&mut State, T) -> Option<Change>,
+        parse: impl Fn(&[u8]) -> Result<T, denon_marantz_proto::Error> + Send + Sync,
+        apply: impl Fn(&mut State, T) -> Option<Change> + Send + Sync,
     ) -> Result<PageStatus, Error> {
-        self.read_page(&self.web_interface, path, parse, apply)
-            .await
+        let status = self
+            .read_page(&self.web_interface, path, &parse, &apply)
+            .await?;
+        if matches!(status, PageStatus::Refused(500..) | PageStatus::Unreadable) {
+            return self
+                .read_page(&self.web_interface, path, &parse, &apply)
+                .await;
+        }
+        Ok(status)
     }
 
     /// Reads one page from a client into the state. Returns an error only if
@@ -577,7 +596,9 @@ impl Avr {
     /// then.
     #[cfg(feature = "telnet")]
     pub async fn telnet_connect(&self) -> Result<(), Error> {
-        self.telnet.connect(&self.info.host, &self.channels).await
+        self.telnet
+            .connect(&self.info.host, &self.channels, None)
+            .await
     }
 
     /// Closes the telnet connection and stops the task that keeps it open.
@@ -974,7 +995,9 @@ impl AvrBuilder {
         })
     }
 
-    /// Reads the device description. `None` if the receiver has no usable one.
+    /// Reads the device description, with one more try. `None` if the receiver
+    /// has no usable one. The receiver was identified before, so a failure here
+    /// is not an error: the description only adds the brand and the model.
     async fn description(
         &self,
         receiver_type: ReceiverType,
@@ -982,20 +1005,27 @@ impl AvrBuilder {
         let port = self
             .description_port
             .unwrap_or_else(|| receiver_type.description_port());
-        let http = HttpClient::new(&self.host, port, self.http)?;
-        match http
-            .get_parsed(receiver_type.description_path(), |body| {
-                DeviceDescription::parse(body).map(DeviceDescription::into_owned)
-            })
-            .await
-        {
-            Ok(description) => Ok(Some(description)),
-            Err(error) if error.is_unreachable() => Err(error),
-            Err(error) => {
-                tracing::warn!(host = %self.host, %error, "no device description, assuming a Denon receiver");
-                Ok(None)
+        let http = HttpClient::new(
+            &self.host,
+            port,
+            self.http.with_request_timeout(DESCRIPTION_TIMEOUT),
+        )?;
+        let mut last_error = None;
+        for _ in 0..2 {
+            match http
+                .get_parsed(receiver_type.description_path(), |body| {
+                    DeviceDescription::parse(body).map(DeviceDescription::into_owned)
+                })
+                .await
+            {
+                Ok(description) => return Ok(Some(description)),
+                Err(error) => last_error = Some(error),
             }
         }
+        if let Some(error) = last_error {
+            tracing::warn!(host = %self.host, %error, "no device description, assuming a Denon receiver");
+        }
+        Ok(None)
     }
 }
 

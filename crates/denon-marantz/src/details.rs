@@ -11,6 +11,8 @@ pub enum SkipReason {
     DiracArt,
     /// The source of the main zone does not report what plays.
     NoPlayingSource,
+    /// The caller turned the page off.
+    NotAsked,
 }
 
 /// The result for one page of the web interface.

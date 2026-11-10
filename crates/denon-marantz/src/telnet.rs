@@ -74,7 +74,8 @@ pub struct TelnetConfig {
     /// that they are sent. A group that is left out stays empty until the
     /// receiver reports a change, or until it is fetched with
     /// [`Avr::telnet_refresh_group`](crate::Avr::telnet_refresh_group). The
-    /// default is [`QueryGroup::DEFAULT_ORDER`].
+    /// default is [`QueryGroup::START_ORDER`]. [`QueryGroup::DEFAULT_ORDER`]
+    /// has all groups.
     pub query_groups: &'static [QueryGroup],
 }
 
@@ -91,7 +92,7 @@ impl Default for TelnetConfig {
             query_interval: Duration::from_millis(50),
             query_quiet: Duration::from_millis(50),
             background_pause: Duration::from_millis(250),
-            query_groups: QueryGroup::DEFAULT_ORDER,
+            query_groups: QueryGroup::START_ORDER,
         }
     }
 }
@@ -161,6 +162,8 @@ enum Request {
     Refresh,
     /// Ask the receiver for one group of values.
     RefreshGroup(QueryGroup),
+    /// Ask the receiver these queries.
+    Queries(Vec<&'static str>),
 }
 
 /// The telnet connection of one receiver.
@@ -230,7 +233,16 @@ impl Telnet {
     }
 
     /// Opens the connection and starts the task. Does nothing if it runs.
-    pub(crate) async fn connect(&self, host: &str, channels: &Channels) -> Result<(), Error> {
+    ///
+    /// `first` replaces the queries of the first session: the groups of the
+    /// settings are not asked then. A session after a lost connection asks for
+    /// the groups of the settings again.
+    pub(crate) async fn connect(
+        &self,
+        host: &str,
+        channels: &Channels,
+        first: Option<Vec<&'static str>>,
+    ) -> Result<(), Error> {
         let mut task = self.task.lock().await;
         if task.as_ref().is_some_and(|task| !task.handle.is_finished()) {
             return Ok(());
@@ -242,6 +254,7 @@ impl Telnet {
             host: host.to_owned(),
             config: self.config,
             queries: self.queries,
+            first: first.map(VecDeque::from),
             channels: channels.clone(),
             events: self.events.clone(),
             status: self.status.clone(),
@@ -285,6 +298,11 @@ impl Telnet {
     /// Asks the task to query one group of values.
     pub(crate) async fn refresh_group(&self, group: QueryGroup) -> Result<(), Error> {
         self.request(Request::RefreshGroup(group)).await
+    }
+
+    /// Asks the task to send these queries after the ones that wait.
+    pub(crate) async fn ask(&self, queries: Vec<&'static str>) -> Result<(), Error> {
+        self.request(Request::Queries(queries)).await
     }
 
     /// Passes a request to the task. A request is refused while there is no
@@ -356,6 +374,8 @@ struct Worker {
     host: String,
     config: TelnetConfig,
     queries: Queries,
+    /// The queries of the first session, if they are not the ones of `queries`.
+    first: Option<VecDeque<&'static str>>,
     channels: Channels,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
@@ -427,7 +447,7 @@ impl Queue {
 
 impl Worker {
     async fn run(
-        self,
+        mut self,
         first: TcpStream,
         mut requests: mpsc::Receiver<Request>,
         mut shutdown: watch::Receiver<bool>,
@@ -447,7 +467,10 @@ impl Worker {
             };
             set_status(&self.status, TelnetStatus::Connected);
             tracing::debug!(host = %self.host, "telnet connected");
-            let end = self.session(stream, &mut requests, &mut shutdown).await;
+            let background = self.first.take().unwrap_or_else(|| self.queries.all());
+            let end = self
+                .session(stream, background, &mut requests, &mut shutdown)
+                .await;
             set_status(&self.status, TelnetStatus::Disconnected);
             if matches!(end, End::Shutdown) {
                 return;
@@ -477,12 +500,13 @@ impl Worker {
     async fn session(
         &self,
         mut stream: TcpStream,
+        background: VecDeque<&'static str>,
         requests: &mut mpsc::Receiver<Request>,
         shutdown: &mut watch::Receiver<bool>,
     ) -> End {
         let mut decoder = LineDecoder::new();
         let mut filter = DuplicateFilter::new();
-        let mut queue = Queue::new(self.queries.all());
+        let mut queue = Queue::new(background);
         let mut buffer = [0_u8; READ_BUFFER];
         let mut line = String::new();
         let keep_alive = format!("{DEVICE_POWER_QUERY}\r");
@@ -521,6 +545,10 @@ impl Worker {
                     Some(Request::RefreshGroup(group)) => {
                         filter.clear();
                         queue.background.extend(group_queries(self.queries.brand, group));
+                    }
+                    Some(Request::Queries(queries)) => {
+                        filter.clear();
+                        queue.background.extend(queries);
                     }
                     None => break End::Shutdown,
                 },

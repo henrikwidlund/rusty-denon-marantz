@@ -35,6 +35,18 @@ pub struct HttpConfig {
     pub pacing: Pacing,
 }
 
+impl HttpConfig {
+    /// The same settings with another time for a whole request, but not more
+    /// than the current one.
+    #[must_use]
+    pub const fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        if timeout.as_nanos() < self.request_timeout.as_nanos() {
+            self.request_timeout = timeout;
+        }
+        self
+    }
+}
+
 impl Default for HttpConfig {
     fn default() -> Self {
         Self {

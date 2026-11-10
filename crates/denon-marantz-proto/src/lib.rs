@@ -16,6 +16,7 @@ mod picture;
 mod remote_key;
 mod settings_availability;
 mod signal;
+mod signal_pages;
 mod sleep;
 mod sound_mode;
 mod sound_settings;
@@ -61,6 +62,9 @@ pub use settings_availability::{
     Availability, GroupAvailability, SettingAvailability, SettingsAvailability, SettingsGroup,
 };
 pub use signal::{ChannelLayout, InOut, SignalState};
+pub use signal_pages::{
+    AUDIO_CHANNELS_PATH, AudioChannelsPage, VIDEO_SIGNAL_PATH, VideoSignalPage,
+};
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};

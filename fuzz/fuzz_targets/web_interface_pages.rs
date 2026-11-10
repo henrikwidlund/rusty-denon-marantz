@@ -2,8 +2,8 @@
 #![no_main]
 
 use denon_marantz_proto::{
-    BassSettings, GroupAvailability, InputAssignment, SettingsGroup, SourceNames, SpeakerTable,
-    State, SystemSettings,
+    AudioChannelsPage, BassSettings, GroupAvailability, InputAssignment, SettingsGroup,
+    SourceNames, SpeakerTable, State, SystemSettings, VideoSignalPage,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -34,5 +34,11 @@ fuzz_target!(|data: &[u8]| {
     }
     if let Ok(settings) = SystemSettings::parse(data) {
         let _ = state.apply_system_settings(settings);
+    }
+    if let Ok(page) = VideoSignalPage::parse(data) {
+        let _ = state.apply_video_signal_page(&page);
+    }
+    if let Ok(page) = AudioChannelsPage::parse(data) {
+        let _ = state.apply_audio_channels_page(&page);
     }
 });
