@@ -11,7 +11,8 @@ use allocation_counter::measure;
 use denon_marantz_proto::appcommand::{self as ac, Cmd, Param, Response, write_body};
 use denon_marantz_proto::telnet::{Command, DuplicateFilter, Event, LineDecoder, Message};
 use denon_marantz_proto::{
-    Brand, ChannelLevel, DeviceInfo, DimmerMode, SoundModeGroup, Volume, Zone, source,
+    AudioChannelsPage, Brand, ChannelLevel, DeviceInfo, DimmerMode, GroupAvailability, NowPlaying,
+    SettingsGroup, SoundModeGroup, State, SystemSettings, VideoSignalPage, Volume, Zone, source,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -160,4 +161,75 @@ fn xml_parsing_allocates_little() {
         "device info used {} allocations",
         info.count_total
     );
+}
+
+/// The pages of the web interface and the status pages. The limits are about
+/// twice today's numbers. Applying a page that did not change does not
+/// allocate: the state keeps its buffers.
+#[test]
+fn web_interface_pages_allocate_little() {
+    let video = fixture("AVC-A10H-web-video-signal.xml");
+    let audio = fixture("AVC-A10H-web-audio-channels.xml");
+    let system = fixture("AVC-A10H-web-system-settings.xml");
+    let surround = fixture("AVC-A10H-web-details-surround.xml");
+    let net = fixture("AVR-3312-formNetAudio_StatusXml.xml");
+    let radio = fixture("Own-formTuner_HdXml-playing.xml");
+
+    let allocations = |work: &mut dyn FnMut()| measure(work).count_total;
+    let cases = [
+        (
+            "video signal page",
+            120,
+            allocations(&mut || {
+                black_box(VideoSignalPage::parse(&video).unwrap());
+            }),
+        ),
+        (
+            "channels page",
+            60,
+            allocations(&mut || {
+                black_box(AudioChannelsPage::parse(&audio).unwrap());
+            }),
+        ),
+        (
+            "system settings page",
+            70,
+            allocations(&mut || {
+                black_box(SystemSettings::parse(&system).unwrap());
+            }),
+        ),
+        (
+            "detail page",
+            90,
+            allocations(&mut || {
+                black_box(
+                    GroupAvailability::parse(SettingsGroup::SurroundParameters, &surround).unwrap(),
+                );
+            }),
+        ),
+        (
+            "network audio page",
+            60,
+            allocations(&mut || {
+                black_box(NowPlaying::parse_net_audio(&net).unwrap());
+            }),
+        ),
+        (
+            "HD radio page",
+            90,
+            allocations(&mut || {
+                black_box(NowPlaying::parse_hd_radio(&radio).unwrap());
+            }),
+        ),
+    ];
+    for (what, limit, count) in cases {
+        assert!(count < limit, "{what} used {count} allocations");
+    }
+
+    let page = VideoSignalPage::parse(&video).unwrap();
+    let mut state = State::new(false);
+    state.apply_video_signal_page(&page);
+    assert_no_allocation("apply the same video page", || {
+        black_box(state.apply_video_signal_page(&page));
+    });
 }

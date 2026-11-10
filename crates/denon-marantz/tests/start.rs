@@ -9,7 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Fake, FakeTelnet, Reply, avr_x_receiver, builder, config, wait_until};
+use common::{
+    AVR_X_INFO, Fake, FakeTelnet, Reply, avr_x_receiver, builder, config, friendly_name_answer,
+    is_friendly_name_request, wait_until,
+};
 use denon_marantz::{
     Avr, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig, TelnetStart,
     Zone,
@@ -310,4 +313,32 @@ async fn refresh_signal_is_an_error_if_nothing_can_be_asked() {
         .await
         .unwrap();
     assert!(avr.refresh_signal().await.unwrap_err().is_unreachable());
+}
+
+#[test]
+fn the_default_options_are_the_new_ones() {
+    assert_eq!(StartOptions::default(), StartOptions::new());
+}
+
+#[tokio::test]
+async fn a_failed_read_ends_the_start_and_closes_telnet() {
+    let http = Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
+            Reply::Body(friendly_name_answer("X"))
+        }
+        ("POST", _) => Reply::Body(b"nothing".to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    assert!(avr.start().await.is_err());
+    wait_until("telnet closed", || telnet.closed_by_client() == 1).await;
 }

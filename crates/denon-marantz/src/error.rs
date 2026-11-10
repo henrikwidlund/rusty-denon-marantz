@@ -248,3 +248,50 @@ impl Error {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn requests_are_named_only_by_errors_of_a_request() {
+        let status = Error::Status {
+            request: "GET http://10.0.0.5/x".to_owned(),
+            status: 500,
+        };
+        assert_eq!(status.request(), Some("GET http://10.0.0.5/x"));
+        assert!(status.is_status());
+        assert!(!status.is_unreachable());
+        let timeout = Error::Timeout {
+            request: "GET http://10.0.0.5/y".to_owned(),
+            limit: Duration::from_secs(1),
+        };
+        assert_eq!(timeout.request(), Some("GET http://10.0.0.5/y"));
+        assert!(timeout.is_timeout() && timeout.is_unreachable());
+        for error in [
+            Error::NotConnected,
+            Error::Stopped,
+            Error::DiracNotSupported,
+        ] {
+            assert_eq!(error.request(), None, "{error}");
+        }
+        assert!(Error::NotConnected.is_not_connected());
+    }
+
+    #[test]
+    fn input_errors_are_told_apart() {
+        for error in [
+            Error::ToneControlBlocked(ToneBlocker::DiracFilter),
+            Error::DiracSlotOutOfRange(4),
+            Error::UnknownDiracSlot("x".to_owned()),
+        ] {
+            assert!(error.is_invalid_input(), "{error}");
+        }
+        assert!(Error::ToneControlBlocked(ToneBlocker::DiracFilter).is_invalid_input());
+        assert_eq!(
+            ToneBlocker::DiracFilter.to_string(),
+            "a Dirac filter is selected"
+        );
+        assert!(!Error::Stopped.is_invalid_input());
+    }
+}

@@ -20,8 +20,8 @@ use denon_marantz_proto::{
     DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
     HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock,
     PictureMode, Power, PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize,
-    Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, VideoProcessingMode, Volume,
-    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
+    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1663,6 +1663,61 @@ async fn dirac_needs_a_receiver_that_supports_it() {
         .unwrap();
     wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
     assert_eq!(commands_sent(&telnet), ["PSDIRAC 2"]);
+}
+
+#[tokio::test]
+async fn the_other_tuner_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tuner = avr.tuner();
+    tuner.frequency_down().await.unwrap();
+    tuner.set_mode(TunerMode::Manual).await.unwrap();
+    tuner.preset_up().await.unwrap();
+    tuner.preset_down().await.unwrap();
+    let error = tuner.store_preset(0).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["TFANDOWN", "TMANMANUAL", "TPANUP", "TPANDOWN"]
+    );
+}
+
+#[tokio::test]
+async fn dirac_slots_are_chosen_by_number_and_by_name() {
+    let http = avr_x_receiver_with_info(AVR_X_DIRAC_INFO).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    let dirac = avr.dirac().unwrap();
+    dirac.set_slot(1).await.unwrap();
+    dirac.set_filter(DiracFilter::Off).await.unwrap();
+    for number in [0, 4] {
+        let error = dirac.set_slot(number).await.unwrap_err();
+        assert!(matches!(error, Error::DiracSlotOutOfRange(n) if n == number));
+        assert!(error.is_invalid_input());
+    }
+    // Names come from the state.
+    let error = dirac.set_slot_by_name("Dirac ART").await.unwrap_err();
+    assert!(matches!(error, Error::UnknownDiracSlot(_)), "{error:?}");
+    telnet.send(b"OPDLSSL3NAME Dirac ART      \rOPDLSSL3IMP ON\rOPDLSSL3TYP ART\rOPDLS END\r");
+    wait_until("the slot", || {
+        avr.snapshot()
+            .device()
+            .dirac_filter_named("dirac art")
+            .is_some()
+    })
+    .await;
+    dirac.set_slot_by_name("dirac art").await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 3).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["PSDIRAC 1", "PSDIRAC OFF", "PSDIRAC 3"]
+    );
 }
 
 #[tokio::test]

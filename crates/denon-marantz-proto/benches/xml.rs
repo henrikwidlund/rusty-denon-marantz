@@ -10,7 +10,10 @@ use denon_marantz_proto::appcommand::{
 };
 use denon_marantz_proto::status_page::{Page, extract};
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, DeviceInfo, State, Volume, Zone};
+use denon_marantz_proto::{
+    AudioChannelsPage, Brand, DeviceInfo, GroupAvailability, NowPlaying, SettingsGroup, State,
+    VideoSignalPage, Volume, Zone,
+};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -81,6 +84,44 @@ fn status_pages(c: &mut Criterion) {
     group.finish();
 }
 
+fn web_pages(c: &mut Criterion) {
+    let video = fixture("AVC-A10H-web-video-signal.xml");
+    let audio = fixture("AVC-A10H-web-audio-channels.xml");
+    let surround = fixture("AVC-A10H-web-details-surround.xml");
+    let net = fixture("AVR-3312-formNetAudio_StatusXml.xml");
+    let mut group = c.benchmark_group("web_page");
+    group.bench_function("video_signal_parse_apply", |b| {
+        let mut state = State::new(false);
+        b.iter(|| {
+            let page = VideoSignalPage::parse(black_box(&video)).unwrap();
+            black_box(state.apply_video_signal_page(&page));
+        });
+    });
+    group.bench_function("channels_parse_apply", |b| {
+        let mut state = State::new(false);
+        b.iter(|| {
+            let page = AudioChannelsPage::parse(black_box(&audio)).unwrap();
+            black_box(state.apply_audio_channels_page(&page));
+        });
+    });
+    group.bench_function("detail_page_parse", |b| {
+        b.iter(|| {
+            black_box(
+                GroupAvailability::parse(SettingsGroup::SurroundParameters, black_box(&surround))
+                    .unwrap(),
+            );
+        });
+    });
+    group.bench_function("net_audio_parse_apply", |b| {
+        let mut state = State::new(false);
+        b.iter(|| {
+            let now = NowPlaying::parse_net_audio(black_box(&net)).unwrap();
+            black_box(state.apply_now_playing(now));
+        });
+    });
+    group.finish();
+}
+
 fn commands(c: &mut Criterion) {
     let volume = Volume::from_db_rounded(-36.5).unwrap();
     c.bench_function("command_write_line", |b| {
@@ -102,5 +143,5 @@ fn commands(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, appcommand, status_pages, commands);
+criterion_group!(benches, appcommand, status_pages, web_pages, commands);
 criterion_main!(benches);

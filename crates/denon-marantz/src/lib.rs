@@ -3,6 +3,34 @@
 //! The types of the protocol are in the `denon-marantz-proto` crate. This
 //! crate has them too: the types that most programs need are at the top, for
 //! example [`Zone`] and [`Volume`], and all others are in [`proto`].
+//!
+//! # Example
+//!
+//! [`Avr::start`] reads the zones and returns. Telnet and the web interface
+//! fill in the rest in the background, and [`Avr::changes`] reports each
+//! change of the state.
+//!
+//! ```no_run
+//! use std::sync::Arc;
+//! use denon_marantz::{Avr, Zone};
+//!
+//! # async fn run() -> Result<(), denon_marantz::Error> {
+//! let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
+//! let started = avr.start().await?;
+//! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
+//!
+//! let mut changes = avr.changes();
+//! while let Ok(change) = changes.recv().await {
+//!     println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main));
+//! }
+//! // Optional: wait until everything that the start reads has been read.
+//! let report = started.finished().await;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! With the default `telnet` feature, `Avr::zone` and the other controls send
+//! commands, for example `avr.zone(Zone::Main)?.set_volume_db(-35.0)`.
 
 #[cfg(feature = "http")]
 mod channels;
