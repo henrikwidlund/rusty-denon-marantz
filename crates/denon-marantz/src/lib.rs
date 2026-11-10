@@ -1,4 +1,8 @@
 //! Async client to monitor and control Denon and Marantz AV receivers.
+//!
+//! The types of the protocol are in the `denon-marantz-proto` crate. This
+//! crate has them too: the types that most programs need are at the top, for
+//! example [`Zone`] and [`Volume`], and all others are in [`proto`].
 
 #[cfg(feature = "http")]
 mod channels;
@@ -34,6 +38,11 @@ mod video_control;
 #[cfg(feature = "telnet")]
 mod zone_control;
 
+pub use denon_marantz_proto as proto;
+pub use denon_marantz_proto::{
+    Brand, Change, Channel, ChannelLevel, DeviceState, NowPlaying, PlayingKind, ReceiverType,
+    Setting, State, ToneLevel, Volume, Zone, ZoneState,
+};
 pub use error::{Error, ToneBlocker};
 pub use pacer::{Adaptive, Pacer, Pacing};
 

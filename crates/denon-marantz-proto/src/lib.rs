@@ -11,6 +11,7 @@ mod device_info;
 mod device_settings;
 mod error;
 mod input_pages;
+mod now_playing;
 mod picture;
 mod remote_key;
 mod settings_availability;
@@ -50,6 +51,10 @@ pub use input_pages::{
     INPUT_ASSIGN_PATH, InputAssignment, SOURCE_NAMES_PATH, SourceNameEntry, SourceNames,
     source_for_index,
 };
+pub use now_playing::{
+    COVER_ARTWORK_PATH, HD_RADIO_STATUS_PATH, NET_AUDIO_STATUS_PATH, NowPlaying, PlayingKind,
+    STATIC_ARTWORK_PATH,
+};
 pub use picture::{PictureSettingValue, PictureSettings};
 pub use remote_key::RemoteKey;
 pub use settings_availability::{
@@ -69,7 +74,9 @@ pub use speaker_tables::{
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};
 pub use tone::ToneLevel;
-pub use tuner::{TUNER_QUERIES, TunerCommand, TunerFrequency, TunerState};
+pub use tuner::{
+    TUNER_QUERIES, TUNER_STATUS_PATH, TunerCommand, TunerFrequency, TunerPage, TunerState,
+};
 pub use values::{
     AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,

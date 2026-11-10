@@ -7,7 +7,8 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    AVR_X_DIRAC_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info, builder, wait_until,
+    AVR_X_DIRAC_INFO, AVR_X_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info,
+    avr_x_receiver_with_pages, builder, wait_until,
 };
 use denon_marantz::{
     Avr, Command, Error, PageStatus, QueryGroup, SkipReason, TelnetConfig, TelnetEvent,
@@ -1706,4 +1707,203 @@ async fn source_events_fill_the_source_list() {
     assert_eq!(sources.get("TV").unwrap().in_use, Some(false));
     let change = changes.recv().await.unwrap();
     assert_eq!(change.setting, Setting::Sources);
+}
+
+const NET_AUDIO_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVR-3312-formNetAudio_StatusXml.xml");
+const TUNER_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/Own-formTuner_TunerXml-fm.xml");
+const HD_RADIO_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/Own-formTuner_HdXml-playing.xml");
+
+#[tokio::test]
+async fn now_playing_is_read_for_the_source_that_plays() {
+    static PAGES: [(&str, &[u8]); 3] = [
+        ("/goform/formNetAudio_StatusXml.xml", NET_AUDIO_PAGE),
+        ("/goform/formTuner_HdXml.xml", HD_RADIO_PAGE),
+        ("/goform/formTuner_TunerXml.xml", TUNER_PAGE),
+    ];
+    let http = avr_x_receiver_with_pages(AVR_X_INFO, &PAGES).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    let source = |name: &'static str| {
+        wait_until("the source", || {
+            avr.snapshot().zone(Zone::Main).source.as_deref() == Some(name)
+        })
+    };
+
+    // A source that does not play anything: no page, no picture.
+    telnet.send(b"SICD\r");
+    source("CD").await;
+    assert_eq!(
+        avr.update_now_playing().await.unwrap(),
+        PageStatus::Skipped(SkipReason::NoPlayingSource)
+    );
+    assert_eq!(avr.artwork_url(), None);
+
+    // Network audio.
+    telnet.send(b"SINET\r");
+    source("NET").await;
+    assert_eq!(avr.update_now_playing().await.unwrap(), PageStatus::Read);
+    let state = avr.snapshot();
+    let now = &state.device().now_playing;
+    assert_eq!(
+        now.title.as_deref(),
+        Some("Moetley Crüe - Girls, girls, girls")
+    );
+    assert_eq!(now.is_playing(), Some(true));
+    let cover = avr.artwork_url().unwrap();
+    assert!(cover.contains("/NetAudio/art.asp-jpg?"), "{cover}");
+    // The address changes with the title.
+    telnet.send(b"NSE1Another song\r");
+    wait_until("the title", || {
+        avr.snapshot().device().now_playing.title.as_deref() == Some("Another song")
+    })
+    .await;
+    assert_ne!(avr.artwork_url().unwrap(), cover);
+
+    // HD radio.
+    telnet.send(b"SIHDRADIO\r");
+    source("HDRADIO").await;
+    assert_eq!(avr.update_now_playing().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.snapshot().device().now_playing.station.as_deref(),
+        Some("WXYZ-HD2")
+    );
+    assert!(
+        avr.artwork_url()
+            .unwrap()
+            .ends_with("/img/album%20art_S.png")
+    );
+
+    // The tuner: the band and the frequency, and no title.
+    telnet.send(b"SITUNER\r");
+    source("TUNER").await;
+    assert_eq!(avr.update_now_playing().await.unwrap(), PageStatus::Read);
+    let state = avr.snapshot();
+    assert!(state.device().now_playing.is_empty());
+    assert_eq!(state.device().tuner.band, Some(TunerBand::Fm));
+    assert_eq!(state.device().tuner.frequency.unwrap().hundredths(), 8750);
+
+    // Back to a source that plays nothing: what was known is cleared.
+    telnet.send(b"SICD\r");
+    source("CD").await;
+    avr.update_now_playing().await.unwrap();
+    assert!(avr.snapshot().device().now_playing.is_empty());
+}
+
+#[tokio::test]
+async fn now_playing_is_requested_for_the_source_that_plays() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let asked = |text: &str| telnet.received().matches(text).count();
+    // Nothing plays: nothing is sent.
+    telnet.send(b"SICD\r");
+    wait_until("the source", || {
+        avr.snapshot().zone(Zone::Main).source.as_deref() == Some("CD")
+    })
+    .await;
+    avr.request_now_playing().await.unwrap();
+    assert_eq!(asked("NSE\r"), 0);
+    telnet.send(b"SINET\r");
+    wait_until("the source", || {
+        avr.snapshot().zone(Zone::Main).source.as_deref() == Some("NET")
+    })
+    .await;
+    avr.request_now_playing().await.unwrap();
+    wait_until("the request", || telnet.received().contains("NSE\r")).await;
+    telnet.send(b"SITUNER\r");
+    wait_until("the source", || {
+        avr.snapshot().zone(Zone::Main).source.as_deref() == Some("TUNER")
+    })
+    .await;
+    avr.request_now_playing().await.unwrap();
+    wait_until("the tuner request", || {
+        telnet.received().contains("TFANNAME?\r")
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn refresh_uses_telnet_when_it_is_open_and_the_page_when_it_is_not() {
+    static PAGES: [(&str, &[u8]); 1] = [("/goform/formNetAudio_StatusXml.xml", NET_AUDIO_PAGE)];
+    let http = avr_x_receiver_with_pages(AVR_X_INFO, &PAGES).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    // The state needs a source that plays, for both ways.
+    avr.telnet_connect().await.unwrap();
+    telnet.send(b"SINET\r");
+    wait_until("the source", || {
+        avr.snapshot().zone(Zone::Main).source.as_deref() == Some("NET")
+    })
+    .await;
+    avr.refresh_now_playing().await.unwrap();
+    wait_until("the request", || telnet.received().contains("NSE\r")).await;
+    assert!(avr.snapshot().device().now_playing.is_empty());
+    // The answer of the receiver fills the state.
+    telnet.send(b"NSE0Now Playing\rNSE1Song\r");
+    wait_until("the title", || {
+        avr.snapshot().device().now_playing.title.as_deref() == Some("Song")
+    })
+    .await;
+
+    avr.telnet_disconnect().await;
+    avr.refresh_now_playing().await.unwrap();
+    assert_eq!(
+        avr.snapshot().device().now_playing.title.as_deref(),
+        Some("Moetley Crüe - Girls, girls, girls")
+    );
+}
+
+#[tokio::test]
+async fn refresh_reads_http_and_asks_on_telnet_when_it_is_open() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    let appcommand = || {
+        http.requests()
+            .iter()
+            .filter(|seen| seen.path == "/goform/AppCommand.xml")
+            .count()
+    };
+    // Without telnet only HTTP is read, and the zone names come with it.
+    let before = appcommand();
+    avr.refresh().await.unwrap();
+    assert!(appcommand() > before);
+    assert!(avr.snapshot().zone(Zone::Main).name.is_some());
+    assert_eq!(telnet.received(), "");
+
+    // With telnet the queries are sent again too.
+    avr.telnet_connect().await.unwrap();
+    wait_until("the first query", || telnet.received().contains("SI?\r")).await;
+    let asked = telnet.received().matches("SI?\r").count();
+    let before = appcommand();
+    avr.refresh().await.unwrap();
+    assert_eq!(appcommand(), before + 1);
+    // Only the zone names are read over HTTP, the rest comes from telnet.
+    let last = http.requests().pop().unwrap();
+    let body = String::from_utf8_lossy(&last.body);
+    assert!(body.contains("GetZoneName"), "{body}");
+    assert!(!body.contains("GetAllZoneVolume"), "{body}");
+    assert_eq!(
+        avr.snapshot().zone(Zone::Zone2).name.as_deref(),
+        Some("Kitchen")
+    );
+    wait_until("the queries again", || {
+        telnet.received().matches("SI?\r").count() > asked
+    })
+    .await;
 }

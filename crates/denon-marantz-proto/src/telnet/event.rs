@@ -60,7 +60,7 @@ impl Event {
 
     /// Returns true if the event reports one setting of the whole receiver that
     /// the state keeps apart: triggers, Bluetooth, picture, digital input,
-    /// illumination, speaker preset and tuner.
+    /// illumination, speaker preset, tuner and what plays.
     #[must_use]
     pub const fn is_device_report(self) -> bool {
         matches!(
@@ -74,6 +74,8 @@ impl Event {
                 | Self::Tf
                 | Self::Tp
                 | Self::Tm
+                | Self::Nse
+                | Self::Hd
         )
     }
 

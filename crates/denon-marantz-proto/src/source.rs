@@ -3,6 +3,8 @@
 //! Receivers report the display names of inputs in XML and the short names on
 //! telnet. These functions convert between them.
 
+use crate::now_playing::PlayingKind;
+
 /// Telnet source name for an input name from XML.
 ///
 /// Returns the input unchanged if there is no special mapping.
@@ -101,7 +103,8 @@ pub fn is_telnet_source(name: &str) -> bool {
     TELNET_SOURCES.contains(&name)
 }
 
-/// Returns true for sources that play network audio.
+/// Returns true for sources that play network audio. The name can be a
+/// display name or a telnet name.
 #[must_use]
 pub fn is_netaudio_source(name: &str) -> bool {
     matches!(
@@ -110,11 +113,20 @@ pub fn is_netaudio_source(name: &str) -> bool {
             | "Online Music"
             | "Media Server"
             | "iPod/USB"
+            | "USB/IPOD"
             | "Bluetooth"
+            | "BT"
             | "Internet Radio"
+            | "IRADIO"
+            | "IRP"
+            | "SERVER"
             | "Favorites"
+            | "FAVORITES"
             | "SpotifyConnect"
+            | "Spotify Connect"
+            | "Spotify"
             | "Flickr"
+            | "FLICKR"
             | "NET/USB"
             | "Music Server"
             | "NETWORK"
@@ -134,10 +146,25 @@ pub fn is_hd_tuner_source(name: &str) -> bool {
     matches!(name, "HD Radio" | "HDRADIO")
 }
 
+/// What a source plays, if it reports it. The name can be a display name or a
+/// telnet name.
+#[must_use]
+pub fn playing_kind(name: &str) -> Option<PlayingKind> {
+    if is_netaudio_source(name) {
+        Some(PlayingKind::NetAudio)
+    } else if is_tuner_source(name) {
+        Some(PlayingKind::Tuner)
+    } else if is_hd_tuner_source(name) {
+        Some(PlayingKind::HdRadio)
+    } else {
+        None
+    }
+}
+
 /// Returns true for sources that report what is playing.
 #[must_use]
 pub fn is_playing_source(name: &str) -> bool {
-    is_netaudio_source(name) || is_tuner_source(name) || is_hd_tuner_source(name)
+    playing_kind(name).is_some()
 }
 
 #[cfg(test)]
@@ -171,5 +198,14 @@ mod tests {
         assert!(is_playing_source("HDRADIO"));
         assert!(is_playing_source("NET"));
         assert!(!is_playing_source("CD"));
+    }
+
+    #[test]
+    fn playing_kinds() {
+        assert_eq!(playing_kind("USB/IPOD"), Some(PlayingKind::NetAudio));
+        assert_eq!(playing_kind("Internet Radio"), Some(PlayingKind::NetAudio));
+        assert_eq!(playing_kind("TUNER"), Some(PlayingKind::Tuner));
+        assert_eq!(playing_kind("HD Radio"), Some(PlayingKind::HdRadio));
+        assert_eq!(playing_kind("CD"), None);
     }
 }

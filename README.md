@@ -25,6 +25,9 @@ state with `Avr::snapshot` and watch it with `Avr::changes`.
 - HDMI control, menu lock, firmware update permission, when the network
   answers, and the streaming services (AirPlay, Spotify Connect, Roon Ready,
   TIDAL Connect, Qobuz Connect).
+- What plays: title, artist, album and station of network audio and HD radio,
+  band and frequency of the tuner, and the address of the picture. A receiver
+  that uses HEOS for network audio does not give this.
 - Discovery with SSDP and mDNS.
 
 A command that the receiver would ignore without an answer is not sent when the
@@ -34,12 +37,11 @@ a Dirac filter that blocks tone control or Audyssey settings.
 ## Usage
 
 ```rust
-use denon_marantz::Avr;
-use denon_marantz_proto::Zone;
+use denon_marantz::{Avr, Zone};
 
 let avr = Avr::builder("192.168.1.20").connect().await?;
-avr.update().await?;
-avr.telnet_connect().await?;
+avr.update().await?; // the state of the zones, over HTTP
+avr.telnet_connect().await?; // live events and commands
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
 
@@ -58,6 +60,15 @@ avr.update_source_details().await?;
 avr.update_settings_availability().await?;
 avr.update_system_settings().await?;
 ```
+
+To read all values again, call `avr.refresh().await?`. If telnet is open it asks on
+telnet and reads only the zone names over HTTP. If not, it reads everything over
+HTTP. Your code does not choose.
+
+To see what plays, call `avr.refresh_now_playing().await?`. It asks on telnet if
+the connection is open and reads the status page if not, so your code does not
+choose. The values reach `snapshot()` and `changes()` either way. Nothing asks
+again by itself: call it again to see changes, for example on a timer.
 
 Each call says what happened to each page. A page that the receiver does not
 have or refuses is not an error. A receiver that cannot be reached is an error,
@@ -84,8 +95,9 @@ have not run on a receiver:
 - Receivers that are older than the AVC-A10H. The effect speaker, center image
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.
-- `NSE` and `NSA` now playing text on telnet. The AVC-A10H does not answer
-  them (it gives now playing info through HEOS), so they are for other receivers.
+- What plays (`refresh_now_playing`, `update_now_playing`,
+  `request_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
+  from other receivers and with fake receivers. The `NSA` text is not used.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver
@@ -96,7 +108,7 @@ have not run on a receiver:
   while the receiver is on. Only `Always` was seen. A receiver needs some time
   after power on before the network answers.
 - Receivers without the web interface on port 11080. The library gives an error
-  after one second for each page call, see `AvrBuilder::ajax_config`.
+  after one second for each page call, see `AvrBuilder::web_interface_config`.
 
 ## Notes about receivers
 
@@ -114,6 +126,9 @@ have not run on a receiver:
 | `denon-marantz` | Async client (tokio). |
 | `denon-marantz-proto` | Protocol without IO. |
 | `denon-marantz-discovery` | SSDP and mDNS parsing without IO. |
+
+The `denon-marantz` crate re-exports the types that most programs need, for
+example `Zone` and `Volume`. All others are in `denon_marantz::proto`.
 
 Minimum supported Rust version: 1.88.
 

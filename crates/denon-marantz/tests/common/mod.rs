@@ -219,6 +219,16 @@ pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
     format!("<rx><cmd><friendlyname> {name} </friendlyname></cmd></rx>").into_bytes()
 }
 
+/// True if the request body asks for the zone names and nothing else.
+pub(crate) fn is_zone_names_request(body: &[u8]) -> bool {
+    let body = String::from_utf8_lossy(body);
+    body.contains("GetZoneName") && !body.contains("GetAllZonePowerStatus")
+}
+
+pub(crate) fn zone_names_answer() -> Vec<u8> {
+    b"<rx><cmd><zone1>Cinema </zone1><zone2>Kitchen</zone2><zone3>Porch</zone3></cmd></rx>".to_vec()
+}
+
 /// An AVR-X receiver that has all the pages.
 pub(crate) async fn avr_x_receiver() -> Fake {
     avr_x_receiver_with_info(AVR_X_INFO).await
@@ -226,10 +236,25 @@ pub(crate) async fn avr_x_receiver() -> Fake {
 
 /// Like [`avr_x_receiver`], with this device information.
 pub(crate) async fn avr_x_receiver_with_info(info: &'static [u8]) -> Fake {
+    avr_x_receiver_with_pages(info, &[]).await
+}
+
+/// Like [`avr_x_receiver`], and it answers `GET` for the paths in `pages`.
+pub(crate) async fn avr_x_receiver_with_pages(
+    info: &'static [u8],
+    pages: &'static [(&'static str, &'static [u8])],
+) -> Fake {
     Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
             ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
+            ("GET", path) if pages.iter().any(|(page, _)| *page == path) => {
+                let (_, body) = pages.iter().find(|(page, _)| *page == path).unwrap();
+                Reply::Body(body.to_vec())
+            }
+            ("POST", "/goform/AppCommand.xml") if is_zone_names_request(&seen.body) => {
+                Reply::Body(zone_names_answer())
+            }
             ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("Living room"))
             }

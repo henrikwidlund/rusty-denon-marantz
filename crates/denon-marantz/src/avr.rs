@@ -13,9 +13,10 @@ use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
-    DeviceDescription, GroupAvailability, INPUT_ASSIGN_PATH, InputAssignment, ReceiverType,
-    SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames, SpeakerTable, State,
-    SystemSettings, WEB_INTERFACE_PORT, Zone,
+    DeviceDescription, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH, InputAssignment,
+    NET_AUDIO_STATUS_PATH, NowPlaying, PlayingKind, ReceiverType, SOURCE_NAMES_PATH,
+    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames, SpeakerTable, State, SystemSettings,
+    TUNER_STATUS_PATH, TunerPage, WEB_INTERFACE_PORT, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -66,6 +67,11 @@ const UPDATE_COMMANDS: [Definition; 12] = [
     appcommand::GET_ZONE_NAME,
     appcommand::GET_FRIENDLY_NAME,
 ];
+
+/// The commands that read what telnet does not report. [`Avr::refresh`] sends
+/// only these when the telnet connection is open.
+#[cfg(feature = "telnet")]
+const HTTP_ONLY_COMMANDS: [Definition; 1] = [appcommand::GET_ZONE_NAME];
 
 /// How the state is read over HTTP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,6 +156,9 @@ pub struct Avr {
     update_commands: Box<[Definition]>,
     /// The request body of `update_commands`.
     update_body: Bytes,
+    /// The request body of [`HTTP_ONLY_COMMANDS`].
+    #[cfg(feature = "telnet")]
+    http_only_body: Bytes,
     channels: Channels,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
@@ -200,9 +209,10 @@ impl Avr {
         self.channels.snapshot()
     }
 
-    /// Reads the state of all zones from the receiver.
+    /// Reads the state of all zones from the receiver over HTTP.
     ///
-    /// Watchers are told only if a value changed.
+    /// Watchers are told only if a value changed. To read all values again
+    /// later, use [`Avr::refresh`].
     ///
     /// # Errors
     ///
@@ -213,6 +223,30 @@ impl Avr {
             UpdateMethod::AppCommand => self.update_with_appcommand().await,
             UpdateMethod::StatusPages => self.update_with_status_pages().await,
         }
+    }
+
+    /// Reads all values again, in the way that fits. If the telnet connection
+    /// is open, it asks on telnet, as [`Avr::telnet_refresh`] does, and reads
+    /// over HTTP only what telnet does not report: the names of the zones. If
+    /// telnet is not open, it does what [`Avr::update`] does.
+    ///
+    /// Values from telnet arrive as events after the call returns. With
+    /// telnet open both are tried, and the first error is returned. Use
+    /// [`Avr::update`] for the first read, before telnet is open. The pages of
+    /// the web interface and what plays have their own calls, because they
+    /// have their own values.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Avr::update`] or, if telnet is open, of
+    /// [`Avr::telnet_refresh`] and of the read of the zone names.
+    pub async fn refresh(&self) -> Result<(), Error> {
+        #[cfg(feature = "telnet")]
+        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+            let http = self.update_http_only().await;
+            return http.and(self.telnet_refresh().await);
+        }
+        self.update().await
     }
 
     /// Reads the speaker distances, the crossovers, the channel levels and the
@@ -351,6 +385,135 @@ impl Avr {
         .await
     }
 
+    /// Reads what the receiver plays from a status page, for network audio,
+    /// HD radio and the tuner.
+    ///
+    /// The page does not send changes: call it again to read it again. The
+    /// values of network audio and HD radio are in
+    /// [`DeviceState::now_playing`](denon_marantz_proto::DeviceState::now_playing).
+    /// The page of the tuner gives the band and the frequency, which are in
+    /// [`DeviceState::tuner`](denon_marantz_proto::DeviceState::tuner) with
+    /// the values of telnet. For another source no page is asked for. What
+    /// was known in `now_playing` is cleared when the source does not use it.
+    /// A receiver that uses HEOS for network audio does not have the pages.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`], for the HTTP port of the
+    /// receiver.
+    pub async fn update_now_playing(&self) -> Result<PageStatus, Error> {
+        match self.playing_kind() {
+            Some(PlayingKind::NetAudio) => {
+                self.read_page(
+                    &self.http,
+                    NET_AUDIO_STATUS_PATH,
+                    NowPlaying::parse_net_audio,
+                    State::apply_now_playing,
+                )
+                .await
+            }
+            Some(PlayingKind::HdRadio) => {
+                self.read_page(
+                    &self.http,
+                    HD_RADIO_STATUS_PATH,
+                    NowPlaying::parse_hd_radio,
+                    State::apply_now_playing,
+                )
+                .await
+            }
+            Some(PlayingKind::Tuner) => {
+                self.clear_now_playing();
+                self.read_page(
+                    &self.http,
+                    TUNER_STATUS_PATH,
+                    TunerPage::parse,
+                    State::apply_tuner_page,
+                )
+                .await
+            }
+            _ => {
+                self.clear_now_playing();
+                Ok(PageStatus::Skipped(SkipReason::NoPlayingSource))
+            }
+        }
+    }
+
+    fn clear_now_playing(&self) {
+        self.channels
+            .modify(|state, notify| notify(state.apply_now_playing(NowPlaying::default())));
+    }
+
+    /// Asks for what plays. Use this one: it picks the way for you. If the
+    /// telnet connection is open it asks on telnet, see
+    /// [`Avr::request_now_playing`]. If not, it reads the status page, see
+    /// [`Avr::update_now_playing`].
+    ///
+    /// Either way the values reach
+    /// [`DeviceState::now_playing`](denon_marantz_proto::DeviceState::now_playing)
+    /// (and the tuner state for the tuner) and watchers of
+    /// [`Avr::changes`] are told. Over telnet that happens after the call
+    /// returns, when the receiver answers. Nothing asks again by itself: call
+    /// it again to see changes.
+    ///
+    /// # Errors
+    ///
+    /// The errors of the way that was used.
+    pub async fn refresh_now_playing(&self) -> Result<(), Error> {
+        #[cfg(feature = "telnet")]
+        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+            return self.request_now_playing().await;
+        }
+        self.update_now_playing().await.map(|_| ())
+    }
+
+    /// The address of the picture of what plays, if the source has one.
+    ///
+    /// Network audio has the cover of the title. The address changes with the
+    /// title, the artist and the album, so a client that keeps pictures sees a
+    /// new one. The tuner and HD radio have one picture for all stations. The
+    /// receiver does not say if it has a cover, so the address can lead to a
+    /// picture that is empty.
+    #[must_use]
+    pub fn artwork_url(&self) -> Option<String> {
+        use std::hash::{Hash, Hasher};
+
+        let host = &self.info.host;
+        let port = self.info.port;
+        match self.playing_kind()? {
+            PlayingKind::NetAudio => {
+                let state = self.snapshot();
+                let now = &state.device().now_playing;
+                let mut hasher = std::hash::DefaultHasher::new();
+                (&now.title, &now.artist, &now.album).hash(&mut hasher);
+                Some(format!(
+                    "http://{host}:{port}{}?{}",
+                    denon_marantz_proto::COVER_ARTWORK_PATH,
+                    hasher.finish()
+                ))
+            }
+            _ => Some(format!(
+                "http://{host}:{port}{}",
+                denon_marantz_proto::STATIC_ARTWORK_PATH
+            )),
+        }
+    }
+
+    /// What the source of the main zone plays, from its name or its telnet
+    /// name. A source that has a name of the user is found by that name.
+    fn playing_kind(&self) -> Option<PlayingKind> {
+        let state = self.snapshot();
+        let source = state.zone(Zone::Main).source.as_deref()?;
+        denon_marantz_proto::source::playing_kind(source).or_else(|| {
+            state
+                .device()
+                .sources
+                .as_slice()
+                .iter()
+                .find(|info| info.name.as_deref() == Some(source))
+                .and_then(|info| denon_marantz_proto::source::playing_kind(&info.code))
+        })
+    }
+
     /// Returns true if the state shows that a Dirac ART filter is active.
     fn dirac_art_active(&self) -> bool {
         self.channels
@@ -369,7 +532,20 @@ impl Avr {
         parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
         apply: impl FnOnce(&mut State, T) -> Option<Change>,
     ) -> Result<PageStatus, Error> {
-        match self.web_interface.get_parsed(path, parse).await {
+        self.read_page(&self.web_interface, path, parse, apply)
+            .await
+    }
+
+    /// Reads one page from a client into the state. Returns an error only if
+    /// the receiver is not reachable.
+    async fn read_page<T>(
+        &self,
+        client: &HttpClient,
+        path: &str,
+        parse: impl FnOnce(&[u8]) -> Result<T, denon_marantz_proto::Error>,
+        apply: impl FnOnce(&mut State, T) -> Option<Change>,
+    ) -> Result<PageStatus, Error> {
+        match client.get_parsed(path, parse).await {
             Ok(value) => {
                 self.channels
                     .modify(|state, notify| notify(apply(state, value)));
@@ -437,6 +613,33 @@ impl Avr {
         self.telnet
             .send(telnet::encode(self.info.brand, zone, &command)?)
             .await
+    }
+
+    /// Asks the receiver on telnet what it plays. The answer comes as events
+    /// that change [`DeviceState::now_playing`](denon_marantz_proto::DeviceState::now_playing)
+    /// or the tuner state.
+    ///
+    /// It asks for the lines of network audio, the HD radio information or the
+    /// tuner frequency and name, for the source of the main zone, and does
+    /// nothing for another source. Ask again to see changes. A receiver that
+    /// uses HEOS for network audio does not answer.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::send`].
+    #[cfg(feature = "telnet")]
+    pub async fn request_now_playing(&self) -> Result<(), Error> {
+        match self.playing_kind() {
+            Some(PlayingKind::NetAudio) => self.send(Zone::Main, Command::Raw("NSE")).await,
+            Some(PlayingKind::HdRadio) => self.send(Zone::Main, Command::Raw("HD?")).await,
+            Some(PlayingKind::Tuner) => {
+                for query in denon_marantz_proto::TUNER_QUERIES {
+                    self.send(Zone::Main, Command::Raw(query)).await?;
+                }
+                self.send(Zone::Main, Command::Raw("TFANNAME?")).await
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Turns a trigger output on (`true`) or off (`false`). The outputs
@@ -530,7 +733,8 @@ impl Avr {
     }
 
     /// Asks the receiver for its state again on telnet. The answers are
-    /// events, and events that repeat the last value are shown again.
+    /// events, and events that repeat the last value are shown again. The
+    /// names of the zones are not on telnet: [`Avr::refresh`] reads them too.
     ///
     /// # Errors
     ///
@@ -564,35 +768,50 @@ impl Avr {
     }
 
     async fn update_with_appcommand(&self) -> Result<(), Error> {
+        self.read_appcommand(&self.update_commands, self.update_body.clone())
+            .await
+    }
+
+    /// Reads only what telnet does not report: the names of the zones. A
+    /// receiver that uses the status pages does not have them.
+    #[cfg(feature = "telnet")]
+    async fn update_http_only(&self) -> Result<(), Error> {
+        match self.info.update_method {
+            UpdateMethod::AppCommand => {
+                self.read_appcommand(&HTTP_ONLY_COMMANDS, self.http_only_body.clone())
+                    .await
+            }
+            UpdateMethod::StatusPages => Ok(()),
+        }
+    }
+
+    /// Sends `body`, the request for `commands`, and puts the answer into the
+    /// state.
+    async fn read_appcommand(&self, commands: &[Definition], body: Bytes) -> Result<(), Error> {
         self.http
-            .post_parsed(
-                Endpoint::AppCommand.path(),
-                self.update_body.clone(),
-                |body| {
-                    let response = Response::parse(body, self.update_commands.len())?;
-                    self.channels.modify(|state, notify| {
-                        for &zone in &self.info.zones {
-                            response.extract(&self.update_commands, zone, |field, value| {
-                                notify(state.apply_field(zone, field, value));
+            .post_parsed(Endpoint::AppCommand.path(), body, |body| {
+                let response = Response::parse(body, commands.len())?;
+                self.channels.modify(|state, notify| {
+                    for &zone in &self.info.zones {
+                        response.extract(commands, zone, |field, value| {
+                            notify(state.apply_field(zone, field, value));
+                        });
+                    }
+                    // The source lists are for the whole receiver.
+                    for (definition, item) in commands.iter().zip(response.items()) {
+                        if *definition == appcommand::GET_RENAME_SOURCE {
+                            item.renamed_sources(|name, rename| {
+                                notify(state.apply_renamed_source(name, rename));
+                            });
+                        } else if *definition == appcommand::GET_DELETED_SOURCE {
+                            item.source_use(|name, value| {
+                                notify(state.apply_source_use(name, value));
                             });
                         }
-                        // The source lists are for the whole receiver.
-                        for (definition, item) in self.update_commands.iter().zip(response.items())
-                        {
-                            if *definition == appcommand::GET_RENAME_SOURCE {
-                                item.renamed_sources(|name, rename| {
-                                    notify(state.apply_renamed_source(name, rename));
-                                });
-                            } else if *definition == appcommand::GET_DELETED_SOURCE {
-                                item.source_use(|name, value| {
-                                    notify(state.apply_source_use(name, value));
-                                });
-                            }
-                        }
-                    });
-                    Ok(())
-                },
-            )
+                    }
+                });
+                Ok(())
+            })
             .await
     }
 
@@ -745,6 +964,8 @@ impl AvrBuilder {
             info,
             update_commands: update_commands.into_boxed_slice(),
             update_body,
+            #[cfg(feature = "telnet")]
+            http_only_body: request_body(&HTTP_ONLY_COMMANDS.map(|definition| definition.cmd))?,
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),

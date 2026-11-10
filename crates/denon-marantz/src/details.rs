@@ -9,6 +9,8 @@ pub enum SkipReason {
     /// A Dirac ART filter is active. The receiver does not answer the page
     /// while it is, so it is not asked.
     DiracArt,
+    /// The source of the main zone does not report what plays.
+    NoPlayingSource,
 }
 
 /// The result for one page of the web interface.

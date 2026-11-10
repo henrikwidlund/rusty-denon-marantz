@@ -15,6 +15,7 @@ use std::borrow::Cow;
 
 use crate::appcommand::Field;
 use crate::input_pages::{InputAssignment, SourceNames};
+use crate::now_playing::NowPlaying;
 use crate::picture::PictureSettings;
 use crate::settings_availability::{GroupAvailability, SettingsAvailability};
 use crate::signal::SignalState;
@@ -26,7 +27,7 @@ use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
 use crate::speaker_tables::{BassSettings, SpeakerTable};
 use crate::system_settings::SystemSettings;
 use crate::telnet::{Event, Message};
-use crate::tuner::TunerState;
+use crate::tuner::{TunerPage, TunerState};
 use crate::video::VideoSettings;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
@@ -64,6 +65,8 @@ pub enum Setting {
     SettingsAvailability,
     /// The settings that only the web interface gives, such as HDMI control.
     SystemSettings,
+    /// What the receiver plays: title, artist, album and station.
+    NowPlaying,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -322,6 +325,10 @@ pub struct DeviceState {
     pub sound_settings: SoundSettings,
     /// What the tuner reports. Telnet reports it for the tuner source.
     pub tuner: TunerState,
+    /// What network audio or HD radio plays. Telnet reports it in `NSE` and
+    /// `HD` events and the status pages have it. A receiver that uses HEOS for
+    /// network audio gives neither.
+    pub now_playing: NowPlaying,
     /// The speaker preset. Telnet reports it.
     pub speaker_preset: Option<SpeakerPreset>,
     /// Each trigger output is on. The first is trigger 1. Telnet reports them.
@@ -828,6 +835,40 @@ impl State {
         }
     }
 
+    /// Applies an event about what plays. `apply` says if the text is a value
+    /// and if it changed the value.
+    fn apply_now_playing_event(
+        &mut self,
+        apply: impl FnOnce(&mut NowPlaying) -> Option<bool>,
+    ) -> Option<Change> {
+        apply(&mut self.device.now_playing)?.then_some(Change {
+            zone: None,
+            setting: Setting::NowPlaying,
+        })
+    }
+
+    /// Stores the band and frequency of the status page of the tuner. A value
+    /// that the page does not have stays. It is [`DeviceState::tuner`].
+    pub fn apply_tuner_page(&mut self, page: TunerPage) -> Option<Change> {
+        self.device.tuner.apply_page(page).then_some(Change {
+            zone: None,
+            setting: Setting::Tuner,
+        })
+    }
+
+    /// Stores what plays, read from a status page of the receiver. It
+    /// replaces all values. An empty value clears what was known. It is
+    /// [`DeviceState::now_playing`].
+    pub fn apply_now_playing(&mut self, now_playing: NowPlaying) -> Option<Change> {
+        (self.device.now_playing != now_playing).then(|| {
+            self.device.now_playing = now_playing;
+            Change {
+                zone: None,
+                setting: Setting::NowPlaying,
+            }
+        })
+    }
+
     /// Applies a tuner event. `apply` says if the text is a value and if it
     /// changed the tuner state.
     fn apply_tuner(
@@ -875,6 +916,8 @@ impl State {
             Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
             Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
             Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
+            Event::Nse => self.apply_now_playing_event(|now| now.apply_net_audio_line(parameter)),
+            Event::Hd => self.apply_now_playing_event(|now| now.apply_hd_radio(parameter)),
             _ => None,
         }
     }
@@ -1856,7 +1899,7 @@ mod tests {
         let mut state = State::new(false);
         let before = state.clone();
         for line in [
-            "NSE1Hello",
+            "NSE3Hello",
             "VSXYZ",
             "CVXX 50",
             "TR4 ON",
@@ -2707,6 +2750,27 @@ mod tests {
         assert_eq!(state.apply_system_settings(settings("2")), None);
         assert_eq!(state.apply_system_settings(settings("1")), changed());
         assert_eq!(state.device().system_settings.menu_lock, Some(true));
+    }
+
+    #[test]
+    fn now_playing_follows_events_and_pages() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::NowPlaying);
+        assert_eq!(apply(&mut state, "NSE0Now Playing"), changed());
+        assert_eq!(apply(&mut state, "NSE0Now Playing"), None);
+        assert_eq!(apply(&mut state, "NSE1Song"), changed());
+        assert_eq!(apply(&mut state, "NSE2Band"), changed());
+        assert_eq!(apply(&mut state, "NSE3Bitrate"), None);
+        assert_eq!(apply(&mut state, "HDTITLEHd song"), changed());
+        assert_eq!(apply(&mut state, "HDA PCM"), None);
+        let now = &state.device().now_playing;
+        assert_eq!(now.title.as_deref(), Some("Hd song"));
+        assert_eq!(now.artist.as_deref(), Some("Band"));
+        assert_eq!(now.is_playing(), Some(true));
+        // A page replaces everything, an empty one clears it.
+        assert_eq!(state.apply_now_playing(NowPlaying::default()), changed());
+        assert_eq!(state.apply_now_playing(NowPlaying::default()), None);
+        assert!(state.device().now_playing.is_empty());
     }
 
     #[test]

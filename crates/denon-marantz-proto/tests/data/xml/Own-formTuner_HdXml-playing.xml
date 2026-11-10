@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<item>
+<Band><value>FM</value></Band>
+<StationNameSh><value>WXYZ-HD2</value></StationNameSh>
+<Title><value>Example Title</value></Title>
+<Artist><value>Example Artist</value></Artist>
+<Quality><value></value></Quality>
+<Album><value>Example Album</value></Album>
+<Genre><value></value></Genre>
+<SubChannel><value>2</value></SubChannel>
+</item>

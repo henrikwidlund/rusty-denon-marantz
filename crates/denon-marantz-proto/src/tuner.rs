@@ -4,11 +4,16 @@ use core::fmt;
 use core::fmt::Write as _;
 
 use crate::error::Error;
+use crate::speaker_tables::root;
 use crate::values::{TunerBand, TunerMode};
+use crate::xml::Node;
 
 /// Queries for the frequency, the preset and the tuning mode. A receiver
 /// answers them for the tuner source only.
 pub const TUNER_QUERIES: [&str; 3] = ["TFAN?", "TPAN?", "TMAN?"];
+
+/// Path of the status page of the tuner.
+pub const TUNER_STATUS_PATH: &str = "/goform/formTuner_TunerXml.xml";
 
 /// Highest preset number of the tuner.
 const MAX_PRESET: u8 = 56;
@@ -44,6 +49,22 @@ impl TunerFrequency {
     #[must_use]
     pub const fn hundredths(self) -> u32 {
         self.hundredths
+    }
+}
+
+impl TunerFrequency {
+    /// Reads the frequency of the status page, for example `106.80`. `None`
+    /// for text that is not a frequency and for zero, which the page shows
+    /// when the tuner is not tuned.
+    fn from_page(text: &str) -> Option<Self> {
+        let (whole, fraction) = text.trim().split_once('.')?;
+        let digits = |text: &str| text.bytes().all(|byte| byte.is_ascii_digit());
+        if whole.is_empty() || fraction.len() != 2 || !digits(whole) || !digits(fraction) {
+            return None;
+        }
+        let hundredths =
+            whole.parse::<u32>().ok()?.checked_mul(100)? + fraction.parse::<u32>().ok()?;
+        (hundredths > 0).then_some(Self { hundredths })
     }
 }
 
@@ -118,6 +139,57 @@ impl TunerState {
             Some(replace(&mut self.mode, Some(mode)))
         }
     }
+}
+
+/// What the status page of the tuner tells. A value is `None` if the page has
+/// no value, for example when the source is not the tuner.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TunerPage {
+    /// Band. A DAB receiver writes `DA`.
+    pub band: Option<TunerBand>,
+    /// Frequency.
+    pub frequency: Option<TunerFrequency>,
+}
+
+impl TunerPage {
+    /// Reads the status page of the tuner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is not valid XML or is an HTML page.
+    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+        let node = root(body)?.node();
+        Ok(Self {
+            band: value_of(node, "Band").and_then(|band| match band.trim() {
+                "AM" => Some(TunerBand::Am),
+                "FM" => Some(TunerBand::Fm),
+                "DA" | "DAB" => Some(TunerBand::Dab),
+                _ => None,
+            }),
+            frequency: value_of(node, "Frequency")
+                .and_then(|frequency| TunerFrequency::from_page(&frequency)),
+        })
+    }
+}
+
+impl TunerState {
+    /// Stores the values of the status page. A value that the page does not
+    /// have keeps what telnet reported. Returns true if the state changed.
+    pub(crate) fn apply_page(&mut self, page: TunerPage) -> bool {
+        let band = page
+            .band
+            .is_some_and(|band| replace(&mut self.band, Some(band)));
+        let frequency = page
+            .frequency
+            .is_some_and(|frequency| replace(&mut self.frequency, Some(frequency)));
+        band | frequency
+    }
+}
+
+/// Text of the `value` element in the element `tag`.
+fn value_of(node: Node<'_>, tag: &str) -> Option<String> {
+    let value = node.child(tag)?.node().child("value")?;
+    Some(value.node().text()?.into_owned())
 }
 
 /// Reads a preset number: two digits from 01 to 56.
@@ -206,6 +278,45 @@ fn write_preset(out: &mut String, start: &str, number: u8) -> Result<(), Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DAB: &[u8] = include_bytes!("../tests/data/xml/M-CR603-formTuner_TunerXml.xml");
+    const FM: &[u8] = include_bytes!("../tests/data/xml/Own-formTuner_TunerXml-fm.xml");
+    const IDLE: &[u8] = include_bytes!("../tests/data/xml/AVR-3312-formTuner_TunerXml.xml");
+
+    #[test]
+    fn tuner_pages() {
+        let fm = TunerPage::parse(FM).unwrap();
+        assert_eq!(fm.band, Some(TunerBand::Fm));
+        assert_eq!(fm.frequency.unwrap().hundredths(), 8750);
+        let dab = TunerPage::parse(DAB).unwrap();
+        assert_eq!(dab.band, Some(TunerBand::Dab));
+        assert_eq!(dab.frequency.unwrap().hundredths(), 10680);
+        // A tuner that is not tuned shows no band and a frequency of zero.
+        assert_eq!(TunerPage::parse(IDLE).unwrap(), TunerPage::default());
+        assert!(TunerPage::parse(b"<html><body>no</body></html>").is_err());
+    }
+
+    #[test]
+    fn page_frequencies() {
+        let hundredths = |text| TunerFrequency::from_page(text).map(TunerFrequency::hundredths);
+        assert_eq!(hundredths(" 87.50"), Some(8750));
+        assert_eq!(hundredths("1050.00"), Some(105_000));
+        for text in ["", " 0.00", "87.5", "87", "a.50", ".50", "87.5x", "-1.00"] {
+            assert_eq!(hundredths(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_page_keeps_what_it_does_not_have() {
+        let mut state = TunerState::default();
+        assert!(state.apply_frequency("AN105000").unwrap());
+        assert!(!state.apply_page(TunerPage::default()));
+        assert_eq!(state.frequency.unwrap().hundredths(), 105_000);
+        assert!(state.apply_page(TunerPage::parse(FM).unwrap()));
+        assert!(!state.apply_page(TunerPage::parse(FM).unwrap()));
+        assert_eq!(state.frequency.unwrap().hundredths(), 8750);
+        assert_eq!(state.band, Some(TunerBand::Fm));
+    }
 
     fn text(command: TunerCommand) -> Result<String, Error> {
         let mut out = String::new();

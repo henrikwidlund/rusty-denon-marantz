@@ -10,7 +10,9 @@ use common::{read_bytes, read_data, unescape};
 use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
-use denon_marantz_proto::{Brand, DeviceDescription, DeviceInfo, Error, Zone};
+use denon_marantz_proto::{
+    Brand, DeviceDescription, DeviceInfo, Error, NowPlaying, TunerPage, Zone,
+};
 
 const DEFINITIONS: [(&str, Definition); 10] = [
     ("GetAllZoneMuteStatus", ac::GET_ALL_ZONE_MUTE_STATUS),
@@ -178,4 +180,84 @@ fn device_description_of_a_real_receiver() {
     assert_eq!(description.serial_number.as_deref(), Some("XXX"));
     assert_eq!(description.presentation_url, None);
     assert_eq!(description.brand(), Brand::Denon);
+}
+
+#[test]
+fn tone_control_answers_when_it_is_off_and_on() {
+    let values = |name: &str| {
+        let body = read_bytes(&format!("xml/{name}"));
+        let response = Response::parse(&body, 1).unwrap();
+        let item = response.items().next().unwrap();
+        let mut got: Values = Vec::new();
+        ac::GET_TONE_CONTROL.extract(&item, Zone::Main, &mut |field, value| {
+            got.push((format!("{field:?}"), value.map(str::to_owned)));
+        });
+        got
+    };
+    let get = |got: &Values, field: &str| {
+        got.iter()
+            .find(|(name, _)| name == field)
+            .and_then(|(_, value)| value.clone())
+    };
+    let off = values("AVR-X1700H-AppCommand-tonecontrol-dormant.xml");
+    assert_eq!(get(&off, "ToneControlStatus").as_deref(), Some("0"));
+    assert_eq!(get(&off, "ToneControlAdjust"), None);
+    assert_eq!(get(&off, "BassLevel"), None);
+    let on = values("AVR-X1700H-AppCommand-tonecontrol-engaged.xml");
+    assert_eq!(get(&on, "ToneControlStatus").as_deref(), Some("1"));
+    assert_eq!(get(&on, "ToneControlAdjust").as_deref(), Some("1"));
+    assert_eq!(get(&on, "BassLevel").as_deref(), Some("+4dB"));
+    assert_eq!(get(&on, "TrebleLevel").as_deref(), Some("-4dB"));
+}
+
+/// The names of the files in `data/xml` that end with `suffix`.
+fn fixtures(suffix: &str) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(common::data("xml"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .filter(|name| name.ends_with(suffix))
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn now_playing_pages_of_all_receivers_are_read() {
+    let (mut pages, mut playing, mut idle) = (0, 0, 0);
+    for name in fixtures("formNetAudio_StatusXml.xml") {
+        let body = read_bytes(&format!("xml/{name}"));
+        let now = NowPlaying::parse_net_audio(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        match now.is_playing() {
+            Some(true) => {
+                assert!(now.title.is_some(), "{name}");
+                playing += 1;
+            }
+            // A page without a first line is idle too.
+            Some(false) | None => idle += 1,
+        }
+        pages += 1;
+    }
+    // Pages that show a menu, a list or nothing do not play anything.
+    assert!(
+        pages >= 22 && playing >= 6 && idle >= 10,
+        "{pages} {playing} {idle}"
+    );
+
+    let mut hd_pages = 0;
+    for name in fixtures("formTuner_HdXml.xml") {
+        let body = read_bytes(&format!("xml/{name}"));
+        NowPlaying::parse_hd_radio(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        hd_pages += 1;
+    }
+    assert!(hd_pages >= 14, "{hd_pages}");
+
+    let mut tuned = 0;
+    let names = fixtures("formTuner_TunerXml.xml");
+    for name in &names {
+        let body = read_bytes(&format!("xml/{name}"));
+        let page = TunerPage::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        tuned += usize::from(page.frequency.is_some());
+    }
+    // Only the page of a DAB receiver is tuned.
+    assert!(names.len() >= 15 && tuned == 1, "{} {tuned}", names.len());
 }

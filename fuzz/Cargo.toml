@@ -62,3 +62,17 @@ path = "fuzz_targets/ssdp.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "now_playing"
+path = "fuzz_targets/now_playing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "web_interface_pages"
+path = "fuzz_targets/web_interface_pages.rs"
+test = false
+doc = false
+bench = false
