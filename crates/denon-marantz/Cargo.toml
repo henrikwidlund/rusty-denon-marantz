@@ -55,5 +55,9 @@ required-features = ["telnet"]
 name = "watch"
 required-features = ["telnet"]
 
+[[example]]
+name = "start"
+required-features = ["telnet"]
+
 [lints]
 workspace = true

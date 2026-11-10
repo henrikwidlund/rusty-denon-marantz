@@ -778,8 +778,8 @@ async fn video_methods_send_their_commands_and_events_fill_the_state() {
 async fn triggers_are_sent_and_read() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
-    avr.set_trigger(Trigger::Two, true).await.unwrap();
-    avr.set_trigger(Trigger::One, false).await.unwrap();
+    avr.device().set_trigger(Trigger::Two, true).await.unwrap();
+    avr.device().set_trigger(Trigger::One, false).await.unwrap();
     wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
     assert_eq!(commands_sent(&telnet), ["TR2 ON", "TR1 OFF"]);
     telnet.send(b"TR2 ON\rTR3 OFF\r");
@@ -1863,21 +1863,21 @@ async fn now_playing_is_requested_for_the_source_that_plays() {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("CD")
     })
     .await;
-    avr.request_now_playing().await.unwrap();
+    avr.telnet_request_now_playing().await.unwrap();
     assert_eq!(asked("NSE\r"), 0);
     telnet.send(b"SINET\r");
     wait_until("the source", || {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("NET")
     })
     .await;
-    avr.request_now_playing().await.unwrap();
+    avr.telnet_request_now_playing().await.unwrap();
     wait_until("the request", || telnet.received().contains("NSE\r")).await;
     telnet.send(b"SITUNER\r");
     wait_until("the source", || {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("TUNER")
     })
     .await;
-    avr.request_now_playing().await.unwrap();
+    avr.telnet_request_now_playing().await.unwrap();
     wait_until("the tuner request", || {
         telnet.received().contains("TFANNAME?\r")
     })

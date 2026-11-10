@@ -7,7 +7,7 @@ use std::time::Duration;
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
     BluetoothOutputMode, DeviceSettingValue, DigitalCodec, DimmerMode, EcoMode, Illumination,
-    PanelLock, Zone,
+    PanelLock, Trigger, Zone,
 };
 use tokio::time::Instant;
 
@@ -194,6 +194,19 @@ impl<'a> DeviceControl<'a> {
     /// is not from 1 to 3. See also [`DeviceControl`].
     pub async fn store_favorite(&self, number: u8) -> Result<(), Error> {
         self.send(DeviceSettingValue::StoreFavorite(number)).await
+    }
+
+    /// Turns a trigger output on (`true`) or off (`false`). The outputs
+    /// switch other equipment. A receiver has up to three, and some models
+    /// have fewer.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn set_trigger(&self, trigger: Trigger, on: bool) -> Result<(), Error> {
+        self.avr
+            .send(Zone::Main, Command::SetTrigger(trigger, on))
+            .await
     }
 
     /// Opens or closes the channel level menu on the screen.

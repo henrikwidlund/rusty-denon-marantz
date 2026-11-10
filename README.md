@@ -133,7 +133,7 @@ have not run on a receiver:
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.
 - What plays (`refresh_now_playing`, `update_now_playing`,
-  `request_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
+  `telnet_request_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
   from other receivers and with fake receivers. The `NSA` text is not used.
 - The signal pages of the web interface with an HDR signal or an FRL rate: the
   text of these values is only seen as no signal. The values of `ALLM` and
@@ -181,11 +181,13 @@ receiver.
 cargo run -p denon-marantz --example discover
 cargo run -p denon-marantz --example status -- 192.168.1.20
 cargo run -p denon-marantz --example watch -- 192.168.1.20
+cargo run -p denon-marantz --example start -- 192.168.1.20
 cargo run -p denon-marantz --example remote -- 192.168.1.20 volume -35
 ```
 
 `status` prints the serial number of the receiver. Remove it before you share
-the output. `remote` runs one command, the header of the file lists them.
+the output. `start` shows how long `Avr::start` takes and what it read. `remote`
+runs one command, the header of the file lists them.
 
 ## Logging
 

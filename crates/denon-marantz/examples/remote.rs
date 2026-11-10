@@ -484,13 +484,13 @@ async fn sound_extra_command(
             println!("{:#?}", avr.snapshot().device().now_playing);
             println!("picture: {:?}", avr.artwork_url());
         }
-        "request-now-playing" => avr.request_now_playing().await?,
+        "request-now-playing" => avr.telnet_request_now_playing().await?,
         "refresh-now-playing" => avr.refresh_now_playing().await?,
         "signal" | "refresh-signal" => {
             avr.refresh_signal().await?;
             // The values from telnet arrive as events, so wait for them.
             sleep(Duration::from_secs(2)).await;
-            println!("{:#?}", avr.snapshot().device().signal);
+            println!("{:?}", avr.snapshot().device().signal);
         }
         "system-settings" => {
             println!("page: {:?}", avr.update_system_settings().await?);

@@ -3,8 +3,6 @@
 use std::time::Duration;
 
 use bytes::Bytes;
-#[cfg(feature = "telnet")]
-use denon_marantz_proto::Trigger;
 use denon_marantz_proto::appcommand::{
     self, Cmd, Definition, Endpoint, Field, Response, write_body,
 };
@@ -234,7 +232,7 @@ impl Avr {
     }
 
     /// Reads all values again, in the way that fits. If the telnet connection
-    /// is open, it asks on telnet, as [`Avr::telnet_refresh`] does, and reads
+    /// is open, it asks on telnet, as `Avr::telnet_refresh` does, and reads
     /// over HTTP only what telnet does not report: the names of the zones. If
     /// telnet is not open, it does what [`Avr::update`] does.
     ///
@@ -247,7 +245,7 @@ impl Avr {
     /// # Errors
     ///
     /// The errors of [`Avr::update`] or, if telnet is open, of
-    /// [`Avr::telnet_refresh`] and of the read of the zone names.
+    /// `Avr::telnet_refresh` and of the read of the zone names.
     pub async fn refresh(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
@@ -486,7 +484,7 @@ impl Avr {
 
     /// Asks for what plays. Use this one: it picks the way for you. If the
     /// telnet connection is open it asks on telnet, see
-    /// [`Avr::request_now_playing`]. If not, it reads the status page, see
+    /// `Avr::telnet_request_now_playing`. If not, it reads the status page, see
     /// [`Avr::update_now_playing`].
     ///
     /// Either way the values reach
@@ -502,7 +500,7 @@ impl Avr {
     pub async fn refresh_now_playing(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
-            return self.request_now_playing().await;
+            return self.telnet_request_now_playing().await;
         }
         self.update_now_playing().await.map(|_| ())
     }
@@ -680,7 +678,7 @@ impl Avr {
     ///
     /// The same as [`Avr::send`].
     #[cfg(feature = "telnet")]
-    pub async fn request_now_playing(&self) -> Result<(), Error> {
+    pub async fn telnet_request_now_playing(&self) -> Result<(), Error> {
         match self.playing_kind() {
             Some(PlayingKind::NetAudio) => self.send(Zone::Main, Command::Raw("NSE")).await,
             Some(PlayingKind::HdRadio) => self.send(Zone::Main, Command::Raw("HD?")).await,
@@ -692,19 +690,6 @@ impl Avr {
             }
             _ => Ok(()),
         }
-    }
-
-    /// Turns a trigger output on (`true`) or off (`false`). The outputs
-    /// switch other equipment. A receiver has up to three, and some models
-    /// have fewer.
-    ///
-    /// # Errors
-    ///
-    /// See [`Avr::send`].
-    #[cfg(feature = "telnet")]
-    pub async fn set_trigger(&self, trigger: Trigger, on: bool) -> Result<(), Error> {
-        self.send(Zone::Main, Command::SetTrigger(trigger, on))
-            .await
     }
 
     /// Controls one zone on telnet with typed methods.
