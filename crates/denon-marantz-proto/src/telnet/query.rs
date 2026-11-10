@@ -93,6 +93,8 @@ impl QueryGroup {
     /// 7. [`Zones`](Self::Zones): the volume settings and levels of the zones.
     /// 8. [`Picture`](Self::Picture): the picture mode and the picture
     ///    adjustments. Only older receivers answer these.
+    /// 9. [`Speakers`](Self::Speakers): the speaker configuration, the
+    ///    crossovers and the graphic EQ. Only Denon receivers answer these.
     pub const DEFAULT_ORDER: &'static [Self] = &[
         Self::Core,
         Self::Names,

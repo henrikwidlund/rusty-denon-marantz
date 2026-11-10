@@ -66,6 +66,22 @@ opens telnet. The connection then fetches the groups in
 are fetched with `telnet_refresh_group`, or all of them by setting
 `TelnetConfig::query_groups` to `QueryGroup::DEFAULT_ORDER`.
 
+The query groups, in the order of `QueryGroup::DEFAULT_ORDER`. Ask for one group
+again with `telnet_refresh_group`. The counts are the queries for a Denon and for
+a Marantz receiver.
+
+| Group | Default | Values | Denon | Marantz |
+|---|---|---|---|---|
+| `Core` | yes | Power, source, volume and mute of the zones, sound mode, quick select | 9 | 9 |
+| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots | 6 | 5 |
+| `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 22 |
+| `Signal` | yes | Video and audio signal | 14 | 14 |
+| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 19 | 19 |
+| `Sound` | no | Sound settings and levels | 36 | 36 |
+| `Zones` | no | Volume settings and levels of the zones | 5 | 5 |
+| `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
+| `Speakers` | no | Speaker configuration, crossovers and graphic EQ, Denon only | 3 | 0 |
+
 The web interface (port 11080) is read on request, because it does not
 send changes:
 
