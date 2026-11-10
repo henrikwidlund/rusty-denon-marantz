@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["denon", "marantz", "avr", "telnet", "protocol"]
+categories = ["network-programming", "parser-implementations"]
+# The test data are captured pages of receivers and are large.
+exclude = ["/tests", "/benches"]
 
 [dependencies]
 quick-xml.workspace = true

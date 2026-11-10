@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["denon", "marantz", "avr", "ssdp", "mdns"]
+categories = ["network-programming", "parser-implementations"]
 
 [dependencies]
 http.workspace = true

@@ -196,10 +196,10 @@ message. The `sensitive-logs` feature adds full message text.
 ## Development
 
 ```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets --all-features
-cargo test --workspace --all-features
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+cargo fmt --all --check
+RUSTFLAGS="-D warnings" cargo clippy --locked --workspace --all-targets --all-features
+cargo test --locked --workspace --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
 cargo deny check
 ```
 

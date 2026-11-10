@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme = "../../README.md"
+keywords = ["denon", "marantz", "avr", "home-automation"]
+categories = ["network-programming", "api-bindings"]
+exclude = ["/tests"]
 
 [features]
 default = ["telnet", "http", "discovery"]
