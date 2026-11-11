@@ -7,7 +7,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use denon_marantz_proto::Zone;
 use denon_marantz_proto::appcommand::{self, Definition, Endpoint};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Instant, sleep_until, timeout};
 
 use super::{Info, UpdateMethod, read_appcommand, read_status_pages, request_body};
@@ -24,17 +24,20 @@ use crate::http::HttpClient;
 /// while commands keep coming. The read has only the values that the command
 /// changed: for example the volume and mute for a volume command.
 ///
-/// The receiver shows a new source or sound mode late in its answers. So these
-/// are read once more `second_read` after the first read.
+/// The receiver shows a new power state, source or sound mode late in its
+/// answers, up to a few seconds. So these are read again every `retry_every`,
+/// until a read shows a change, but not more than `retries` times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FollowUpRead {
     /// Time without a command before the read.
     pub quiet: Duration,
     /// Longest time between the first command and the read.
     pub longest_wait: Duration,
-    /// Time after a read of the source or the sound mode until it is read
-    /// again.
-    pub second_read: Duration,
+    /// Time between the reads of the power state, the source and the sound
+    /// mode, until one shows a change.
+    pub retry_every: Duration,
+    /// The most reads that follow the first read of these values.
+    pub retries: u8,
 }
 
 impl Default for FollowUpRead {
@@ -42,16 +45,17 @@ impl Default for FollowUpRead {
         Self {
             quiet: Duration::from_millis(500),
             longest_wait: Duration::from_secs(2),
-            second_read: Duration::from_millis(1500),
+            retry_every: Duration::from_millis(1500),
+            retries: 3,
         }
     }
 }
 
 impl FollowUpRead {
     pub(super) const fn check(&self) -> Result<(), Error> {
-        if self.quiet.is_zero() || self.longest_wait.is_zero() || self.second_read.is_zero() {
+        if self.quiet.is_zero() || self.longest_wait.is_zero() || self.retry_every.is_zero() {
             return Err(Error::InvalidConfig(
-                "quiet, longest_wait and second_read must be above 0",
+                "quiet, longest_wait and retry_every must be above 0",
             ));
         }
         Ok(())
@@ -149,25 +153,33 @@ impl FollowUp {
     }
 }
 
+/// The values that a later read still looks for.
+struct Retry {
+    at: Instant,
+    wanted: u8,
+    left: u8,
+}
+
 async fn run(
     config: FollowUpRead,
     reader: Reader,
     requests: Vec<Request>,
     mut queue: mpsc::UnboundedReceiver<u8>,
 ) {
-    // When the source and the sound mode are read once more, and what was
-    // asked since.
-    let mut again: Option<Instant> = None;
-    let mut again_wanted = 0_u8;
+    let mut retry: Option<Retry> = None;
     loop {
-        let first = if let Some(at) = again {
+        let first = if let Some(next) = retry.as_mut() {
             tokio::select! {
                 bits = queue.recv() => bits,
-                () = sleep_until(at) => {
-                    again = None;
-                    let wanted = std::mem::take(&mut again_wanted);
-                    tracing::debug!(wanted, "second read over HTTP");
-                    read_logged(&reader, &requests, wanted).await;
+                () = sleep_until(next.at) => {
+                    let (wanted, left) = (next.wanted, next.left - 1);
+                    tracing::debug!(wanted, "read again over HTTP");
+                    let unseen = read_until_seen(&reader, &requests, wanted).await;
+                    retry = (unseen != 0 && left > 0).then(|| Retry {
+                        at: Instant::now() + config.retry_every,
+                        wanted: unseen,
+                        left,
+                    });
                     continue;
                 }
             }
@@ -192,19 +204,34 @@ async fn run(
             }
         }
         tracing::debug!(wanted, "read after commands over HTTP");
-        read_logged(&reader, &requests, wanted).await;
-        let slow = wanted & Reads::SLOW;
-        if slow != 0 {
-            again_wanted |= slow;
-            again = Some(Instant::now() + config.second_read);
-        }
+        let unseen = read_until_seen(&reader, &requests, wanted).await & Reads::SLOW;
+        // Values that are still looked for stay in the list.
+        let pending = retry.as_ref().map_or(0, |next| next.wanted) | unseen;
+        retry = (pending != 0 && config.retries > 0).then(|| Retry {
+            at: Instant::now() + config.retry_every,
+            wanted: pending,
+            left: config.retries,
+        });
     }
 }
 
-async fn read_logged(reader: &Reader, requests: &[Request], wanted: u8) {
+/// Reads, and returns the part of `wanted` that the read did not change. A
+/// read of values that are not late counts as seen.
+async fn read_until_seen(reader: &Reader, requests: &[Request], wanted: u8) -> u8 {
+    let mut changes = reader.channels.subscribe_changes();
     if let Err(error) = read(reader, requests, wanted).await {
         tracing::debug!(%error, "the read after a command failed");
+        return wanted;
     }
+    let mut seen = 0;
+    loop {
+        match changes.try_recv() {
+            Ok(change) => seen |= Reads::of_setting(change.setting),
+            Err(broadcast::error::TryRecvError::Lagged(_)) => seen = u8::MAX,
+            Err(_) => break,
+        }
+    }
+    wanted & !seen
 }
 
 async fn read(reader: &Reader, requests: &[Request], wanted: u8) -> Result<(), Error> {

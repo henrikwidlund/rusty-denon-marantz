@@ -195,6 +195,48 @@ pub(crate) const UPDATE_ANSWER: &[u8] = b"<rx>\
     <cmd><friendlyname>Denon AVR</friendlyname></cmd>\
     </rx>";
 
+/// The names of the queries of the update request, in the order of the items of
+/// [`UPDATE_ANSWER`].
+const UPDATE_NAMES: [&str; 12] = [
+    "GetAllZonePowerStatus",
+    "GetAutoStandby",
+    "GetDimmer",
+    "GetECO",
+    "GetAllZoneSource",
+    "GetAllZoneVolume",
+    "GetAllZoneMuteStatus",
+    "GetSurroundModeStatus",
+    "GetRenameSource",
+    "GetDeletedSource",
+    "GetZoneName",
+    "GetFriendlyName",
+];
+
+/// The answer to an `AppCommand` request that asks for some of the queries of
+/// the update: the items of [`UPDATE_ANSWER`] for the queries in the request.
+/// A request that asks for something else gets the whole answer.
+pub(crate) fn update_answer_for(request: &[u8]) -> Vec<u8> {
+    let request = String::from_utf8_lossy(request);
+    let mut asked: Vec<(usize, usize)> = UPDATE_NAMES
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| request.find(&format!(">{name}<")).map(|at| (at, index)))
+        .collect();
+    asked.sort_unstable();
+    if asked.is_empty() {
+        return UPDATE_ANSWER.to_vec();
+    }
+    let answer = std::str::from_utf8(UPDATE_ANSWER).unwrap();
+    let body = &answer["<rx>".len()..answer.len() - "</rx>".len()];
+    let items: Vec<&str> = body.split_inclusive("</cmd>").collect();
+    let mut out = String::from("<rx>");
+    for (_, index) in asked {
+        out.push_str(items[index].trim());
+    }
+    out.push_str("</rx>");
+    out.into_bytes()
+}
+
 /// The answer to the update request of a 2016 receiver: the tone control item
 /// comes after the others.
 pub(crate) fn update_answer_with_tone() -> Vec<u8> {
@@ -301,7 +343,7 @@ async fn avr_x_receiver_with(
             {
                 Reply::Body(update_answer_with_tone())
             }
-            ("POST", "/goform/AppCommand.xml") => Reply::Body(UPDATE_ANSWER.to_vec()),
+            ("POST", "/goform/AppCommand.xml") => Reply::Body(update_answer_for(&seen.body)),
             _ => Reply::Status(404),
         },
     )

@@ -43,6 +43,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use denon_marantz::proto::MultiEq;
+use denon_marantz::proto::Power;
 use denon_marantz::proto::source::display_to_select_code;
 use denon_marantz::{
     Avr, Command, FollowUpRead, QueryGroup, StartOptions, State, TelnetStart, ToneLevel, Volume,
@@ -85,7 +86,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .connect()
             .await?,
     );
-    let telnet = matches!(phase.as_str(), "queries" | "effects");
+    let telnet = matches!(
+        phase.as_str(),
+        "queries" | "effects" | "power" | "main-power" | "switch" | "switch-telnet"
+    );
     let started = avr
         .start_with(StartOptions::new().signal_pages(false).telnet(telnet))
         .await?;
@@ -108,6 +112,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "queries" => queries(&host).await,
             "effects" => effects(&avr, &original, true).await,
             "http-effects" => effects(&avr, &original, false).await,
+            "power" | "http-power" => power(&avr).await,
+            "main-power" | "http-main-power" => main_power(&avr, telnet).await,
+            "switch" | "http-switch" => switch(&avr, &original, false).await,
+            "switch-telnet" => switch(&avr, &original, true).await,
             "rate" => rate(&avr, Duration::from_millis(number(0)?), number(1)?, None).await,
             "load" => {
                 let seconds = Duration::from_secs(number(0)?);
@@ -134,7 +142,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             now == Some(original.volume.db())
         );
     }
-    if phase != "queries" {
+    if phase.contains("switch") {
+        put_back_source(&avr, &original).await;
+    }
+    if !matches!(
+        phase.as_str(),
+        "queries" | "power" | "http-power" | "switch" | "switch-telnet" | "http-switch"
+    ) {
         put_back(
             &avr,
             &original,
@@ -160,8 +174,16 @@ fn original(state: &State) -> Option<Original> {
 
 /// Waits until `condition` is true for the state. Returns the time it took.
 async fn wait_for(avr: &Avr, condition: impl Fn(&State) -> bool) -> Option<Duration> {
+    wait_for_within(avr, Duration::from_secs(3), condition).await
+}
+
+async fn wait_for_within(
+    avr: &Avr,
+    limit: Duration,
+    condition: impl Fn(&State) -> bool,
+) -> Option<Duration> {
     let begin = Instant::now();
-    while begin.elapsed() < Duration::from_secs(3) {
+    while begin.elapsed() < limit {
         if condition(&avr.snapshot()) {
             return Some(begin.elapsed());
         }
@@ -199,11 +221,36 @@ async fn effect(
     check: impl Fn(&State) -> bool,
     check_back: impl Fn(&State) -> bool,
 ) {
+    effect_in(
+        avr,
+        Zone::Main,
+        Duration::from_secs(3),
+        name,
+        command,
+        back,
+        check,
+        check_back,
+    )
+    .await;
+}
+
+/// Like `effect`, for a zone, and the state can take `limit` to change.
+#[allow(clippy::too_many_arguments)] // A test tool.
+async fn effect_in(
+    avr: &Avr,
+    zone: Zone,
+    limit: Duration,
+    name: &str,
+    command: Command<'_>,
+    back: Command<'_>,
+    check: impl Fn(&State) -> bool,
+    check_back: impl Fn(&State) -> bool,
+) {
     let sent = Instant::now();
-    let answer = avr.http_send(Zone::Main, command).await;
+    let answer = avr.http_send(zone, command).await;
     let http_ms = sent.elapsed().as_secs_f64() * 1000.0;
     let seen = match &answer {
-        Ok(()) => wait_for(avr, check).await,
+        Ok(()) => wait_for_within(avr, limit, check).await,
         Err(_) => None,
     };
     println!(
@@ -217,8 +264,8 @@ async fn effect(
         ),
     );
     if answer.is_ok() {
-        let _ = avr.http_send(Zone::Main, back).await;
-        let back_seen = wait_for(avr, check_back).await;
+        let _ = avr.http_send(zone, back).await;
+        let back_seen = wait_for_within(avr, limit, check_back).await;
         println!("RESULT effect {name}: put back={}", back_seen.is_some());
     }
     sleep(Duration::from_millis(300)).await;
@@ -276,8 +323,12 @@ async fn effects(
         .map(|info| info.code.clone());
     if let (Some(other), Some(current)) = (other, current) {
         let home = original.source.clone();
-        effect(
+        // The receiver can ignore a source command about 3 s after another one,
+        // so the source is put back after 6 s at the latest.
+        effect_in(
             avr,
+            Zone::Main,
+            Duration::from_secs(6),
             &format!("source {other}"),
             Command::SelectSource(&other),
             Command::SelectSource(current),
@@ -517,4 +568,146 @@ async fn put_back_source(avr: &Avr, original: &Original) {
         original.sound_mode,
         main.source == original.source && main.sound_mode == original.sound_mode
     );
+}
+
+/// Turns zone 2 and zone 3 on or off over HTTP, and puts them back.
+async fn power(avr: &Avr) -> Result<(), Box<dyn std::error::Error>> {
+    for zone in [Zone::Zone2, Zone::Zone3] {
+        if !avr.info().zones.contains(&zone) {
+            println!("RESULT effect power {zone:?}: skipped, the receiver has no such zone");
+            continue;
+        }
+        let Some(was) = avr.snapshot().zone(zone).power else {
+            println!("RESULT effect power {zone:?}: skipped, the power is not known");
+            continue;
+        };
+        let on = was == Power::On;
+        let (forward, back) = if on {
+            (Command::PowerStandby, Command::PowerOn)
+        } else {
+            (Command::PowerOn, Command::PowerStandby)
+        };
+        let wanted = if on { Power::Standby } else { Power::On };
+        effect_in(
+            avr,
+            zone,
+            Duration::from_secs(10),
+            &format!("power {zone:?} (was {was:?})"),
+            forward,
+            back,
+            |s| s.zone(zone).power == Some(wanted),
+            |s| s.zone(zone).power == Some(was),
+        )
+        .await;
+    }
+    Ok(())
+}
+
+/// Sends two source commands, the second one `delay` after the first, while the
+/// receiver still switches. Says which source the receiver ends on.
+async fn switch(
+    avr: &Avr,
+    original: &Original,
+    telnet: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home = original
+        .source
+        .as_deref()
+        .ok_or("the source is not known")?;
+    let home = display_to_select_code(home).unwrap_or(home);
+    let other = avr
+        .snapshot()
+        .device()
+        .sources
+        .as_slice()
+        .iter()
+        .find(|info| info.in_use == Some(true) && info.code != home)
+        .map(|info| info.code.clone())
+        .ok_or("no second source in use")?;
+    let way = if telnet { "telnet" } else { "http" };
+    for delay in [100_u64, 300, 600, 1000, 1500, 3000, 5000] {
+        for command in [Command::SelectSource(&other), Command::SelectSource(home)] {
+            let sent = if telnet {
+                avr.telnet_send(Zone::Main, command).await
+            } else {
+                avr.http_send(Zone::Main, command).await
+            };
+            sent?;
+            if command == Command::SelectSource(&other) {
+                sleep(Duration::from_millis(delay)).await;
+            }
+        }
+        // Telnet reports the end. Without telnet, read it later.
+        sleep(Duration::from_secs(4)).await;
+        let _ = avr.update().await;
+        let now = avr.snapshot().zone(Zone::Main).source.clone();
+        let lost = now.as_deref() != original.source.as_deref();
+        println!(
+            "RESULT switch via={way} delay_ms={delay} first={other} second={home} final={now:?} second_command_lost={lost}"
+        );
+        if lost {
+            put_back_source(avr, original).await;
+        }
+    }
+    Ok(())
+}
+
+/// Puts the main zone, and then the whole receiver, in standby and on again,
+/// over HTTP. With telnet open, a receiver that does not wake is switched on
+/// over telnet.
+async fn main_power(avr: &Avr, telnet: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let pause = Duration::from_secs(5);
+    let on = |s: &State| s.zone(Zone::Main).power == Some(Power::On);
+    let off = |s: &State| matches!(s.zone(Zone::Main).power, Some(Power::Off | Power::Standby));
+    if !on(&avr.snapshot()) {
+        return Err("the main zone is not on, nothing to test".into());
+    }
+    for (name, standby, wake) in [
+        ("zone", Command::PowerStandby, Command::PowerOn),
+        (
+            "device",
+            Command::DevicePowerStandby,
+            Command::DevicePowerOn,
+        ),
+    ] {
+        let begin = Instant::now();
+        let sent = avr.http_send(Zone::Main, standby).await;
+        let seen = wait_for_within(avr, Duration::from_secs(15), off).await;
+        println!(
+            "RESULT main_power {name} standby: http={} seen_ms={}",
+            sent.as_ref()
+                .map_or_else(|e| format!("ERROR {e}"), |()| "OK".into()),
+            seen.map_or_else(
+                || "NO EFFECT".into(),
+                |d| format!("{:.0}", d.as_secs_f64() * 1000.0)
+            ),
+        );
+        sleep(pause).await;
+        let woken = avr.http_send(Zone::Main, wake).await;
+        let seen_on = wait_for_within(avr, Duration::from_secs(30), on).await;
+        println!(
+            "RESULT main_power {name} on: http={} seen_ms={} (total {:.0} s)",
+            woken
+                .as_ref()
+                .map_or_else(|e| format!("ERROR {e}"), |()| "OK".into()),
+            seen_on.map_or_else(
+                || "NO EFFECT".into(),
+                |d| format!("{:.0}", d.as_secs_f64() * 1000.0)
+            ),
+            begin.elapsed().as_secs_f64()
+        );
+        if seen_on.is_none() {
+            if telnet {
+                let _ = avr.telnet_send(Zone::Main, Command::DevicePowerOn).await;
+                let rescued = wait_for_within(avr, Duration::from_secs(30), on).await;
+                println!(
+                    "RESULT main_power rescue over telnet: on={}",
+                    rescued.is_some()
+                );
+            }
+            return Err("the receiver did not come on over HTTP".into());
+        }
+        sleep(pause).await;
+    }
+    Ok(())
 }

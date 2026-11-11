@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, Zone};
+use denon_marantz_proto::{Brand, Setting, Zone};
 
 use crate::error::Error;
 
@@ -74,8 +74,20 @@ impl Reads {
         1 << self as u8
     }
 
-    /// The values that the receiver shows late: the source and the sound mode.
-    pub(crate) const SLOW: u8 = Self::Source.bit() | Self::SoundMode.bit();
+    /// The values that the receiver shows late: power, the source and the
+    /// sound mode.
+    pub(crate) const SLOW: u8 = Self::Power.bit() | Self::Source.bit() | Self::SoundMode.bit();
+
+    /// The bit of the values that a change of this setting shows. 0 if the
+    /// setting is not one of the late values.
+    pub(crate) const fn of_setting(setting: Setting) -> u8 {
+        match setting {
+            Setting::Power => Self::Power.bit(),
+            Setting::Source => Self::Source.bit(),
+            Setting::SoundMode => Self::SoundMode.bit(),
+            _ => 0,
+        }
+    }
 }
 
 #[cfg(test)]

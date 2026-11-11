@@ -180,8 +180,6 @@ have not run on a receiver:
 - The signal pages of the web interface with an HDR signal or an FRL rate: the
   text of these values is only seen as no signal. The values of `ALLM` and
   `QFT` (1 is on) were only seen as off.
-- Commands over HTTP (`http_send`, and the controls without telnet): which
-  commands the receiver runs this way, and how fast they can follow each other.
 - The query `MNZST?` and the `MNZST` event of all zone stereo on other receivers.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay
@@ -202,6 +200,13 @@ have not run on a receiver:
 - Some changes made in the receiver menu or with its remote are pushed on
   telnet, some are not. Changes from the web interface and the apps are.
 - Telnet answers in standby when network control is `Always`.
+- `PWON` (the whole receiver) also switches on zone 2 and zone 3, and `ZMON` only
+  the main zone. When the receiver comes on, it sets the volume to its power-on
+  level, so the volume after a power on is not the one before.
+- The receiver can ignore a source command that comes a few seconds after
+  another source command, on telnet and over HTTP. It also shows a new power
+  state, source or sound mode in its `AppCommand` answers up to a few seconds
+  late.
 - A Dirac ART filter locks the channel levels, the dial page (HTTP status 500)
   and the crossovers.
 - The library only reads from the web interface. It never writes to it.

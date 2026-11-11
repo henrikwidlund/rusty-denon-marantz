@@ -26,7 +26,8 @@ const fn quick() -> FollowUpRead {
     FollowUpRead {
         quiet: Duration::from_millis(60),
         longest_wait: Duration::from_millis(200),
-        second_read: Duration::from_millis(100),
+        retry_every: Duration::from_millis(100),
+        retries: 1,
     }
 }
 
@@ -157,24 +158,18 @@ async fn a_key_that_is_held_down_causes_few_reads() {
 }
 
 #[tokio::test]
-async fn the_source_is_read_a_second_time_with_the_sound_mode() {
-    // The receiver shows a new source or sound mode late, so one read is not
-    // enough.
+async fn late_values_are_read_again_until_one_changes() {
+    // The receiver shows a new source, sound mode or power state late, so one
+    // read is not enough. The fake receiver always answers the same.
     let fake = receiver().await;
     let avr = connect(&fake, Some(quick())).await;
+    avr.update().await.unwrap();
     let known = fake.requests().len();
-    avr.zone(Zone::Main)
-        .unwrap()
-        .select_sound_mode("MOVIE")
-        .await
-        .unwrap();
-    avr.zone(Zone::Main)
-        .unwrap()
-        .select_source("GAME")
-        .await
-        .unwrap();
-    // The first read has both, and the second read has both again.
-    wait_until("both reads", || reads_after(&fake, known).len() >= 3).await;
+    let main = avr.zone(Zone::Main).unwrap();
+    main.select_sound_mode("MOVIE").await.unwrap();
+    main.select_source("GAME").await.unwrap();
+    // The first read has both, and the one retry has both again.
+    wait_until("the reads", || reads_after(&fake, known).len() >= 4).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let reads = reads_after(&fake, known);
     assert_eq!(reads.len(), 4, "{reads:?}");
@@ -187,6 +182,39 @@ async fn the_source_is_read_a_second_time_with_the_sound_mode() {
         .filter(|r| r.contains("GetSurroundModeStatus"))
         .count();
     assert_eq!((source, mode), (2, 2));
+}
+
+#[tokio::test]
+async fn the_retries_are_as_many_as_set() {
+    let fake = receiver().await;
+    let config = FollowUpRead {
+        retries: 3,
+        ..quick()
+    };
+    let avr = connect(&fake, Some(config)).await;
+    avr.update().await.unwrap();
+    let known = fake.requests().len();
+    avr.zone(Zone::Main).unwrap().power_on().await.unwrap();
+    wait_until("the reads", || reads_after(&fake, known).len() >= 4).await;
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(reads_after(&fake, known).len(), 4);
+}
+
+#[tokio::test]
+async fn a_read_that_shows_a_change_ends_the_retries() {
+    // The state is empty, so the first read changes it.
+    let fake = receiver().await;
+    let config = FollowUpRead {
+        retries: 3,
+        ..quick()
+    };
+    let avr = connect(&fake, Some(config)).await;
+    let known = fake.requests().len();
+    avr.zone(Zone::Main).unwrap().power_on().await.unwrap();
+    wait_until("the read", || !reads_after(&fake, known).is_empty()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let all = reads_after(&fake, known);
+    assert_eq!(all.len(), 1, "{all:?}");
 }
 
 #[tokio::test]
@@ -241,7 +269,8 @@ async fn the_follow_up_settings_are_checked() {
     let bad = FollowUpRead {
         quiet: Duration::ZERO,
         longest_wait: Duration::from_secs(1),
-        second_read: Duration::from_secs(1),
+        retry_every: Duration::from_secs(1),
+        retries: 1,
     };
     let error = builder(&fake, ReceiverType::AvrX)
         .follow_up_read(Some(bad))
