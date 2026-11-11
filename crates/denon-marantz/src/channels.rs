@@ -31,13 +31,19 @@ impl Channels {
     pub(crate) fn modify(&self, apply: impl FnOnce(&mut State, &mut dyn FnMut(Option<Change>))) {
         self.state.send_if_modified(|state| {
             let mut modified = false;
+            let mut publish = |change: Change| {
+                modified = true;
+                // There is an error if nobody listens. That is fine.
+                let _ = self.changes.send(change);
+            };
             apply(state, &mut |change| {
                 if let Some(change) = change {
-                    modified = true;
-                    // There is an error if nobody listens. That is fine.
-                    let _ = self.changes.send(change);
+                    publish(change);
                 }
             });
+            for change in state.take_follow_ups() {
+                publish(change);
+            }
             modified
         });
     }
@@ -52,5 +58,36 @@ impl Channels {
 
     pub(crate) fn subscribe_changes(&self) -> broadcast::Receiver<Change> {
         self.changes.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use denon_marantz_proto::telnet::Message;
+    use denon_marantz_proto::{Setting, Zone};
+
+    use super::*;
+
+    fn apply(channels: &Channels, line: &str) {
+        channels.modify(|state, notify| {
+            notify(state.apply_message(&Message::parse(line).unwrap()));
+        });
+    }
+
+    #[test]
+    fn a_follow_up_change_is_published_after_the_change() {
+        let channels = Channels::new(State::new(false));
+        apply(&channels, "SIMPLAY");
+        apply(&channels, "NSE1Song");
+        let mut changes = channels.subscribe_changes();
+        apply(&channels, "SIGAME");
+        let first = changes.try_recv().unwrap();
+        assert_eq!(
+            (first.zone, first.setting),
+            (Some(Zone::Main), Setting::Source)
+        );
+        let second = changes.try_recv().unwrap();
+        assert_eq!((second.zone, second.setting), (None, Setting::NowPlaying));
+        assert!(changes.try_recv().is_err());
     }
 }

@@ -202,7 +202,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Query; 125] = [
+static QUERIES: [Query; 126] = [
     both(Core, "SI?"),                  // Select INPUT source
     both(Core, "MV?"),                  // MASTER VOLUME
     both(Core, "MU?"),                  // Mute
@@ -245,6 +245,7 @@ static QUERIES: [Query; 125] = [
     marantz(Device, "Z2SMART ?"),       // Z2 SMART Select
     marantz(Device, "Z3SMART ?"),       // Z3 SMART Select
     both(Device, "VSMONI ?"),           // HDMI Output
+    both(Sound, "MNZST?"),              // All zone stereo
     both(Sound, "PSDELAY ?"),           // Audio Delay
     both(Signal, "SSINFSIGRES ?"),      // Video Signal
     both(Signal, "SSINFAISFSV ?"),      // Audio Sampling Rate
@@ -368,8 +369,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 117);
-        assert_eq!(marantz.len(), 116);
+        assert_eq!(denon.len(), 118);
+        assert_eq!(marantz.len(), 117);
     }
 
     #[test]

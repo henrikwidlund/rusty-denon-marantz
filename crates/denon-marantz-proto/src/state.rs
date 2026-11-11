@@ -109,6 +109,8 @@ pub enum Setting {
     Dimmer,
     /// Eco mode of the receiver.
     EcoMode,
+    /// All zone stereo.
+    AllZoneStereo,
     /// Setup menu of the receiver is open.
     SettingsMenu,
     /// Tone control of the receiver is on.
@@ -264,6 +266,8 @@ pub struct DeviceState {
     pub dimmer: Option<DimmerMode>,
     /// Eco mode.
     pub eco_mode: Option<EcoMode>,
+    /// All zone stereo is on. The receiver reports it with `MNZST` events.
+    pub all_zone_stereo: Option<bool>,
     /// The setup menu is open.
     pub settings_menu: Option<bool>,
     /// Tone control is on. The bass and treble levels only work then.
@@ -451,6 +455,8 @@ pub struct State {
     zones: [ZoneState; 3],
     /// Channels of the `CV` list that is being received.
     pending_channels: Vec<Channel>,
+    /// Changes that events caused besides the ones that they returned.
+    follow_ups: Vec<Change>,
 }
 
 impl State {
@@ -465,7 +471,16 @@ impl State {
             device: DeviceState::default(),
             zones: Default::default(),
             pending_channels: Vec::new(),
+            follow_ups: Vec::new(),
         }
+    }
+
+    /// Takes the changes that applied events caused besides the ones that they
+    /// returned. A source change of the main zone clears
+    /// [`DeviceState::now_playing`], which is a change of its own. Call it
+    /// after applying events. The client does it.
+    pub fn take_follow_ups(&mut self) -> Vec<Change> {
+        std::mem::take(&mut self.follow_ups)
     }
 
     /// Values of a zone.
@@ -505,7 +520,7 @@ impl State {
             }
             Event::Si => {
                 let source = telnet_to_display_source(parameter);
-                self.zone_change(zone?, Setting::Source, |z| set_text(&mut z.source, source))
+                self.source_change(zone?, |z| set_text(&mut z.source, source))
             }
             Event::Ms if zone == Some(Zone::Main) => {
                 // Quick and smart select are not sound modes.
@@ -555,16 +570,7 @@ impl State {
                 let value = EcoMode::from_telnet(parameter)?;
                 self.device_change(Setting::EcoMode, |d| set(&mut d.eco_mode, Some(value)))
             }
-            Event::Mn => {
-                let value = match parameter.strip_prefix("MEN")?.get(1..)? {
-                    "ON" => true,
-                    "OFF" => false,
-                    _ => return None,
-                };
-                self.device_change(Setting::SettingsMenu, |d| {
-                    set(&mut d.settings_menu, Some(value))
-                })
-            }
+            Event::Mn => self.apply_menu(parameter),
             Event::Ns => {
                 let name = parameter.strip_prefix("FRN ")?.trim();
                 self.apply_friendly_name(name)
@@ -773,9 +779,9 @@ impl State {
                 let power = value.and_then(power_from_answer);
                 self.zone_change(zone, Setting::Power, |z| set(&mut z.power, power))
             }
-            Field::InputFunc => self.zone_change(zone, Setting::Source, |z| {
-                set_optional_text(&mut z.source, value)
-            }),
+            Field::InputFunc => {
+                self.source_change(zone, |z| set_optional_text(&mut z.source, value))
+            }
             Field::Volume => {
                 let volume = value.and_then(volume_from_answer);
                 self.zone_change(zone, Setting::Volume, |z| set(&mut z.volume, volume))
@@ -1414,6 +1420,49 @@ impl State {
             zone: Some(zone),
             setting,
         })
+    }
+
+    /// Applies an `MN` event: the setup menu is open (`MEN ON`) or all zone
+    /// stereo is on (`ZST ON`).
+    fn apply_menu(&mut self, parameter: &str) -> Option<Change> {
+        let (setting, text) = if let Some(text) = parameter.strip_prefix("MEN") {
+            (Setting::SettingsMenu, text)
+        } else {
+            (Setting::AllZoneStereo, parameter.strip_prefix("ZST")?)
+        };
+        let value = match text.get(1..)? {
+            "ON" => true,
+            "OFF" => false,
+            _ => return None,
+        };
+        self.device_change(setting, |d| {
+            if setting == Setting::SettingsMenu {
+                set(&mut d.settings_menu, Some(value))
+            } else {
+                set(&mut d.all_zone_stereo, Some(value))
+            }
+        })
+    }
+
+    /// Like `zone_change` for the source. What plays belongs to the source of
+    /// the main zone, so a new source there clears it.
+    fn source_change(
+        &mut self,
+        zone: Zone,
+        update: impl FnOnce(&mut ZoneState) -> bool,
+    ) -> Option<Change> {
+        let change = self.zone_change(zone, Setting::Source, update);
+        if change.is_some()
+            && zone == Zone::Main
+            && self.device.now_playing != NowPlaying::default()
+        {
+            self.device.now_playing = NowPlaying::default();
+            self.follow_ups.push(Change {
+                zone: None,
+                setting: Setting::NowPlaying,
+            });
+        }
+        change
     }
 
     fn signal_change(&mut self, update: impl FnOnce(&mut SignalState) -> bool) -> Option<Change> {
@@ -3014,6 +3063,66 @@ mod tests {
             change(None, Setting::SourceLevels)
         );
         assert_eq!(state.apply_source_levels(levels), None);
+    }
+
+    #[test]
+    fn all_zone_stereo_follows_zst_events() {
+        let mut state = State::new(false);
+        assert_eq!(state.device().all_zone_stereo, None);
+        let changed = || change(None, Setting::AllZoneStereo);
+        assert_eq!(apply(&mut state, "MNZST ON"), changed());
+        assert_eq!(state.device().all_zone_stereo, Some(true));
+        assert_eq!(apply(&mut state, "MNZST ON"), None);
+        assert_eq!(apply(&mut state, "MNZST OFF"), changed());
+        assert_eq!(state.device().all_zone_stereo, Some(false));
+        // Text that is not on or off changes nothing.
+        assert_eq!(apply(&mut state, "MNZST ?"), None);
+        assert_eq!(apply(&mut state, "MNZSTON"), None);
+        assert_eq!(state.device().all_zone_stereo, Some(false));
+        // The setup menu is the other `MN` event.
+        assert_eq!(state.device().settings_menu, None);
+        assert_eq!(
+            apply(&mut state, "MNMEN ON"),
+            change(None, Setting::SettingsMenu)
+        );
+    }
+
+    #[test]
+    fn a_new_source_of_the_main_zone_clears_what_plays() {
+        let mut state = State::new(false);
+        apply(&mut state, "SIMPLAY");
+        apply(&mut state, "NSE1Song");
+        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
+        // The same source changes nothing.
+        assert_eq!(apply(&mut state, "SIMPLAY"), None);
+        assert_eq!(state.take_follow_ups(), []);
+        // Another zone has its own source.
+        apply(&mut state, "Z2CD");
+        assert_eq!(state.take_follow_ups(), []);
+        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
+
+        assert_eq!(
+            apply(&mut state, "SIGAME"),
+            change(Some(Zone::Main), Setting::Source)
+        );
+        assert_eq!(
+            state.take_follow_ups(),
+            [Change {
+                zone: None,
+                setting: Setting::NowPlaying
+            }]
+        );
+        assert_eq!(state.take_follow_ups(), []);
+        assert_eq!(state.device().now_playing, NowPlaying::default());
+        // Nothing plays, so a new source has nothing to clear.
+        apply(&mut state, "SIMPLAY");
+        assert_eq!(state.take_follow_ups(), []);
+
+        // The same for an `AppCommand` answer.
+        apply(&mut state, "NSE1Song");
+        state.apply_field(Zone::Main, Field::InputFunc, Some("CD"));
+        assert_eq!(state.take_follow_ups().len(), 1);
+        assert_eq!(state.device().now_playing, NowPlaying::default());
     }
 
     #[test]
