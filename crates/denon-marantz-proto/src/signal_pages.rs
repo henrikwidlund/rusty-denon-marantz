@@ -58,9 +58,11 @@ impl VideoSignalPage {
         }
         let text = |name: &str| {
             let side = node.child(name).map(|child| child.node());
-            // A value with neither side has no signal.
+            // A value with no content has no signal. One with other content
+            // is not known, and keeps the old value.
             let empty = side.is_some_and(|side| {
-                side.child("Input").is_none() && side.child("Output").is_none()
+                side.children().next().is_none()
+                    && side.text().is_none_or(|text| text.trim().is_empty())
             });
             let read = |side_name: &str| -> Reading<String> {
                 if empty {
@@ -329,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_with_neither_side_has_no_signal() {
+    fn a_value_with_no_content_has_no_signal() {
         let page = VideoSignalPage::parse(b"<Video><Resolution/><HDR></HDR></Video>").unwrap();
         let empty = Sides {
             input: Empty,
@@ -338,6 +340,14 @@ mod tests {
         assert_eq!(page.resolution, empty);
         assert_eq!(page.hdr, empty);
         assert_eq!(page.frl_rate, Sides::default());
+        // Content that is not known keeps the old value.
+        let page = VideoSignalPage::parse(
+            b"<Video><Resolution>4K50</Resolution><HDR><Level>1</Level></HDR><FRLRate/></Video>",
+        )
+        .unwrap();
+        assert_eq!(page.resolution, Sides::default());
+        assert_eq!(page.hdr, Sides::default());
+        assert_eq!(page.frl_rate, empty);
     }
 
     #[test]

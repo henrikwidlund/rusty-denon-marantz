@@ -281,11 +281,13 @@ async fn a_second_start_is_refused_while_the_first_runs() {
             .unwrap(),
     );
     hang.store(true, Ordering::SeqCst);
+    let known = http.requests().len();
     let first = tokio::spawn({
         let avr = avr.clone();
         async move { avr.start().await }
     });
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // The first start waits for the zones, so it holds the flag.
+    wait_until("the zones request", || http.requests().len() > known).await;
     let before = http.requests().len();
     let second = avr.start().await.unwrap_err();
     assert!(matches!(second, Error::StartRunning), "{second}");
