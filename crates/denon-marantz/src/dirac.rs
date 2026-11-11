@@ -1,4 +1,4 @@
-//! Typed control of Dirac Live on telnet.
+//! Typed control of Dirac Live.
 
 use denon_marantz_proto::DiracFilter;
 use denon_marantz_proto::Zone;
@@ -9,9 +9,9 @@ use crate::error::Error;
 
 /// Controls Dirac Live of a receiver. Get it from [`Avr::dirac`].
 ///
-/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
+/// Each method returns when the command is sent, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::telnet_send`].
+/// the errors of [`Avr::send`].
 #[derive(Debug, Clone, Copy)]
 pub struct Dirac<'a> {
     avr: &'a Avr,
@@ -56,7 +56,7 @@ impl<'a> Dirac<'a> {
     /// See [`Dirac`].
     pub async fn set_filter(&self, filter: DiracFilter) -> Result<(), Error> {
         self.avr
-            .telnet_send(Zone::Main, Command::SetDiracFilter(filter))
+            .send(Zone::Main, Command::SetDiracFilter(filter))
             .await
     }
 }

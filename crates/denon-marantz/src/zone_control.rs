@@ -1,4 +1,4 @@
-//! Typed control of one zone on telnet.
+//! Typed control of one zone.
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
@@ -50,10 +50,10 @@ macro_rules! steps {
 /// that the zone does not have sends nothing and
 /// returns [`Error::InvalidCommand`].
 ///
-/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
+/// Each method returns when the command is sent, as [`Avr::send`] does.
 /// That does not mean that the receiver did it: the new value comes as an
 /// event and changes the state. Each method returns the errors of
-/// [`Avr::telnet_send`].
+/// [`Avr::send`].
 #[derive(Debug, Clone, Copy)]
 pub struct ZoneControl<'a> {
     avr: &'a Avr,
@@ -296,6 +296,6 @@ impl<'a> ZoneControl<'a> {
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {
-        self.avr.telnet_send(self.zone, command).await
+        self.avr.send(self.zone, command).await
     }
 }

@@ -322,7 +322,7 @@ impl Error {
     }
 
     /// The error for a command that the library refused to build.
-    #[cfg(feature = "telnet")]
+    #[cfg(feature = "http")]
     pub(crate) fn from_command(source: denon_marantz_proto::Error) -> Self {
         use denon_marantz_proto::Error as Proto;
         match source {
@@ -398,7 +398,7 @@ mod tests {
         assert!(!Error::Stopped.is_invalid_input());
     }
 
-    #[cfg(feature = "telnet")]
+    #[cfg(feature = "http")]
     #[test]
     fn a_command_error_has_the_variant_of_its_reason() {
         use denon_marantz_proto::Error as Proto;

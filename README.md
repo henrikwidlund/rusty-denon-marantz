@@ -125,6 +125,25 @@ telnet, and `refresh*` picks the way for you. The setters are in the controls
 (`avr.zone(..)`, `sound()`, `device()` and others). The values that the setters
 take are in `denon_marantz::proto`.
 
+## Without telnet
+
+The setters work over HTTP too. `avr.send(..)` and the controls use telnet while
+it is open, and HTTP otherwise, with `GET /goform/formiPhoneAppDirect.xml`.
+A program that does not want telnet never opens it: use
+`StartOptions::new().telnet(false)`. Over HTTP:
+
+- The receiver does not answer a command, as on telnet, and it sends no events.
+  Queries (`PW?`) need telnet.
+- After a command, the values that it changed are read, for example the volume
+  and mute after a volume command. The read waits until no command came for
+  500 ms, and not longer than 2 s, so a held key causes few reads. The
+  receiver shows a new sound mode late, so that one is read again after 1.5 s.
+  Change this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
+- Settings that `update()` does not read, such as tone or Audyssey, change in
+  the state when you read them.
+- The list of sound modes of the receiver needs telnet. Without it, select a
+  mode by its name, for example `select_sound_mode("MOVIE")`.
+
 Each call says what happened to each page. A page that the receiver does not
 have or refuses is not an error. A receiver that cannot be reached is an error,
 see `Error::is_unreachable`.
@@ -134,7 +153,7 @@ see `Error::is_unreachable`.
 | Feature | Default | Adds |
 |---|---|---|
 | `telnet` | yes | Live events and commands on port 23. Needs `http`. |
-| `http` | yes | AppCommand XML and the web interface. |
+| `http` | yes | AppCommand XML, the web interface and commands over HTTP. |
 | `discovery` | yes | Receiver search with SSDP. Needs `http`. |
 | `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
@@ -157,6 +176,9 @@ have not run on a receiver:
 - The signal pages of the web interface with an HDR signal or an FRL rate: the
   text of these values is only seen as no signal. The values of `ALLM` and
   `QFT` (1 is on) were only seen as off.
+- Commands over HTTP (`http_send`, and the controls without telnet): which
+  commands the receiver runs this way, and how fast they can follow each other.
+- The query `MNZST?` and the `MNZST` event of all zone stereo on other receivers.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver

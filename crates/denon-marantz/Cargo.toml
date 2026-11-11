@@ -59,6 +59,10 @@ name = "watch"
 required-features = ["telnet"]
 
 [[example]]
+name = "http_check"
+required-features = ["telnet"]
+
+[[example]]
 name = "start"
 required-features = ["telnet"]
 

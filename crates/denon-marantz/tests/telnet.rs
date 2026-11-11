@@ -67,6 +67,42 @@ async fn status_is(avr: &Avr, wanted: TelnetStatus) {
 }
 
 #[tokio::test]
+async fn send_uses_telnet_while_it_is_open_and_http_otherwise() {
+    const PAGES: &[(&str, &[u8])] = &[("/goform/formiPhoneAppDirect.xml?MVUP", b"")];
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver_with_pages(AVR_X_INFO, PAGES).await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .follow_up_read(None)
+        .connect()
+        .await
+        .unwrap();
+    let http_commands = || {
+        http.requests()
+            .iter()
+            .filter(|seen| seen.path.starts_with("/goform/formiPhoneAppDirect"))
+            .count()
+    };
+    // Telnet is not open yet.
+    avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
+    assert_eq!(http_commands(), 1);
+    assert!(!telnet.received().contains("MVUP"));
+
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    avr.send(Zone::Main, Command::VolumeUp).await.unwrap();
+    wait_until("the command on telnet", || {
+        telnet.received().contains("MVUP")
+    })
+    .await;
+    assert_eq!(http_commands(), 1);
+
+    avr.telnet_disconnect().await;
+    avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+    assert_eq!(http_commands(), 2);
+}
+
+#[tokio::test]
 async fn events_change_the_state() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;

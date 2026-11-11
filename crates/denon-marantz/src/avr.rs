@@ -1,5 +1,6 @@
 //! A receiver: identification, state and updates over HTTP.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -8,8 +9,9 @@ use denon_marantz_proto::appcommand::{
     self, Cmd, Definition, Endpoint, Field, Response, write_body,
 };
 use denon_marantz_proto::status_page::{self, Page};
+use denon_marantz_proto::telnet::Command;
 #[cfg(feature = "telnet")]
-use denon_marantz_proto::telnet::{Command, QueryGroup};
+use denon_marantz_proto::telnet::QueryGroup;
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
     DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
@@ -19,38 +21,35 @@ use denon_marantz_proto::{
     TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
     Zone,
 };
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Mutex, broadcast, watch};
 
-#[cfg(feature = "telnet")]
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
+use crate::command::{self, Reads};
 use crate::details::{
     GeneralDetails, PageResults, PageStatus, SettingsAvailabilityDetails, SkipReason,
     SourceDetails, SpeakerDetails, VideoMenuDetails,
 };
-#[cfg(feature = "telnet")]
 use crate::device_control::{DeviceControl, ResetKeys};
-#[cfg(feature = "telnet")]
 use crate::dirac::Dirac;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
 use crate::pacer::Pacing;
-#[cfg(feature = "telnet")]
 use crate::sound_control::SoundControl;
 #[cfg(feature = "telnet")]
-use crate::telnet::{self, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
-#[cfg(feature = "telnet")]
+use crate::telnet::{Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 use crate::tone_control::ToneControl;
-#[cfg(feature = "telnet")]
 use crate::tuner_control::TunerControl;
-#[cfg(feature = "telnet")]
 use crate::video_control::VideoControl;
-#[cfg(feature = "telnet")]
 use crate::zone_control::ZoneControl;
 
+mod follow_up;
 mod start;
 
+use follow_up::FollowUp;
+
+pub use follow_up::FollowUpRead;
 pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart};
 
 /// Name of a receiver that has none.
@@ -169,6 +168,7 @@ pub struct AvrBuilder {
     web_interface_port: u16,
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
+    follow_up_read: Option<FollowUpRead>,
     #[cfg(feature = "telnet")]
     telnet: TelnetConfig,
 }
@@ -181,7 +181,7 @@ pub struct AvrBuilder {
 /// `update_`, `telnet_` and `refresh`.
 #[derive(Debug)]
 pub struct Avr {
-    http: HttpClient,
+    http: Arc<HttpClient>,
     /// The web interface on its own port.
     web_interface: HttpClient,
     info: Info,
@@ -210,8 +210,11 @@ pub struct Avr {
     #[cfg(feature = "telnet")]
     telnet: Telnet,
     /// The reset key that was given out last.
-    #[cfg(feature = "telnet")]
     reset_keys: ResetKeys,
+    /// Commands over HTTP go one after the other.
+    command_gate: Mutex<()>,
+    /// Reads the values that a command over HTTP changed.
+    follow_up: Option<FollowUp>,
 }
 
 impl Avr {
@@ -225,6 +228,7 @@ impl Avr {
             web_interface_port: WEB_INTERFACE_PORT,
             probes: None,
             description_port: None,
+            follow_up_read: Some(FollowUpRead::default()),
             #[cfg(feature = "telnet")]
             telnet: TelnetConfig::default(),
         }
@@ -813,7 +817,7 @@ impl Avr {
     #[cfg(feature = "telnet")]
     pub async fn telnet_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet
-            .send(telnet::encode(self.info.brand, zone, &command)?)
+            .send(command::encode(self.info.brand, zone, &command)?)
             .await
     }
 
@@ -845,13 +849,65 @@ impl Avr {
         }
     }
 
-    /// Controls one zone on telnet with typed methods. The `Result` is for
+    /// Sends a command to the receiver.
+    ///
+    /// It goes on telnet if the connection is open, as [`Avr::telnet_send`]
+    /// does, and over HTTP otherwise, as [`Avr::http_send`] does. All typed
+    /// controls ([`Avr::zone`] and the others) use this call, so they work
+    /// without telnet. A caller that does not want telnet never opens it.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Avr::telnet_send`] if telnet is used, and of
+    /// [`Avr::http_send`] otherwise.
+    pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
+        #[cfg(feature = "telnet")]
+        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+            return self.telnet_send(zone, command).await;
+        }
+        self.http_send(zone, command).await
+    }
+
+    /// Sends a command over HTTP, with the page `formiPhoneAppDirect.xml`
+    /// of the receiver.
+    ///
+    /// Commands wait for each other, in the order of the calls, and for the
+    /// spacing of the HTTP requests (see [`AvrBuilder::http_config`]). This
+    /// returns when the receiver has answered the request. The answer does not
+    /// say if the receiver did the command, as on telnet. The receiver does not
+    /// send events over HTTP, so a command that changes a value of
+    /// [`Avr::update`] makes a read of these values later, see
+    /// [`AvrBuilder::follow_up_read`]. The values of other settings change
+    /// when they are read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`] if the command has text that cannot be
+    /// sent. Returns [`Error::NotConnected`] for a query (a command that asks
+    /// for a value): the receiver answers it on telnet only. Returns the
+    /// errors of an HTTP request if it fails.
+    pub async fn http_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
+        let line = command::encode(self.info.brand, zone, &command)?;
+        if command::is_query(&line) {
+            return Err(Error::NotConnected);
+        }
+        {
+            // The lock keeps the order of the callers.
+            let _turn = self.command_gate.lock().await;
+            self.http.get(&command::http_path(&line)).await?;
+        }
+        if let (Some(follow_up), Some(reads)) = (&self.follow_up, Reads::after(&command)) {
+            follow_up.note(reads);
+        }
+        Ok(())
+    }
+
+    /// Controls one zone with typed methods. The `Result` is for
     /// the zone: not every receiver has zones 2 and 3.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NoSuchZone`] if the receiver does not have the zone.
-    #[cfg(feature = "telnet")]
     pub fn zone(&self, zone: Zone) -> Result<ZoneControl<'_>, Error> {
         if self.info.zones.contains(&zone) {
             Ok(ZoneControl::new(self, zone))
@@ -860,62 +916,54 @@ impl Avr {
         }
     }
 
-    /// Controls bass, treble and tone control on telnet with typed methods.
-    #[cfg(feature = "telnet")]
+    /// Controls bass, treble and tone control with typed methods.
     #[must_use]
     pub const fn tone(&self) -> ToneControl<'_> {
         ToneControl::new(self)
     }
 
-    /// Controls the Audyssey settings on telnet with typed methods.
-    #[cfg(feature = "telnet")]
+    /// Controls the Audyssey settings with typed methods.
     #[must_use]
     pub const fn audyssey(&self) -> Audyssey<'_> {
         Audyssey::new(self)
     }
 
-    /// Controls the sound settings on telnet with typed methods.
-    #[cfg(feature = "telnet")]
+    /// Controls the sound settings with typed methods.
     #[must_use]
     pub const fn sound(&self) -> SoundControl<'_> {
         SoundControl::new(self)
     }
 
-    #[cfg(feature = "telnet")]
     pub(crate) const fn reset_keys(&self) -> &ResetKeys {
         &self.reset_keys
     }
 
-    /// Controls the settings of the whole receiver on telnet with typed
+    /// Controls the settings of the whole receiver with typed
     /// methods.
-    #[cfg(feature = "telnet")]
     #[must_use]
     pub const fn device(&self) -> DeviceControl<'_> {
         DeviceControl::new(self)
     }
 
-    /// Controls the tuner on telnet with typed methods.
-    #[cfg(feature = "telnet")]
+    /// Controls the tuner with typed methods.
     #[must_use]
     pub const fn tuner(&self) -> TunerControl<'_> {
         TunerControl::new(self)
     }
 
-    /// Controls the video settings on telnet with typed methods.
-    #[cfg(feature = "telnet")]
+    /// Controls the video settings with typed methods.
     #[must_use]
     pub const fn video(&self) -> VideoControl<'_> {
         VideoControl::new(self)
     }
 
-    /// Controls Dirac Live on telnet with typed methods. The `Result` is for
+    /// Controls Dirac Live with typed methods. The `Result` is for
     /// the receiver: not every receiver has Dirac Live.
     ///
     /// # Errors
     ///
     /// Returns [`Error::DiracNotSupported`] if the receiver does not support
     /// Dirac Live.
-    #[cfg(feature = "telnet")]
     pub const fn dirac(&self) -> Result<Dirac<'_>, Error> {
         if self.info.dirac_live {
             Ok(Dirac::new(self))
@@ -1090,51 +1138,80 @@ impl Avr {
         commands: &[Definition],
         body: Bytes,
     ) -> Result<(), Error> {
-        self.http
-            .post_parsed(endpoint.path(), body, |body| {
-                let response = Response::parse(body, commands.len())?;
-                self.channels.modify(|state, notify| {
-                    for &zone in &self.info.zones {
-                        response.extract(commands, zone, |field, value| {
-                            notify(state.apply_field(zone, field, value));
-                        });
-                    }
-                    // The source lists are for the whole receiver.
-                    for (definition, item) in commands.iter().zip(response.items()) {
-                        if *definition == appcommand::GET_RENAME_SOURCE {
-                            item.renamed_sources(|name, rename| {
-                                notify(state.apply_renamed_source(name, rename));
-                            });
-                        } else if *definition == appcommand::GET_DELETED_SOURCE {
-                            item.source_use(|name, value| {
-                                notify(state.apply_source_use(name, value));
-                            });
-                        }
-                    }
-                });
-                Ok(())
-            })
-            .await
+        read_appcommand(
+            &self.http,
+            &self.channels,
+            &self.info.zones,
+            endpoint,
+            commands,
+            body,
+        )
+        .await
     }
 
     async fn update_with_status_pages(&self) -> Result<(), Error> {
-        for &zone in &self.info.zones {
-            let status = page(&self.http, status_page::status_path(zone)).await?;
-            let zone_page = page(&self.http, status_page::zone_path(zone)).await?;
-            let (status, zone_page) = (parse_page(status.as_ref()), parse_page(zone_page.as_ref()));
-            self.channels.modify(|state, notify| {
-                status_page::extract(
-                    status.as_ref(),
-                    zone_page.as_ref(),
-                    zone,
-                    &mut |field, value| {
-                        notify(state.apply_field(zone, field, value));
-                    },
-                );
-            });
-        }
-        Ok(())
+        read_status_pages(&self.http, &self.channels, &self.info.zones).await
     }
+}
+
+/// Sends `body`, the request for `commands`, and puts the answer into the
+/// state of `channels`.
+async fn read_appcommand(
+    http: &HttpClient,
+    channels: &Channels,
+    zones: &[Zone],
+    endpoint: Endpoint,
+    commands: &[Definition],
+    body: Bytes,
+) -> Result<(), Error> {
+    http.post_parsed(endpoint.path(), body, |body| {
+        let response = Response::parse(body, commands.len())?;
+        channels.modify(|state, notify| {
+            for &zone in zones {
+                response.extract(commands, zone, |field, value| {
+                    notify(state.apply_field(zone, field, value));
+                });
+            }
+            // The source lists are for the whole receiver.
+            for (definition, item) in commands.iter().zip(response.items()) {
+                if *definition == appcommand::GET_RENAME_SOURCE {
+                    item.renamed_sources(|name, rename| {
+                        notify(state.apply_renamed_source(name, rename));
+                    });
+                } else if *definition == appcommand::GET_DELETED_SOURCE {
+                    item.source_use(|name, value| {
+                        notify(state.apply_source_use(name, value));
+                    });
+                }
+            }
+        });
+        Ok(())
+    })
+    .await
+}
+
+/// Reads the status pages of each zone into the state of `channels`.
+async fn read_status_pages(
+    http: &HttpClient,
+    channels: &Channels,
+    zones: &[Zone],
+) -> Result<(), Error> {
+    for &zone in zones {
+        let status = page(http, status_page::status_path(zone)).await?;
+        let zone_page = page(http, status_page::zone_path(zone)).await?;
+        let (status, zone_page) = (parse_page(status.as_ref()), parse_page(zone_page.as_ref()));
+        channels.modify(|state, notify| {
+            status_page::extract(
+                status.as_ref(),
+                zone_page.as_ref(),
+                zone,
+                &mut |field, value| {
+                    notify(state.apply_field(zone, field, value));
+                },
+            );
+        });
+    }
+    Ok(())
 }
 
 impl AvrBuilder {
@@ -1152,6 +1229,15 @@ impl AvrBuilder {
     #[must_use]
     pub const fn web_interface_config(mut self, config: HttpConfig) -> Self {
         self.web_interface = config;
+        self
+    }
+
+    /// Sets when the values that a command over HTTP changed are read, or
+    /// `None` for no read. The default is [`FollowUpRead::default`]. A caller
+    /// that reads the state in its own way can turn it off.
+    #[must_use]
+    pub const fn follow_up_read(mut self, config: Option<FollowUpRead>) -> Self {
+        self.follow_up_read = config;
         self
     }
 
@@ -1208,7 +1294,7 @@ impl AvrBuilder {
             Some(probes) => identify_on(&self.host, probes, self.http).await?,
             None => identify(&self.host, self.http).await?,
         };
-        let http = HttpClient::new(&self.host, port, self.http)?;
+        let http = Arc::new(HttpClient::new(&self.host, port, self.http)?);
         let description = self.description(receiver_type).await?;
         let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
 
@@ -1256,6 +1342,8 @@ impl AvrBuilder {
             .collect();
         let update_body = request_body(&commands)?;
         let single_zone = device_info.device_zones == Some(1);
+        let channels = Channels::new(State::new(single_zone));
+        let follow_up = FollowUp::start(self.follow_up_read, &http, &channels, &info)?;
         Ok(Avr {
             http,
             web_interface: HttpClient::new(
@@ -1277,12 +1365,13 @@ impl AvrBuilder {
             )?,
             appcommand0300_missing: AtomicBool::new(false),
             signal_from_appcommand: AtomicBool::new(false),
-            channels: Channels::new(State::new(single_zone)),
+            channels,
             starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),
-            #[cfg(feature = "telnet")]
             reset_keys: ResetKeys::default(),
+            command_gate: Mutex::new(()),
+            follow_up,
         })
     }
 

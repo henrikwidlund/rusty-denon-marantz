@@ -16,10 +16,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
-    Command, DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder,
-    MAIN_ZONE_POWER_QUERY, Message, QueryGroup, group_queries, queries,
+    DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, MAIN_ZONE_POWER_QUERY,
+    Message, QueryGroup, group_queries, queries,
 };
-use denon_marantz_proto::{Brand, TUNER_QUERIES, Zone};
+use denon_marantz_proto::{Brand, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -775,15 +775,6 @@ async fn until_stopped<T>(
         _ = shutdown.changed() => None,
         output = work => Some(output),
     }
-}
-
-/// Encodes a command for a zone of a receiver of this brand.
-pub(crate) fn encode(brand: Brand, zone: Zone, command: &Command<'_>) -> Result<String, Error> {
-    let mut line = String::new();
-    command
-        .write_line(brand, zone, &mut line)
-        .map_err(Error::from_command)?;
-    Ok(line)
 }
 
 #[cfg(test)]

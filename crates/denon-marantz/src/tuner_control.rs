@@ -1,4 +1,4 @@
-//! Typed control of the tuner on telnet.
+//! Typed control of the tuner.
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{TUNER_QUERIES, TunerBand, TunerCommand, TunerMode, Zone};
@@ -11,8 +11,8 @@ use crate::error::Error;
 /// Only receivers with a tuner accept the commands, and the source must be
 /// the tuner. A receiver sends no error otherwise.
 ///
-/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
-/// Each method returns the errors of [`Avr::telnet_send`]. A preset that is not from
+/// Each method returns when the command is sent, as [`Avr::send`] does.
+/// Each method returns the errors of [`Avr::send`]. A preset that is not from
 /// 1 to 56 gives [`Error::InvalidCommand`], and nothing is sent.
 #[derive(Debug, Clone, Copy)]
 pub struct TunerControl<'a> {
@@ -109,16 +109,12 @@ impl<'a> TunerControl<'a> {
     /// See [`TunerControl`].
     pub async fn request(&self) -> Result<(), Error> {
         for query in TUNER_QUERIES {
-            self.avr
-                .telnet_send(Zone::Main, Command::Raw(query))
-                .await?;
+            self.avr.send(Zone::Main, Command::Raw(query)).await?;
         }
         Ok(())
     }
 
     async fn send(&self, command: TunerCommand) -> Result<(), Error> {
-        self.avr
-            .telnet_send(Zone::Main, Command::Tuner(command))
-            .await
+        self.avr.send(Zone::Main, Command::Tuner(command)).await
     }
 }

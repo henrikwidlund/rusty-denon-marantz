@@ -1,4 +1,4 @@
-//! Typed control of the Audyssey settings on telnet.
+//! Typed control of the Audyssey settings.
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
@@ -17,11 +17,11 @@ use crate::error::Error;
 /// [`Audyssey::set_multi_eq`] returns [`Error::AudysseyBlockedByDirac`] and
 /// sends nothing while the state shows a Dirac filter. Selecting a MultEQ mode
 /// switches back to Audyssey, so it is sent. To send an Audyssey
-/// command anyway, use [`Avr::telnet_send`].
+/// command anyway, use [`Avr::send`].
 ///
-/// Each method returns when the command is written, as [`Avr::telnet_send`] does.
+/// Each method returns when the command is sent, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns
-/// the errors of [`Avr::telnet_send`].
+/// the errors of [`Avr::send`].
 #[derive(Debug, Clone, Copy)]
 pub struct Audyssey<'a> {
     avr: &'a Avr,
@@ -158,6 +158,6 @@ impl<'a> Audyssey<'a> {
     }
 
     async fn send(&self, command: Command<'_>) -> Result<(), Error> {
-        self.avr.telnet_send(Zone::Main, command).await
+        self.avr.send(Zone::Main, command).await
     }
 }
