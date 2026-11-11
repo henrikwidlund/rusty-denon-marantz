@@ -45,6 +45,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("RESULT connected_s={:.2}", secs());
     let started = avr.start_with(options).await?;
     println!("RESULT started_s={:.2}", secs());
+    // When the signal is in the state: the first value, and all of them.
+    let mut first = None;
+    let ready = loop {
+        let snapshot = avr.snapshot();
+        let signal = &snapshot.device().signal;
+        first = first.or_else(|| signal.audio_signal.as_ref().map(|_| secs()));
+        if signal.audio_signal.is_some()
+            && signal.channels.output.is_some()
+            && signal.video.input.is_some()
+        {
+            break Some(secs());
+        }
+        if secs() > 8.0 {
+            break None;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    println!("RESULT signal_first_s={first:?} signal_ready_s={ready:?}");
     let mut changes = avr.changes();
     let report = started.finished().await;
     println!("RESULT finished_s={:.2}", secs());

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rx>
+<cmd>
+<name>GetInputSignal</name>
+<list>
+<param name="inputsiga1" control="1">FHL</param>
+<param name="inputsigb1" control="2">LFE</param>
+<param name="inputsigc1" control="0"></param>
+<param name="inputsigd1" control="1">EXT</param>
+<param name="inputsige1" control="1">FHR</param>
+<param name="inputsiga2" control="1">FWL</param>
+<param name="inputsigb2" control="2">FL</param>
+<param name="inputsigc2" control="2">C</param>
+<param name="inputsigd2" control="2">FR</param>
+<param name="inputsige2" control="1">FWR</param>
+<param name="inputsiga3" control="0">SHL</param>
+<param name="inputsigb3" control="2">SL</param>
+<param name="inputsigc3" control="0">TS</param>
+<param name="inputsigd3" control="2">SR</param>
+<param name="inputsige3" control="0">SHR</param>
+<param name="inputsiga4" control="0"></param>
+<param name="inputsigb4" control="2">SBL</param>
+<param name="inputsigc4" control="1">SB</param>
+<param name="inputsigd4" control="2">SBR</param>
+<param name="inputsige4" control="0"></param>
+</list>
+</cmd>
+<cmd>
+<name>GetActiveSpeaker</name>
+<list>
+<param name="activespa1" control="2">FHL</param>
+<param name="activespb1" control="2">SW</param>
+<param name="activespc1" control="0"></param>
+<param name="activespd1" control="0"></param>
+<param name="activespe1" control="2">FHR</param>
+<param name="activespa2" control="0"></param>
+<param name="activespb2" control="2">FL</param>
+<param name="activespc2" control="2">C</param>
+<param name="activespd2" control="2">FR</param>
+<param name="activespe2" control="0"></param>
+<param name="activespa3" control="2">TML</param>
+<param name="activespb3" control="2">SL</param>
+<param name="activespc3" control="0"></param>
+<param name="activespd3" control="2">SR</param>
+<param name="activespe3" control="2">TMR</param>
+<param name="activespa4" control="0"></param>
+<param name="activespb4" control="2">SBL</param>
+<param name="activespc4" control="0"></param>
+<param name="activespd4" control="2">SBR</param>
+<param name="activespe4" control="0"></param>
+</list>
+</cmd>
+<cmd>
+<name>GetVideoInfo</name>
+<list>
+<param name="videooutput" control="1">TV 1</param>
+<param name="hdmisigin" control="1">4K50</param>
+<param name="hdmisigout" control="1">4K50</param>
+</list>
+</cmd>
+<cmd>
+<name>GetAudioInfo</name>
+<list>
+<param name="inputmode" control="1">HDMI</param>
+<param name="output" control="1">Speaker</param>
+<param name="signal" control="1">Dolby Atmos          </param>
+<param name="sound" control="1">Dolby Atmos</param>
+<param name="fs" control="1">48 kHz</param>
+</list>
+</cmd>
+<cmd>
+<name>GetAudyssey</name>
+<list>
+<param name="dynamiceq" control="0"></param>
+<param name="reflevoffset" control="0"></param>
+<param name="dynamicvol" control="0"></param>
+<param name="multeq" control="0"></param>
+</list>
+</cmd>
+</rx>

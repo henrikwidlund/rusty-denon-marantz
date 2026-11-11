@@ -118,6 +118,29 @@ impl<'a> Item<'a> {
         self.source_entries("functiondelete", "use", on_entry);
     }
 
+    /// Calls `on_param` with the name, the `control` attribute and the text of
+    /// each `param` element in the `list` of the answer. `control` is `None`
+    /// if it is missing or not a number. Nothing is called for an item with
+    /// an error.
+    pub fn params(&self, mut on_param: impl FnMut(&str, Option<u8>, &str)) {
+        if self.is_error {
+            return;
+        }
+        let Some(list) = self.node.child("list") else {
+            return;
+        };
+        for param in list.node().children().filter(|child| child.is("param")) {
+            let Some(name) = param.attribute("name") else {
+                continue;
+            };
+            let control = param
+                .attribute("control")
+                .and_then(|control| control.trim().parse().ok());
+            let text = param.node().text();
+            on_param(&name, control, text.as_deref().map_or("", str::trim));
+        }
+    }
+
     fn source_entries(
         &self,
         wrapper: &str,

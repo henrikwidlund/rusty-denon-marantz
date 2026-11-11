@@ -20,6 +20,7 @@ use crate::input_pages::{InputAssignment, SourceNames};
 use crate::now_playing::NowPlaying;
 use crate::picture::PictureSettings;
 use crate::settings_availability::{GroupAvailability, SettingsAvailability};
+use crate::signal::ChannelLayout;
 use crate::signal::SignalState;
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::sound_mode_list::SoundModeList;
@@ -845,8 +846,26 @@ impl State {
             }
             // An empty name does not change the value.
             Field::FriendlyName => self.apply_friendly_name(value?.trim()),
+            Field::VideoSignalIn
+            | Field::VideoSignalOut
+            | Field::AudioSignal
+            | Field::AudioSound
+            | Field::SamplingRate => {
+                self.signal_change(|signal| signal.apply_appcommand(field, value))
+            }
             _ => None,
         }
+    }
+
+    /// Stores the channels of the audio signal that the receiver gets
+    /// (`is_input`) or plays, as the `AppCommand0300.xml` grids give them. They
+    /// are in [`DeviceState::signal`], with the values of telnet.
+    pub fn apply_channel_grid(
+        &mut self,
+        is_input: bool,
+        layout: Option<ChannelLayout>,
+    ) -> Option<Change> {
+        self.signal_change(|signal| signal.channels.set(is_input, layout))
     }
 
     /// Applies a `PS` event. The state holds the tone control, the Audyssey

@@ -94,6 +94,7 @@ avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
 avr.update_detailed_availability().await?; // surround parameters, HDMI setup, video output
+avr.update_signal().await?; // resolution, audio signal and channels in one fast request
 avr.update_video_details().await?; // on-screen display, TV format, HDCP, 4K/8K per input
 avr.update_general_settings().await?; // language, firmware update, triggers
 avr.update_system_settings().await?;
@@ -104,8 +105,9 @@ telnet and reads only the zone names over HTTP. If not, it reads everything over
 HTTP. Your code does not choose.
 
 To see the video and audio signal now, call `avr.refresh_signal().await?`. It
-reads the video signal and the channels from the web interface, and asks telnet
-for the rest if it is open. Your code does not choose.
+reads the resolution, the audio signal and the channels with one fast request
+(`update_signal`) if the receiver has it, the HDR and color values from the web
+interface, and asks telnet for the rest if it is open. Your code does not choose.
 
 To see what plays, call `avr.refresh_now_playing().await?`. It asks on telnet if
 the connection is open and reads the status page if not, so your code does not

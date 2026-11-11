@@ -13,6 +13,9 @@ pub enum SkipReason {
     NoPlayingSource,
     /// The caller turned the page off.
     NotAsked,
+    /// Another request already gave the values of the page, so it is not
+    /// asked.
+    AlreadyRead,
 }
 
 /// The result for one page of the web interface.
@@ -41,6 +44,13 @@ impl PageStatus {
     #[must_use]
     pub const fn is_read(self) -> bool {
         matches!(self, Self::Read)
+    }
+
+    /// Returns true if the state has the values of the page: it was read, or
+    /// another request gave the values.
+    #[must_use]
+    pub const fn has_values(self) -> bool {
+        matches!(self, Self::Read | Self::Skipped(SkipReason::AlreadyRead))
     }
 }
 

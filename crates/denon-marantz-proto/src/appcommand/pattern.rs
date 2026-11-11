@@ -59,6 +59,16 @@ pub enum Field {
     DynamicVol,
     /// Dynamic volume `control` attribute.
     DynamicVolControl,
+    /// Resolution of the video signal that the receiver gets.
+    VideoSignalIn,
+    /// Resolution of the video signal that the receiver sends.
+    VideoSignalOut,
+    /// Kind of the audio signal that the receiver gets.
+    AudioSignal,
+    /// Kind of the audio that the receiver plays.
+    AudioSound,
+    /// Sampling rate of the audio signal, for example `48 kHz`.
+    SamplingRate,
 }
 
 /// One step on the way to a value. A step selects a child element.

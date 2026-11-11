@@ -432,3 +432,84 @@ async fn refresh_signal_says_when_nothing_was_read() {
     );
     assert!(avr.snapshot().device().signal.channels.input.is_some());
 }
+
+#[tokio::test]
+async fn the_channels_page_is_not_read_when_appcommand_gave_the_channels() {
+    let asked_channels = Arc::new(AtomicUsize::new(0));
+    let web = {
+        let asked_channels = asked_channels.clone();
+        Fake::start(move |seen| match seen.path.as_str() {
+            VIDEO_SIGNAL_PATH => Reply::Body(VIDEO_PAGE.to_vec()),
+            AUDIO_CHANNELS_PATH => {
+                asked_channels.fetch_add(1, Ordering::SeqCst);
+                // A page that has no channels for the input would clear them.
+                Reply::Body(b"<Audio><InputSignal mode=\"text_only\">DOLBY ATMOS</InputSignal><ActiveSpeaker><List><Speaker index=\"0\">2</Speaker></List></ActiveSpeaker></Audio>".to_vec())
+            }
+            _ => Reply::Status(404),
+        })
+        .await
+    };
+    let answer: &'static str = Box::leak(common::appcommand0300_answer("").into_boxed_str());
+    let receiver = common::receiver_with_audyssey(Some(answer), true).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = Arc::new(
+        builder(&receiver, ReceiverType::AvrX2016)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let report = avr.start().await.unwrap().finished().await;
+    let pages = report.web_interface.unwrap();
+    assert_eq!(
+        pages.audio_channels,
+        PageStatus::Skipped(SkipReason::AlreadyRead)
+    );
+    assert!(pages.audio_channels.has_values());
+    assert_eq!(asked_channels.load(Ordering::SeqCst), 0);
+    // The channels of the update stay.
+    let state = avr.snapshot();
+    assert_eq!(
+        state.device().signal.channels.input.unwrap().to_string(),
+        "2.0"
+    );
+    // Telnet is not asked for the channels either.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!telnet.received().contains("OPINFINS ?"));
+}
+
+#[tokio::test]
+async fn refresh_signal_uses_appcommand_for_the_channels() {
+    let answer: &'static str = Box::leak(common::appcommand0300_answer("").into_boxed_str());
+    let receiver = common::receiver_with_audyssey(Some(answer), true).await;
+    let web = web_interface().await;
+    let avr = builder(&receiver, ReceiverType::AvrX2016)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    avr.refresh_signal().await.unwrap();
+    let state = avr.snapshot();
+    assert_eq!(
+        state.device().signal.audio_signal.as_deref(),
+        Some("Dolby Atmos")
+    );
+    assert_eq!(
+        state.device().signal.channels.output.unwrap().to_string(),
+        "2.1.1"
+    );
+    assert!(
+        web.requests()
+            .iter()
+            .all(|seen| seen.path != AUDIO_CHANNELS_PATH)
+    );
+    // The video page still gives what AppCommand does not have.
+    assert!(
+        web.requests()
+            .iter()
+            .any(|seen| seen.path == VIDEO_SIGNAL_PATH)
+    );
+}

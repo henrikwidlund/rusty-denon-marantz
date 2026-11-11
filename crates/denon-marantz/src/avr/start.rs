@@ -2,6 +2,7 @@
 //! fills in while the caller already works.
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{SignalPart, after_appcommand_queries, signal_queries};
@@ -99,6 +100,11 @@ pub struct StartPages {
 pub struct StartReport {
     /// The telnet connection.
     pub telnet: TelnetStart,
+    /// The signal, the channels and the Audyssey settings from
+    /// `AppCommand0300.xml`, see [`Avr::update_signal`]. [`PageStatus::Read`]
+    /// means that the state has them. [`PageStatus::NoAnswer`] means that the
+    /// receiver did not answer in time.
+    pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
     pub web_interface: Result<StartPages, Error>,
@@ -124,6 +130,7 @@ impl Started {
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(_) => StartReport {
                 telnet: TelnetStart::Unknown,
+                signal: PageStatus::NoAnswer,
                 web_interface: Err(Error::Stopped),
             },
         }
@@ -204,6 +211,9 @@ impl Avr {
     }
 
     async fn finish_start(&self, options: StartOptions, telnet: TelnetStart) -> StartReport {
+        // The receiver answers this one fast, and it has the channels, so it
+        // is first.
+        let signal = self.update_signal().await.unwrap_or(PageStatus::NoAnswer);
         let web_interface = self.read_start_pages(options).await;
         #[cfg(feature = "telnet")]
         if matches!(telnet, TelnetStart::Open)
@@ -213,6 +223,7 @@ impl Avr {
         }
         StartReport {
             telnet,
+            signal,
             web_interface,
         }
     }
@@ -221,9 +232,15 @@ impl Avr {
     #[cfg(feature = "telnet")]
     async fn ask_for_signal(&self, web_interface: &Result<StartPages, Error>) {
         let brand = self.info.brand;
-        let (video, channels) = web_interface.as_ref().map_or((false, false), |pages| {
-            (pages.video_signal.is_read(), pages.audio_channels.is_read())
+        let (video, mut channels) = web_interface.as_ref().map_or((false, false), |pages| {
+            (
+                pages.video_signal.has_values(),
+                pages.audio_channels.has_values(),
+            )
         });
+        // The answer of `AppCommand0300.xml` has the channels, also when the
+        // pages are not read.
+        channels |= self.signal_from_appcommand.load(Ordering::Relaxed);
         let mut queries = Vec::new();
         if !video {
             queries.extend(signal_queries(brand, SignalPart::Video));
@@ -288,10 +305,18 @@ impl Avr {
     /// and the web interface does not answer, or answers with no page that
     /// can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal(&self) -> Result<(), Error> {
+        // A receiver that answers `AppCommand0300.xml` gives the resolution, the
+        // audio signal and the channels at once, and its answer for the
+        // channels is more complete than the page.
+        let answered = matches!(self.update_signal().await, Ok(PageStatus::Read));
         let video = self.read_video_page().await;
-        let channels = self.read_channels_page().await;
+        let channels = if answered {
+            Ok(PageStatus::Skipped(SkipReason::AlreadyRead))
+        } else {
+            self.read_channels_page().await
+        };
         let is_read =
-            |result: &Result<PageStatus, Error>| result.as_ref().is_ok_and(|s| s.is_read());
+            |result: &Result<PageStatus, Error>| result.as_ref().is_ok_and(|s| s.has_values());
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
             let (video, channels) = (is_read(&video), is_read(&channels));
@@ -305,7 +330,7 @@ impl Avr {
             }
             return self.telnet.ask(queries).await;
         }
-        if is_read(&video) || is_read(&channels) {
+        if answered || is_read(&video) || is_read(&channels) {
             return Ok(());
         }
         // Nothing was read: say why.
@@ -335,11 +360,18 @@ impl Avr {
             pages.push((group, status));
         }
         let (video_signal, audio_channels) = if options.signal_pages {
-            (
-                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer),
+            let channels = if self.signal_from_appcommand.load(Ordering::Relaxed) {
+                // The answer of `AppCommand0300.xml` has the channels. The page
+                // has none for a stream of objects, and would clear them.
+                PageStatus::Skipped(SkipReason::AlreadyRead)
+            } else {
                 self.read_channels_page()
                     .await
-                    .unwrap_or(PageStatus::NoAnswer),
+                    .unwrap_or(PageStatus::NoAnswer)
+            };
+            (
+                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer),
+                channels,
             )
         } else {
             (

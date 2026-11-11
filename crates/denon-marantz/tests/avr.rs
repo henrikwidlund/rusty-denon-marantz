@@ -5,8 +5,9 @@
 mod common;
 
 use common::{
-    AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, avr_x_receiver, builder, config, friendly_name_answer,
-    is_friendly_name_request, update_answer_with_tone, web_interface_with_pages,
+    AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer, avr_x_receiver, builder, config,
+    friendly_name_answer, is_friendly_name_request, receiver_with_audyssey,
+    web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
@@ -906,26 +907,6 @@ async fn speaker_details_and_source_details_have_the_new_pages() {
     assert_eq!(device.source_levels.analog_db, Some(0));
 }
 
-/// A fake 2016 receiver. It answers the Audyssey query with `audyssey`, or
-/// with a 404 if that is `None`.
-async fn receiver_with_audyssey(audyssey: Option<&'static str>, tone: bool) -> Fake {
-    Fake::start(
-        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
-            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-            ("POST", "/goform/AppCommand0300.xml") => audyssey.map_or(Reply::Status(404), |body| {
-                Reply::Body(body.as_bytes().to_vec())
-            }),
-            ("POST", _) if is_friendly_name_request(&seen.body) => {
-                Reply::Body(friendly_name_answer("X"))
-            }
-            ("POST", _) if tone => Reply::Body(update_answer_with_tone()),
-            ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
-            _ => Reply::Status(404),
-        },
-    )
-    .await
-}
-
 fn audyssey_requests(fake: &Fake) -> usize {
     fake.requests()
         .iter()
@@ -935,48 +916,71 @@ fn audyssey_requests(fake: &Fake) -> usize {
 
 #[tokio::test]
 async fn update_of_a_2016_receiver_reads_the_audyssey_settings() {
-    const ANSWER: &str = "<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx><cmd><name>GetAudyssey</name>\
-        <list><param name=\"dynamiceq\" control=\"1\">1</param>\
+    let answer = appcommand0300_answer(
+        "<param name=\"dynamiceq\" control=\"1\">1</param>\
         <param name=\"reflevoffset\" control=\"1\">5</param>\
         <param name=\"dynamicvol\" control=\"1\">2</param>\
-        <param name=\"multeq\" control=\"1\">2</param></list></cmd></rx>";
-    let fake = receiver_with_audyssey(Some(ANSWER), true).await;
+        <param name=\"multeq\" control=\"1\">2</param>",
+    );
+    let answer: &'static str = Box::leak(answer.into_boxed_str());
+    let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    avr.update().await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
     let state = avr.snapshot();
     let device = state.device();
     assert_eq!(device.dynamic_eq, Some(true));
     assert!(device.multi_eq.is_some());
     assert!(device.reference_level_offset.is_some());
     assert!(device.dynamic_volume.is_some());
-    // The other values of the update are still read.
-    assert_eq!(state.zone(Zone::Main).power, Some(Power::On));
+}
+
+#[tokio::test]
+async fn update_of_a_2016_receiver_reads_the_signal() {
+    let answer = appcommand0300_answer("");
+    let answer: &'static str = Box::leak(answer.into_boxed_str());
+    let fake = receiver_with_audyssey(Some(answer), true).await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    let state = avr.snapshot();
+    let signal = &state.device().signal;
+    assert_eq!(signal.video.input.as_deref(), Some("4K50"));
+    // `---` is no signal.
+    assert_eq!(signal.video.output, None);
+    // The text of the receiver is trimmed, and the unit of the rate is left out.
+    assert_eq!(signal.audio_signal.as_deref(), Some("Dolby Atmos"));
+    assert_eq!(signal.audio_sound.as_deref(), Some("Stereo"));
+    assert_eq!(signal.sampling_rate.as_deref(), Some("44.1"));
+    assert_eq!(signal.channels.input.unwrap().to_string(), "2.0");
+    assert_eq!(signal.channels.output.unwrap().to_string(), "2.1.1");
+    // Audyssey values that are blank are unknown.
+    assert_eq!(state.device().dynamic_eq, None);
 }
 
 #[tokio::test]
 async fn blank_audyssey_values_are_unknown() {
     // A receiver that is calibrated with Dirac answers with blank values.
-    const BLANK: &str = "<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx><cmd><name>GetAudyssey</name>\
-        <list><param name=\"dynamiceq\" control=\"0\"></param>\
+    let answer = appcommand0300_answer(
+        "<param name=\"dynamiceq\" control=\"0\"></param>\
         <param name=\"reflevoffset\" control=\"0\"></param>\
         <param name=\"dynamicvol\" control=\"0\"></param>\
-        <param name=\"multeq\" control=\"0\"></param></list></cmd></rx>";
-    let fake = receiver_with_audyssey(Some(BLANK), true).await;
+        <param name=\"multeq\" control=\"0\"></param>",
+    );
+    let answer: &'static str = Box::leak(answer.into_boxed_str());
+    let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    avr.update().await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
     let state = avr.snapshot();
     assert_eq!(state.device().dynamic_eq, None);
     assert_eq!(state.device().multi_eq, None);
-    assert_eq!(state.zone(Zone::Main).power, Some(Power::On));
 }
 
 #[tokio::test]
 async fn a_receiver_without_the_audyssey_query_is_asked_once() {
     let fake = receiver_with_audyssey(None, true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    // The missing query does not fail the update.
-    avr.update().await.unwrap();
-    avr.update().await.unwrap();
+    // The missing query is not an error, and it is not asked again.
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
     assert_eq!(audyssey_requests(&fake), 1);
 }
 
@@ -984,6 +988,6 @@ async fn a_receiver_without_the_audyssey_query_is_asked_once() {
 async fn only_2016_receivers_are_asked_for_audyssey() {
     let fake = receiver_with_audyssey(None, false).await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
-    avr.update().await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
     assert_eq!(audyssey_requests(&fake), 0);
 }

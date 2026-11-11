@@ -11,13 +11,13 @@ use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
-    BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
-    DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
-    InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch,
-    PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH,
-    SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings,
-    TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
-    Zone,
+    BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, ChannelLayout,
+    DISTANCES_PATH, DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH,
+    INPUT_ASSIGN_PATH, InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH,
+    Playback2Ch, PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH,
+    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State,
+    SystemSettings, TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT,
+    XLR_ASSIGN_PATH, XlrAssign, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -72,6 +72,17 @@ const UPDATE_COMMANDS: [Definition; 12] = [
     appcommand::GET_DELETED_SOURCE,
     appcommand::GET_ZONE_NAME,
     appcommand::GET_FRIENDLY_NAME,
+];
+
+/// The queries of `AppCommand0300.xml` that [`Avr::update_signal`] sends for a
+/// receiver of the 2016 generation and later: the Audyssey settings, the
+/// video and audio signal, and the channels of the signal and of the speakers.
+const APPCOMMAND0300_COMMANDS: [Definition; 5] = [
+    appcommand::GET_AUDYSSEY,
+    appcommand::GET_VIDEO_INFO,
+    appcommand::GET_AUDIO_INFO,
+    appcommand::GET_INPUT_SIGNAL,
+    appcommand::GET_ACTIVE_SPEAKER,
 ];
 
 /// The commands that read what telnet does not report. [`Avr::refresh`] sends
@@ -171,12 +182,15 @@ pub struct Avr {
     /// The request body of [`HTTP_ONLY_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_body: Bytes,
-    /// The request body of the Audyssey query. Receivers of the 2016
-    /// generation and later have it.
-    audyssey_body: Bytes,
-    /// The receiver does not answer the Audyssey query, so it is not asked
-    /// again.
-    audyssey_missing: AtomicBool,
+    /// The request body of [`APPCOMMAND0300_COMMANDS`]. Receivers of the 2016
+    /// generation and later have them.
+    appcommand0300_body: Bytes,
+    /// The receiver does not answer the queries of `AppCommand0300.xml`, so
+    /// they are not asked again.
+    appcommand0300_missing: AtomicBool,
+    /// The last [`Avr::update_signal`] read the signal and the channels with
+    /// `AppCommand0300.xml`.
+    signal_from_appcommand: AtomicBool,
     channels: Channels,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
@@ -930,34 +944,81 @@ impl Avr {
             &self.update_commands,
             self.update_body.clone(),
         )
-        .await?;
-        self.update_audyssey().await;
-        Ok(())
+        .await
     }
 
-    /// Reads the Audyssey settings from `AppCommand0300.xml`. Not every
-    /// receiver supports it, so a failure is only logged and is not asked for
-    /// again. A receiver that is not calibrated with Audyssey answers with
-    /// blank values, which count as unknown.
-    async fn update_audyssey(&self) {
+    /// Reads the video and audio signal, the channels and the Audyssey
+    /// settings from the receiver with one request to `AppCommand0300.xml`.
+    ///
+    /// This is much faster than the pages of the web interface and the
+    /// telnet queries for the same values (about 0.2 s). It gives the
+    /// resolution that the receiver gets and sends, the kind of the audio
+    /// signal and of the sound, the sampling rate, and the channels of the
+    /// signal and of the speakers. HDR, the pixel depth, the color space and
+    /// the FRL rate are not in it: [`Avr::refresh_signal`] reads them from
+    /// the web interface. The values are in
+    /// [`DeviceState::signal`](denon_marantz_proto::DeviceState::signal) and,
+    /// for Audyssey, in the fields of [`DeviceState`](denon_marantz_proto::DeviceState).
+    ///
+    /// Only receivers of the 2016 generation and later have it. The result is
+    /// [`PageStatus::NotFound`] for another receiver and for a receiver that
+    /// does not answer the queries, and then it is not asked again. A receiver
+    /// that is not calibrated with Audyssey answers with blank Audyssey values,
+    /// which count as unknown.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receiver does not answer in time or the
+    /// connection fails, see [`Error::is_unreachable`].
+    pub async fn update_signal(&self) -> Result<PageStatus, Error> {
         if self.info.receiver_type != ReceiverType::AvrX2016
-            || self.audyssey_missing.load(Ordering::Relaxed)
+            || self.appcommand0300_missing.load(Ordering::Relaxed)
         {
-            return;
+            return Ok(PageStatus::NotFound);
         }
         let result = self
-            .read_appcommand(
-                Endpoint::AppCommand0300,
-                &[appcommand::GET_AUDYSSEY],
-                self.audyssey_body.clone(),
+            .http
+            .post_parsed(
+                Endpoint::AppCommand0300.path(),
+                self.appcommand0300_body.clone(),
+                |body| {
+                    let response = Response::parse(body, APPCOMMAND0300_COMMANDS.len())?;
+                    self.channels.modify(|state, notify| {
+                        for (definition, item) in
+                            APPCOMMAND0300_COMMANDS.iter().zip(response.items())
+                        {
+                            definition.extract(&item, Zone::Main, &mut |field, value| {
+                                notify(state.apply_field(Zone::Main, field, value));
+                            });
+                            if *definition == appcommand::GET_INPUT_SIGNAL {
+                                notify(state.apply_channel_grid(
+                                    true,
+                                    ChannelLayout::from_appcommand(&item),
+                                ));
+                            } else if *definition == appcommand::GET_ACTIVE_SPEAKER {
+                                notify(state.apply_channel_grid(
+                                    false,
+                                    ChannelLayout::from_appcommand(&item),
+                                ));
+                            }
+                        }
+                    });
+                    Ok(())
+                },
             )
             .await;
-        if let Err(error) = result {
-            tracing::debug!(host = %self.info.host, %error, "Audyssey settings not read");
-            // A timeout or a network error can pass. An answer that is not the
-            // query means that the receiver does not have it.
-            if !error.is_unreachable() {
-                self.audyssey_missing.store(true, Ordering::Relaxed);
+        let answered = result.is_ok();
+        self.signal_from_appcommand
+            .store(answered, Ordering::Relaxed);
+        match result {
+            Ok(()) => Ok(PageStatus::Read),
+            // A timeout or a network error can pass.
+            Err(error) if error.is_unreachable() => Err(error),
+            Err(error) => {
+                // An answer that is not the query: the receiver does not have it.
+                tracing::debug!(host = %self.info.host, %error, "AppCommand0300 not read");
+                self.appcommand0300_missing.store(true, Ordering::Relaxed);
+                Ok(PageStatus::NotFound)
             }
         }
     }
@@ -1165,8 +1226,11 @@ impl AvrBuilder {
             update_body,
             #[cfg(feature = "telnet")]
             http_only_body: request_body(&HTTP_ONLY_COMMANDS.map(|definition| definition.cmd))?,
-            audyssey_body: request_body(&[appcommand::GET_AUDYSSEY.cmd])?,
-            audyssey_missing: AtomicBool::new(false),
+            appcommand0300_body: request_body(
+                &APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd),
+            )?,
+            appcommand0300_missing: AtomicBool::new(false),
+            signal_from_appcommand: AtomicBool::new(false),
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),

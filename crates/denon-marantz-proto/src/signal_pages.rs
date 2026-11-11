@@ -113,7 +113,7 @@ impl AudioChannelsPage {
                     let index = speaker.attribute("index")?.trim().parse().ok()?;
                     is_active.then_some(index)
                 });
-            ChannelLayout::from_active(active)
+            ChannelLayout::from_active(active, false)
         };
         Ok(Self {
             channels: InOut {
@@ -197,6 +197,18 @@ mod tests {
         assert_eq!(input.to_string(), "2.0");
         let output = page.channels.output.unwrap();
         assert_eq!(output.to_string(), "2.1");
+    }
+
+    #[test]
+    fn an_atmos_page_has_text_for_the_input_and_one_index_for_each_output_channel() {
+        let page = AudioChannelsPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-audio-channels-atmos.xml"
+        ))
+        .unwrap();
+        // The input of an object based stream is only a text, not channels.
+        assert_eq!(page.channels.input, None);
+        // Index 13 of the page is one channel: the receiver plays 7.1.4.
+        assert_eq!(page.channels.output.unwrap().to_string(), "7.1.4");
     }
 
     #[test]

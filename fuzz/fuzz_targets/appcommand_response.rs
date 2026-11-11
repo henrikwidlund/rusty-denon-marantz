@@ -2,11 +2,12 @@
 #![no_main]
 
 use denon_marantz_proto::appcommand::{
-    GET_ALL_ZONE_MUTE_STATUS, GET_ALL_ZONE_POWER_STATUS, GET_ALL_ZONE_SOURCE,
-    GET_ALL_ZONE_VOLUME, GET_AUDYSSEY, GET_AUTO_STANDBY, GET_DIMMER, GET_ECO,
-    GET_FRIENDLY_NAME, GET_SURROUND_MODE_STATUS, GET_TONE_CONTROL, GET_ZONE_NAME, Response,
+    GET_ACTIVE_SPEAKER, GET_ALL_ZONE_MUTE_STATUS, GET_ALL_ZONE_POWER_STATUS, GET_ALL_ZONE_SOURCE,
+    GET_ALL_ZONE_VOLUME, GET_AUDIO_INFO, GET_AUDYSSEY, GET_AUTO_STANDBY, GET_DIMMER, GET_ECO,
+    GET_FRIENDLY_NAME, GET_INPUT_SIGNAL, GET_SURROUND_MODE_STATUS, GET_TONE_CONTROL,
+    GET_VIDEO_INFO, GET_ZONE_NAME, Response,
 };
-use denon_marantz_proto::{State, Zone};
+use denon_marantz_proto::{ChannelLayout, State, Zone};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -26,6 +27,10 @@ fuzz_target!(|data: &[u8]| {
         GET_SURROUND_MODE_STATUS,
         GET_TONE_CONTROL,
         GET_ZONE_NAME,
+        GET_VIDEO_INFO,
+        GET_AUDIO_INFO,
+        GET_INPUT_SIGNAL,
+        GET_ACTIVE_SPEAKER,
     ];
     // The first byte sets how many commands the answer must have.
     let expected = usize::from(first) % (definitions.len() + 1);
@@ -46,6 +51,10 @@ fuzz_target!(|data: &[u8]| {
         });
         item.source_use(|name, value| {
             state.apply_source_use(name, value);
+        });
+        let _ = state.apply_channel_grid(true, ChannelLayout::from_appcommand(&item));
+        item.params(|name, control, text| {
+            let _ = (name.len(), control, text.len());
         });
     }
 });

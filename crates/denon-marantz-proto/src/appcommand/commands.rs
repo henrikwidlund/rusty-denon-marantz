@@ -149,6 +149,96 @@ const AUDYSSEY_PARAMS: &[Param<'static>] = &[
     blank_param(MULT_EQ),
 ];
 
+const VIDEO_SIGNAL_IN: &str = "hdmisigin";
+const VIDEO_SIGNAL_OUT: &str = "hdmisigout";
+const AUDIO_SIGNAL: &str = "signal";
+const AUDIO_SOUND: &str = "sound";
+const SAMPLING_RATE: &str = "fs";
+
+const VIDEO_SIGNAL_IN_STEPS: &[Step] = &param_steps(VIDEO_SIGNAL_IN);
+const VIDEO_SIGNAL_OUT_STEPS: &[Step] = &param_steps(VIDEO_SIGNAL_OUT);
+const AUDIO_SIGNAL_STEPS: &[Step] = &param_steps(AUDIO_SIGNAL);
+const AUDIO_SOUND_STEPS: &[Step] = &param_steps(AUDIO_SOUND);
+const SAMPLING_RATE_STEPS: &[Step] = &param_steps(SAMPLING_RATE);
+
+const VIDEO_INFO_PARAMS: &[Param<'static>] = &[
+    blank_param("videooutput"),
+    blank_param(VIDEO_SIGNAL_IN),
+    blank_param(VIDEO_SIGNAL_OUT),
+];
+
+const AUDIO_INFO_PARAMS: &[Param<'static>] = &[
+    blank_param("inputmode"),
+    blank_param("output"),
+    blank_param(AUDIO_SIGNAL),
+    blank_param(AUDIO_SOUND),
+    blank_param(SAMPLING_RATE),
+];
+
+/// The video signal: the resolution that the receiver gets and sends. This is
+/// a query for `AppCommand0300.xml`.
+pub const GET_VIDEO_INFO: Definition = Definition {
+    cmd: Cmd {
+        endpoint: Endpoint::AppCommand0300,
+        text: None,
+        name: Some("GetVideoInfo"),
+        params: Some(VIDEO_INFO_PARAMS),
+        set: None,
+    },
+    blank_is_unknown: true,
+    patterns: &[
+        Pattern::text(Field::VideoSignalIn, VIDEO_SIGNAL_IN_STEPS),
+        Pattern::text(Field::VideoSignalOut, VIDEO_SIGNAL_OUT_STEPS),
+    ],
+};
+
+/// The audio signal: its kind, the kind of sound that is played and the
+/// sampling rate. This is a query for `AppCommand0300.xml`.
+pub const GET_AUDIO_INFO: Definition = Definition {
+    cmd: Cmd {
+        endpoint: Endpoint::AppCommand0300,
+        text: None,
+        name: Some("GetAudioInfo"),
+        params: Some(AUDIO_INFO_PARAMS),
+        set: None,
+    },
+    blank_is_unknown: true,
+    patterns: &[
+        Pattern::text(Field::AudioSignal, AUDIO_SIGNAL_STEPS),
+        Pattern::text(Field::AudioSound, AUDIO_SOUND_STEPS),
+        Pattern::text(Field::SamplingRate, SAMPLING_RATE_STEPS),
+    ],
+};
+
+/// The channels of the audio signal that the receiver gets, as a grid. Read
+/// the answer with [`Item::params`](super::Item::params) and
+/// `ChannelLayout::from_grid`. This is a query for `AppCommand0300.xml`.
+pub const GET_INPUT_SIGNAL: Definition = Definition {
+    cmd: Cmd {
+        endpoint: Endpoint::AppCommand0300,
+        text: None,
+        name: Some("GetInputSignal"),
+        params: Some(&[blank_param("inputsigall")]),
+        set: None,
+    },
+    blank_is_unknown: true,
+    patterns: &[],
+};
+
+/// The speakers that play, as a grid. Read the answer as for
+/// [`GET_INPUT_SIGNAL`]. This is a query for `AppCommand0300.xml`.
+pub const GET_ACTIVE_SPEAKER: Definition = Definition {
+    cmd: Cmd {
+        endpoint: Endpoint::AppCommand0300,
+        text: None,
+        name: Some("GetActiveSpeaker"),
+        params: Some(&[blank_param("activespall")]),
+        set: None,
+    },
+    blank_is_unknown: true,
+    patterns: &[],
+};
+
 /// Audyssey settings. This is a query for `AppCommand0300.xml`.
 pub const GET_AUDYSSEY: Definition = Definition {
     cmd: Cmd {

@@ -3,12 +3,13 @@
 
 use std::fmt;
 
+use crate::appcommand::{Field, Item};
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::values::{ColorSpace, PixelDepth};
 
 /// The channels of an audio signal, as they are usually written: `5.1` or
 /// `7.1.4`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ChannelLayout {
     /// Channels around the listener, without the subwoofer.
     pub bed: u8,
@@ -30,12 +31,63 @@ impl ChannelLayout {
                 .enumerate()
                 .filter(|&(_, status)| status == b'2')
                 .map(|(index, _)| index),
+            true,
         )
     }
 
-    /// Counts the channels at these positions, the same positions as in
-    /// [`ChannelLayout::from_status`]. Returns `None` if there are none.
-    pub(crate) fn from_active(positions: impl Iterator<Item = usize>) -> Option<Self> {
+    /// Counts the active channels of a grid of `AppCommand0300.xml`. `cells`
+    /// has the name of the channel (for example `FL` or `LFE`) and the
+    /// `control` number of each cell: `2` is an active channel. The names tell
+    /// the kind: the front, surround and back channels are the bed, `LFE` and
+    /// `SW` are the subwoofer, and the others (height, top and wide) are
+    /// immersive. `EXT` and empty names are not channels. Returns `None` if no
+    /// channel is active.
+    #[must_use]
+    pub fn from_grid<'a>(cells: impl Iterator<Item = (&'a str, Option<u8>)>) -> Option<Self> {
+        let mut layout = Self::default();
+        for (name, control) in cells {
+            layout.add_cell(name, control);
+        }
+        layout.non_empty()
+    }
+
+    /// Counts the active channels of the answer to `GetInputSignal` or
+    /// `GetActiveSpeaker`, as [`ChannelLayout::from_grid`] does. The text of
+    /// each `param` is the name of the channel.
+    #[must_use]
+    pub fn from_appcommand(item: &Item<'_>) -> Option<Self> {
+        let mut layout = Self::default();
+        item.params(|_, control, text| layout.add_cell(text, control));
+        layout.non_empty()
+    }
+
+    fn add_cell(&mut self, name: &str, control: Option<u8>) {
+        if control != Some(2) {
+            return;
+        }
+        match name {
+            "" | "EXT" => {}
+            "LFE" | "SW" => self.lfe = self.lfe.saturating_add(1),
+            "FL" | "FR" | "C" | "SL" | "SR" | "SBL" | "SBR" | "SB" => {
+                self.bed = self.bed.saturating_add(1);
+            }
+            _ => self.immersive = self.immersive.saturating_add(1),
+        }
+    }
+
+    fn non_empty(self) -> Option<Self> {
+        (u16::from(self.bed) + u16::from(self.lfe) + u16::from(self.immersive) > 0).then_some(self)
+    }
+
+    /// Counts the channels at these positions. Returns `None` if there are
+    /// none. The positions of the telnet text and the indexes of the web
+    /// interface page are the same up to the surround back channels. Above
+    /// that, position 13 of the telnet text is two channels (`telnet` is
+    /// true), and index 13 of the page is one.
+    pub(crate) fn from_active(
+        positions: impl Iterator<Item = usize>,
+        telnet: bool,
+    ) -> Option<Self> {
         let mut layout = Self {
             bed: 0,
             lfe: 0,
@@ -52,7 +104,7 @@ impl ChannelLayout {
             match index {
                 0..=2 | 4..=8 => layout.bed += 1,
                 3 => layout.lfe += 1,
-                13 => layout.immersive += 2,
+                13 if telnet => layout.immersive += 2,
                 _ => layout.immersive += 1,
             }
         }
@@ -205,6 +257,27 @@ impl SignalState {
             )
         } else {
             false
+        }
+    }
+
+    /// Applies a value of the answer to `GetVideoInfo` or `GetAudioInfo`.
+    /// Returns true if a value changed. The text has no signal if it is
+    /// blank, `---` or `Unknown`.
+    pub(crate) fn apply_appcommand(&mut self, field: Field, value: Option<&str>) -> bool {
+        let value = value.map(str::trim);
+        match field {
+            Field::VideoSignalIn => self.video.set_text(true, value.and_then(video)),
+            Field::VideoSignalOut => self.video.set_text(false, value.and_then(video)),
+            Field::AudioSignal => set_text(&mut self.audio_signal, value.and_then(audio_text)),
+            Field::AudioSound => set_text(&mut self.audio_sound, value.and_then(audio_text)),
+            // The text is the rate and the unit, for example `48 kHz`.
+            Field::SamplingRate => set_text(
+                &mut self.sampling_rate,
+                value
+                    .map(|rate| rate.trim_end_matches("kHz"))
+                    .and_then(sampling_rate),
+            ),
+            _ => false,
         }
     }
 
@@ -492,5 +565,68 @@ mod tests {
         for text in ["", "SVOUT", "HDMIDIAGERR NO", "SMX"] {
             assert!(!signal.apply_sy(text), "{text}");
         }
+    }
+
+    /// Applies an answer of `AppCommand0300.xml` in the order of the app
+    /// request: input signal, active speakers, video info, audio info.
+    fn apply_answer(state: &mut crate::State, body: &[u8]) {
+        use crate::Zone;
+        use crate::appcommand::{
+            GET_ACTIVE_SPEAKER, GET_AUDIO_INFO, GET_AUDYSSEY, GET_INPUT_SIGNAL, GET_VIDEO_INFO,
+            Response,
+        };
+        let commands = [
+            GET_INPUT_SIGNAL,
+            GET_ACTIVE_SPEAKER,
+            GET_VIDEO_INFO,
+            GET_AUDIO_INFO,
+            GET_AUDYSSEY,
+        ];
+        let response = Response::parse(body, commands.len()).unwrap();
+        for (definition, item) in commands.iter().zip(response.items()) {
+            definition.extract(&item, Zone::Main, &mut |field, value| {
+                state.apply_field(Zone::Main, field, value);
+            });
+            if *definition == GET_INPUT_SIGNAL || *definition == GET_ACTIVE_SPEAKER {
+                let layout = ChannelLayout::from_appcommand(&item);
+                state.apply_channel_grid(*definition == GET_INPUT_SIGNAL, layout);
+            }
+        }
+    }
+
+    #[test]
+    fn the_appcommand_answer_with_a_dolby_atmos_signal() {
+        let mut state = crate::State::new(false);
+        apply_answer(
+            &mut state,
+            include_bytes!("../tests/data/xml/AVC-A10H-AppCommand0300-answer-atmos.xml"),
+        );
+        let signal = &state.device().signal;
+        assert_eq!(signal.video.input.as_deref(), Some("4K50"));
+        assert_eq!(signal.video.output.as_deref(), Some("4K50"));
+        assert_eq!(signal.audio_signal.as_deref(), Some("Dolby Atmos"));
+        assert_eq!(signal.audio_sound.as_deref(), Some("Dolby Atmos"));
+        assert_eq!(signal.sampling_rate.as_deref(), Some("48"));
+        assert_eq!(signal.channels.input.unwrap().to_string(), "7.1");
+        assert_eq!(signal.channels.output.unwrap().to_string(), "7.1.4");
+    }
+
+    #[test]
+    fn the_appcommand_answer_without_a_signal_has_no_values() {
+        let mut state = crate::State::new(false);
+        apply_answer(
+            &mut state,
+            include_bytes!("../tests/data/xml/AVC-A10H-AppCommand0300-answer-atmos.xml"),
+        );
+        apply_answer(
+            &mut state,
+            include_bytes!("../tests/data/xml/AVC-A10H-AppCommand0300-answer-nosignal.xml"),
+        );
+        // The second answer clears what the first one set.
+        let signal = &state.device().signal;
+        assert_eq!(signal.video.input, None);
+        assert_eq!(signal.audio_signal, None);
+        assert_eq!(signal.sampling_rate, None);
+        assert_eq!(signal.channels.input, None);
     }
 }

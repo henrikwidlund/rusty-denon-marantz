@@ -270,6 +270,55 @@ pub(crate) async fn avr_x_receiver_with_pages(
     .await
 }
 
+/// The answer of `AppCommand0300.xml` to the five queries of the update, in
+/// the order that the library sends them. `audyssey` is the list of the
+/// Audyssey parameters.
+pub(crate) fn appcommand0300_answer(audyssey: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx>\
+        <cmd><name>GetAudyssey</name><list>{audyssey}</list></cmd>\
+        <cmd><name>GetVideoInfo</name><list>\
+        <param name=\"videooutput\" control=\"1\">TV 1</param>\
+        <param name=\"hdmisigin\" control=\"1\">4K50</param>\
+        <param name=\"hdmisigout\" control=\"1\">---</param></list></cmd>\
+        <cmd><name>GetAudioInfo</name><list>\
+        <param name=\"inputmode\" control=\"1\">HDMI</param>\
+        <param name=\"output\" control=\"1\">Speaker</param>\
+        <param name=\"signal\" control=\"1\">Dolby Atmos </param>\
+        <param name=\"sound\" control=\"1\">Stereo</param>\
+        <param name=\"fs\" control=\"1\">44.1 kHz</param></list></cmd>\
+        <cmd><name>GetInputSignal</name><list>\
+        <param name=\"inputsiga1\" control=\"2\">FL</param>\
+        <param name=\"inputsigb1\" control=\"2\">FR</param>\
+        <param name=\"inputsigc1\" control=\"1\">C</param></list></cmd>\
+        <cmd><name>GetActiveSpeaker</name><list>\
+        <param name=\"activespa1\" control=\"2\">FL</param>\
+        <param name=\"activespb1\" control=\"2\">FR</param>\
+        <param name=\"activespc1\" control=\"2\">SW</param>\
+        <param name=\"activespd1\" control=\"2\">FHL</param></list></cmd></rx>"
+    )
+}
+
+/// A fake 2016 receiver. It answers the Audyssey query with `audyssey`, or
+/// with a 404 if that is `None`.
+pub(crate) async fn receiver_with_audyssey(audyssey: Option<&'static str>, tone: bool) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+            ("POST", "/goform/AppCommand0300.xml") => audyssey.map_or(Reply::Status(404), |body| {
+                Reply::Body(body.as_bytes().to_vec())
+            }),
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
+                Reply::Body(friendly_name_answer("X"))
+            }
+            ("POST", _) if tone => Reply::Body(update_answer_with_tone()),
+            ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
+            _ => Reply::Status(404),
+        },
+    )
+    .await
+}
+
 /// A fake web interface that answers `GET` for the paths in `pages` and 404
 /// for all others.
 pub(crate) async fn web_interface_with_pages(
