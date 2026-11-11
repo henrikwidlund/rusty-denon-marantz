@@ -43,7 +43,7 @@
 //! digital-codec CODE (AUTO, PCM, DTS), favorite N, favorite-store N (N is 1 to 3),
 //! bluetooth on or off, bluetooth-output SP or BT, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
 //! illumination-next, quick-select N, quick-select-store N (N is 1 to 6, some models have only 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
-//! sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
+//! sound-mode-entry CATEGORY/NAME (MOV, MUS, GAM or PUR, from the list of the receiver), sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
 //! sleep off or MINUTES, zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
 //! zone-treble-down, zone-left DB, zone-left-up, zone-left-down, zone-right DB, zone-right-up,
 //! zone-right-down, zone-hpf on or off, zone-channel ST or MONO, zone-hdmi-audio THR or PCM,
@@ -198,7 +198,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 45] = [
+const SOUND_COMMANDS: [&str; 46] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -231,6 +231,7 @@ const SOUND_COMMANDS: [&str; 45] = [
     "channel-up",
     "channel-down",
     "channel-reset",
+    "sound-mode-entry",
     "speaker-details",
     "source-details",
     "video-details",
@@ -481,6 +482,7 @@ async fn sound_extra_command(
             avr.sound().channel_volume_down(channel).await?;
         }
         "channel-reset" => avr.sound().reset_channel_volumes().await?,
+        "sound-mode-entry" => select_sound_mode_entry(avr, need()?).await?,
         "now-playing" => {
             println!("page: {:?}", avr.update_now_playing().await?);
             println!("{:#?}", avr.snapshot().device().now_playing);
@@ -981,6 +983,29 @@ async fn run(
         avr.telnet_send(zone, command(name, argument)?).await?;
         Ok(())
     }
+}
+
+/// Selects a sound mode from the list of the receiver, for example `MOV/Dolby Surround`.
+async fn select_sound_mode_entry(
+    avr: &Avr,
+    argument: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (category, mode) = argument
+        .split_once('/')
+        .ok_or("sound-mode-entry is CATEGORY/NAME, for example MOV/Dolby Surround")?;
+    let snapshot = avr.snapshot();
+    let entry = snapshot
+        .device()
+        .sound_modes
+        .as_slice()
+        .iter()
+        .find(|entry| {
+            entry.category.code().eq_ignore_ascii_case(category)
+                && entry.name.eq_ignore_ascii_case(mode)
+        })
+        .ok_or("that entry is not in the list of the receiver")?;
+    avr.zone(Zone::Main)?.select_sound_mode_entry(entry).await?;
+    Ok(())
 }
 
 /// Refuses a name that is not a command, without a connection.
