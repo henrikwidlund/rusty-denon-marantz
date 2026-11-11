@@ -132,12 +132,16 @@ it is open, and HTTP otherwise, with `GET /goform/formiPhoneAppDirect.xml`.
 A program that does not want telnet never opens it: use
 `StartOptions::new().telnet(false)`. Over HTTP:
 
+- The receiver answers `200` whether or not it did the command, as telnet
+  gives no answer either. At a high rate, for example a held key, a command can
+  be lost without an error.
 - The receiver does not answer a command, as on telnet, and it sends no events.
   Queries (`PW?`) need telnet.
 - After a command, the values that it changed are read, for example the volume
   and mute after a volume command. The read waits until no command came for
   500 ms, and not longer than 2 s, so a held key causes few reads. The
-  receiver shows a new sound mode late, so that one is read again after 1.5 s.
+  receiver shows a new source or sound mode late, so these are read again
+  after 1.5 s.
   Change this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
 - Settings that `update()` does not read, such as tone or Audyssey, change in
   the state when you read them.

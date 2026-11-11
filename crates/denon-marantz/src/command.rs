@@ -73,6 +73,9 @@ impl Reads {
     pub(crate) const fn bit(self) -> u8 {
         1 << self as u8
     }
+
+    /// The values that the receiver shows late: the source and the sound mode.
+    pub(crate) const SLOW: u8 = Self::Source.bit() | Self::SoundMode.bit();
 }
 
 #[cfg(test)]

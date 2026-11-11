@@ -26,7 +26,7 @@ const fn quick() -> FollowUpRead {
     FollowUpRead {
         quiet: Duration::from_millis(60),
         longest_wait: Duration::from_millis(200),
-        sound_mode_again: Duration::from_millis(100),
+        second_read: Duration::from_millis(100),
     }
 }
 
@@ -157,8 +157,9 @@ async fn a_key_that_is_held_down_causes_few_reads() {
 }
 
 #[tokio::test]
-async fn the_sound_mode_is_read_a_second_time() {
-    // The receiver shows a new sound mode late, so one read is not enough.
+async fn the_source_is_read_a_second_time_with_the_sound_mode() {
+    // The receiver shows a new source or sound mode late, so one read is not
+    // enough.
     let fake = receiver().await;
     let avr = connect(&fake, Some(quick())).await;
     let known = fake.requests().len();
@@ -167,11 +168,35 @@ async fn the_sound_mode_is_read_a_second_time() {
         .select_sound_mode("MOVIE")
         .await
         .unwrap();
-    wait_until("both reads", || reads_after(&fake, known).len() >= 2).await;
+    avr.zone(Zone::Main)
+        .unwrap()
+        .select_source("GAME")
+        .await
+        .unwrap();
+    // The first read has both, and the second read has both again.
+    wait_until("both reads", || reads_after(&fake, known).len() >= 3).await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let reads = reads_after(&fake, known);
-    assert_eq!(reads.len(), 2, "{reads:?}");
-    assert!(reads.iter().all(|r| r.contains("GetSurroundModeStatus")));
+    assert_eq!(reads.len(), 4, "{reads:?}");
+    let source = reads
+        .iter()
+        .filter(|r| r.contains("GetAllZoneSource"))
+        .count();
+    let mode = reads
+        .iter()
+        .filter(|r| r.contains("GetSurroundModeStatus"))
+        .count();
+    assert_eq!((source, mode), (2, 2));
+}
+
+#[tokio::test]
+async fn a_volume_command_is_not_read_a_second_time() {
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick())).await;
+    let known = fake.requests().len();
+    avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(reads_after(&fake, known).len(), 1);
 }
 
 #[tokio::test]
@@ -216,7 +241,7 @@ async fn the_follow_up_settings_are_checked() {
     let bad = FollowUpRead {
         quiet: Duration::ZERO,
         longest_wait: Duration::from_secs(1),
-        sound_mode_again: Duration::from_secs(1),
+        second_read: Duration::from_secs(1),
     };
     let error = builder(&fake, ReceiverType::AvrX)
         .follow_up_read(Some(bad))

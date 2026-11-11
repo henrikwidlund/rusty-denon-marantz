@@ -24,16 +24,17 @@ use crate::http::HttpClient;
 /// while commands keep coming. The read has only the values that the command
 /// changed: for example the volume and mute for a volume command.
 ///
-/// The receiver shows a new sound mode late in its answers. So the sound mode
-/// is read once more `sound_mode_again` after the first read.
+/// The receiver shows a new source or sound mode late in its answers. So these
+/// are read once more `second_read` after the first read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FollowUpRead {
     /// Time without a command before the read.
     pub quiet: Duration,
     /// Longest time between the first command and the read.
     pub longest_wait: Duration,
-    /// Time after a read of the sound mode until it is read again.
-    pub sound_mode_again: Duration,
+    /// Time after a read of the source or the sound mode until it is read
+    /// again.
+    pub second_read: Duration,
 }
 
 impl Default for FollowUpRead {
@@ -41,16 +42,16 @@ impl Default for FollowUpRead {
         Self {
             quiet: Duration::from_millis(500),
             longest_wait: Duration::from_secs(2),
-            sound_mode_again: Duration::from_millis(1500),
+            second_read: Duration::from_millis(1500),
         }
     }
 }
 
 impl FollowUpRead {
     pub(super) const fn check(&self) -> Result<(), Error> {
-        if self.quiet.is_zero() || self.longest_wait.is_zero() || self.sound_mode_again.is_zero() {
+        if self.quiet.is_zero() || self.longest_wait.is_zero() || self.second_read.is_zero() {
             return Err(Error::InvalidConfig(
-                "quiet, longest_wait and sound_mode_again must be above 0",
+                "quiet, longest_wait and second_read must be above 0",
             ));
         }
         Ok(())
@@ -154,16 +155,19 @@ async fn run(
     requests: Vec<Request>,
     mut queue: mpsc::UnboundedReceiver<u8>,
 ) {
-    // When the sound mode is read once more.
+    // When the source and the sound mode are read once more, and what was
+    // asked since.
     let mut again: Option<Instant> = None;
+    let mut again_wanted = 0_u8;
     loop {
         let first = if let Some(at) = again {
             tokio::select! {
                 bits = queue.recv() => bits,
                 () = sleep_until(at) => {
                     again = None;
-                    tracing::debug!("second read of the sound mode over HTTP");
-                    read_logged(&reader, &requests, Reads::SoundMode.bit()).await;
+                    let wanted = std::mem::take(&mut again_wanted);
+                    tracing::debug!(wanted, "second read over HTTP");
+                    read_logged(&reader, &requests, wanted).await;
                     continue;
                 }
             }
@@ -189,8 +193,10 @@ async fn run(
         }
         tracing::debug!(wanted, "read after commands over HTTP");
         read_logged(&reader, &requests, wanted).await;
-        if wanted & Reads::SoundMode.bit() != 0 {
-            again = Some(Instant::now() + config.sound_mode_again);
+        let slow = wanted & Reads::SLOW;
+        if slow != 0 {
+            again_wanted |= slow;
+            again = Some(Instant::now() + config.second_read);
         }
     }
 }

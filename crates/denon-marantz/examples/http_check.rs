@@ -135,7 +135,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if phase != "queries" {
-        put_back(&avr, &original, phase == "effects").await;
+        put_back(
+            &avr,
+            &original,
+            phase == "effects",
+            phase.ends_with("effects"),
+        )
+        .await;
     }
     result
 }
@@ -256,7 +262,11 @@ async fn effects(
         .await;
     }
     let sources = avr.snapshot();
-    let current = original.source.as_deref().and_then(display_to_select_code);
+    // The state can hold the display name or the telnet name of the source.
+    let current = original
+        .source
+        .as_deref()
+        .map(|name| display_to_select_code(name).unwrap_or(name));
     let other = sources
         .device()
         .sources
@@ -453,7 +463,7 @@ async fn load(
 }
 
 /// Puts back the volume and what the other phases change.
-async fn put_back(avr: &Avr, original: &Original, sound_mode: bool) {
+async fn put_back(avr: &Avr, original: &Original, sound_mode: bool, source: bool) {
     let _ = timeout(Duration::from_secs(3), async {
         let _ = avr
             .http_send(Zone::Main, Command::SetVolume(original.volume))
@@ -474,4 +484,37 @@ async fn put_back(avr: &Avr, original: &Original, sound_mode: bool) {
     })
     .await;
     println!("RESULT put_back volume_and_mute={}", back.is_some());
+    if source {
+        put_back_source(avr, original).await;
+    }
+}
+
+/// Reads the receiver, and puts the source back if it differs. The state can
+/// be old right after a command, so this reads again first.
+async fn put_back_source(avr: &Avr, original: &Original) {
+    let Some(home) = original.source.as_deref() else {
+        return;
+    };
+    let code = display_to_select_code(home).unwrap_or(home);
+    for _ in 0..2 {
+        sleep(Duration::from_secs(3)).await;
+        if avr.update().await.is_ok()
+            && avr.snapshot().zone(Zone::Main).source.as_deref() == Some(home)
+        {
+            break;
+        }
+        let _ = avr.http_send(Zone::Main, Command::SelectSource(code)).await;
+    }
+    sleep(Duration::from_secs(3)).await;
+    let _ = avr.update().await;
+    let state = avr.snapshot();
+    let main = state.zone(Zone::Main);
+    println!(
+        "RESULT final source={:?} (was {:?}) sound_mode={:?} (was {:?}) same={}",
+        main.source,
+        original.source,
+        main.sound_mode,
+        original.sound_mode,
+        main.source == original.source && main.sound_mode == original.sound_mode
+    );
 }
