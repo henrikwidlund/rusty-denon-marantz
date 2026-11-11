@@ -2067,3 +2067,35 @@ async fn a_page_does_not_hide_the_next_telnet_event_with_the_old_value() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_sound_mode_of_the_list_is_selected_with_its_code() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    telnet.send(b"OPSMLALL MOV020Dolby Surround\rOPSMLALL MOV030Something New\rOPSMLALL END\r");
+    wait_until("the list", || {
+        avr.snapshot().device().sound_modes.as_slice().len() == 2
+    })
+    .await;
+    let state = avr.snapshot();
+    let modes = state.device().sound_modes.as_slice();
+    let main = avr.zone(Zone::Main).unwrap();
+    main.select_sound_mode_entry(&modes[0]).await.unwrap();
+    // A mode without a known code sends nothing.
+    let error = main.select_sound_mode_entry(&modes[1]).await.unwrap_err();
+    assert!(matches!(error, Error::UnknownSoundMode(_)), "{error:?}");
+    assert!(error.is_invalid_input());
+    // Only the main zone has a sound mode.
+    let error = avr
+        .zone(Zone::Zone2)
+        .unwrap()
+        .select_sound_mode_entry(&modes[0])
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, Error::NoSoundMode(Zone::Zone2)),
+        "{error:?}"
+    );
+    wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
+    assert_eq!(commands_sent(&telnet), ["MSDOLBY DIGITAL"]);
+}

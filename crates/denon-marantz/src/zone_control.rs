@@ -2,8 +2,8 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    AutoStandby, MuteLevel, PowerOnVolume, RemoteKey, Sleep, ToneLevel, Volume, VolumeDisplay,
-    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio, ZoneSettingValue,
+    AutoStandby, MuteLevel, PowerOnVolume, RemoteKey, Sleep, SoundModeEntry, ToneLevel, Volume,
+    VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio, ZoneSettingValue,
 };
 
 use crate::avr::Avr;
@@ -209,6 +209,27 @@ impl<'a> ZoneControl<'a> {
             return Err(Error::NoSoundMode(self.zone));
         }
         self.send(Command::SelectSoundMode(name)).await
+    }
+
+    /// Selects a sound mode that the receiver offers, from the list in the
+    /// state ([`DeviceState::sound_modes`](denon_marantz_proto::DeviceState::sound_modes)).
+    /// It sends the code of the mode, see [`SoundModeEntry::code`]. The
+    /// receiver reports the mode that it selected under its own name, so
+    /// read the state to see it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSoundMode`], and sends nothing, for a zone other
+    /// than the main zone. Returns [`Error::UnknownSoundMode`], and sends
+    /// nothing, if the library has no code for the name of the mode.
+    pub async fn select_sound_mode_entry(&self, entry: &SoundModeEntry) -> Result<(), Error> {
+        if self.zone != Zone::Main {
+            return Err(Error::NoSoundMode(self.zone));
+        }
+        let code = entry
+            .code()
+            .ok_or_else(|| Error::UnknownSoundMode(entry.name.clone()))?;
+        self.send(Command::SelectSoundMode(code)).await
     }
 
     /// Presses a remote key that has no telnet command, for example

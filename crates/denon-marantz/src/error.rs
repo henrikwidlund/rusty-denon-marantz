@@ -90,6 +90,11 @@ pub enum Error {
     /// for was missing, refused or not readable.
     #[error("nothing was read for the {0}")]
     NothingRead(&'static str),
+    /// The library does not know the code of this sound mode of the list, so
+    /// nothing was sent. Select it with the code, see
+    /// `ZoneControl::select_sound_mode`.
+    #[error("the library has no code for the sound mode {0}")]
+    UnknownSoundMode(String),
     /// The runtime stopped the task of a start before it was finished. It
     /// is only in the report of that start.
     #[error("the start was stopped before it finished")]
@@ -178,6 +183,7 @@ impl Error {
             | Self::AudysseyBlockedByDirac
             | Self::DiracSlotOutOfRange(_)
             | Self::UnknownDiracSlot(_)
+            | Self::UnknownSoundMode(_)
             | Self::DiracNotSupported
             | Self::InvalidConfig(_)
             | Self::ResetKeyInvalid => None,
@@ -208,6 +214,7 @@ impl Error {
                 | Self::AudysseyBlockedByDirac
                 | Self::DiracSlotOutOfRange(_)
                 | Self::UnknownDiracSlot(_)
+                | Self::UnknownSoundMode(_)
                 | Self::DiracNotSupported
                 | Self::InvalidConfig(_)
                 | Self::ResetKeyInvalid

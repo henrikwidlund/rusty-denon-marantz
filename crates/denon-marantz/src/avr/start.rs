@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 #[cfg(feature = "telnet")]
+use denon_marantz_proto::ReceiverType;
+#[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{SignalPart, after_appcommand_queries, signal_queries};
 use denon_marantz_proto::{
     AUDIO_CHANNELS_PATH, AudioChannelsPage, GroupAvailability, SettingsGroup, State,
@@ -191,13 +193,20 @@ impl Avr {
 
     /// Opens telnet. After an `AppCommand` read, the first queries are the
     /// ones that it does not answer. Another receiver gets the groups of the
-    /// settings.
+    /// settings. The receiver pushes changes of the signal by itself, so the
+    /// queries for the signal are only for the first value. A receiver with
+    /// `AppCommand0300.xml` gives the kind of the audio and the sampling rate
+    /// there, and is asked only if it does not answer.
     #[cfg(feature = "telnet")]
     async fn start_telnet(&self) -> TelnetStart {
         let first = (self.info.update_method == UpdateMethod::AppCommand).then(|| {
-            after_appcommand_queries(self.info.brand)
-                .chain(signal_queries(self.info.brand, SignalPart::Audio))
-                .collect()
+            let brand = self.info.brand;
+            let mut queries: Vec<&'static str> = after_appcommand_queries(brand).collect();
+            if !self.has_appcommand0300() {
+                queries.extend(signal_queries(brand, SignalPart::AudioInfo));
+            }
+            queries.extend(signal_queries(brand, SignalPart::TelnetOnly));
+            queries
         });
         match self
             .telnet
@@ -242,6 +251,10 @@ impl Avr {
         // pages are not read.
         channels |= self.signal_from_appcommand.load(Ordering::Relaxed);
         let mut queries = Vec::new();
+        // The first queries left these out for a receiver with `AppCommand0300.xml`.
+        if self.has_appcommand0300() && !self.signal_from_appcommand.load(Ordering::Relaxed) {
+            queries.extend(signal_queries(brand, SignalPart::AudioInfo));
+        }
         if !video {
             queries.extend(signal_queries(brand, SignalPart::Video));
         }
@@ -251,6 +264,14 @@ impl Avr {
         if !queries.is_empty() && self.telnet.ask(queries).await.is_err() {
             tracing::debug!(host = %self.info.host, "signal queries not sent, telnet closed");
         }
+    }
+
+    /// The receiver is of a generation that has `AppCommand0300.xml`. The
+    /// first queries leave out the audio values for it, and `update_signal`
+    /// or the fallback after it gives them.
+    #[cfg(feature = "telnet")]
+    fn has_appcommand0300(&self) -> bool {
+        self.info.receiver_type == ReceiverType::AvrX2016
     }
 
     async fn read_video_page(&self) -> Result<PageStatus, Error> {
@@ -321,7 +342,11 @@ impl Avr {
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
             let (video, channels) = (is_read(&video), is_read(&channels));
             let mut queries: Vec<&'static str> =
-                signal_queries(self.info.brand, SignalPart::Audio).collect();
+                signal_queries(self.info.brand, SignalPart::TelnetOnly).collect();
+            // `AppCommand0300.xml` gave the audio values, if it answered.
+            if !answered {
+                queries.extend(signal_queries(self.info.brand, SignalPart::AudioInfo));
+            }
             if !video {
                 queries.extend(signal_queries(self.info.brand, SignalPart::Video));
             }

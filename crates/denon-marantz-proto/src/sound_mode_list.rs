@@ -2,6 +2,8 @@
 
 use std::mem;
 
+use crate::sound_mode::SoundModeGroup;
+
 code_enum! {
     /// Group of a sound mode in the list of the receiver.
     pub enum SoundModeCategory {
@@ -22,6 +24,63 @@ pub struct SoundModeEntry {
     /// Name of the mode, for example `Dolby Surround`. The same name can be
     /// in more than one group.
     pub name: String,
+}
+
+/// The names of the list and the group whose code selects the mode. The names
+/// are the ones that receivers write in the list. Some receivers write the
+/// same mode in another way, so a name that is not here has no code.
+const LIST_NAMES: [(&str, SoundModeGroup); 22] = [
+    ("Stereo", SoundModeGroup::Stereo),
+    ("Dolby Surround", SoundModeGroup::DolbyDigital),
+    ("Dolby Digital", SoundModeGroup::DolbyDigital),
+    ("DTS Neural:X", SoundModeGroup::DtsSurround),
+    ("DTS Surround", SoundModeGroup::DtsSurround),
+    ("AURO-3D", SoundModeGroup::Auro3d),
+    ("AURO Surround", SoundModeGroup::Auro2dSurround),
+    ("Multi Ch Stereo", SoundModeGroup::McHStereo),
+    ("Multi Channel Stereo", SoundModeGroup::McHStereo),
+    ("Mono Movie", SoundModeGroup::MonoMovie),
+    ("Rock Arena", SoundModeGroup::RockArena),
+    ("Jazz Club", SoundModeGroup::JazzClub),
+    ("Matrix", SoundModeGroup::Matrix),
+    ("Video Game", SoundModeGroup::VideoGame),
+    ("Super Stadium", SoundModeGroup::SuperStadium),
+    ("Classic Concert", SoundModeGroup::ClassicConcert),
+    ("Wide Screen", SoundModeGroup::WideScreen),
+    ("Virtual", SoundModeGroup::Virtual),
+    ("All Zone Stereo", SoundModeGroup::AllZoneStereo),
+    ("Direct", SoundModeGroup::Direct),
+    ("Pure Direct", SoundModeGroup::PureDirect),
+    ("Auto", SoundModeGroup::Auto),
+];
+
+impl SoundModeEntry {
+    /// The group whose code selects this mode, if the library knows the name.
+    #[must_use]
+    pub fn group(&self) -> Option<SoundModeGroup> {
+        LIST_NAMES
+            .iter()
+            .find(|(name, _)| {
+                // Case and extra spaces do not matter.
+                name.split_whitespace()
+                    .map(str::to_ascii_lowercase)
+                    .eq(self.name.split_whitespace().map(str::to_ascii_lowercase))
+            })
+            .map(|(_, group)| *group)
+    }
+
+    /// The code that selects this mode, for example `DOLBY DIGITAL` for
+    /// `Dolby Surround`. `None` if the library does not know the name.
+    ///
+    /// The code does not say the category: when a name is in more than one
+    /// category (Movie, Music and Game), the receiver chooses the one that
+    /// fits the current mode. The receiver reports the active mode under its
+    /// own raw name (for example `DOLBY AUDIO - DOLBY SURROUND`), which is
+    /// not the code.
+    #[must_use]
+    pub fn code(&self) -> Option<&'static str> {
+        self.group().map(SoundModeGroup::code)
+    }
 }
 
 /// The sound modes of a receiver, in the order that the receiver reports them.
@@ -174,5 +233,49 @@ mod tests {
         assert_eq!(list.apply_op("DLSSL1NAME Cinema"), None);
         assert_eq!(list.apply_op("SML 011Stereo"), None);
         assert_eq!(list.apply_op("STS 0000"), None);
+    }
+
+    fn entry(category: SoundModeCategory, name: &str) -> SoundModeEntry {
+        SoundModeEntry {
+            category,
+            index: 1,
+            name: name.to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_modes_of_the_a10h_have_a_code() {
+        use SoundModeCategory::{Game, Movie, Music, Pure};
+        let list = [
+            (Movie, "Stereo", "STEREO"),
+            (Movie, "Dolby Surround", "DOLBY DIGITAL"),
+            (Movie, "DTS Neural:X", "DTS SURROUND"),
+            (Movie, "AURO-3D", "AURO3D"),
+            (Movie, "AURO Surround", "AURO2DSURR"),
+            (Movie, "Multi Ch Stereo", "MCH STEREO"),
+            (Movie, "Mono Movie", "MONO MOVIE"),
+            (Music, "Dolby Surround", "DOLBY DIGITAL"),
+            (Music, "Rock Arena", "ROCK ARENA"),
+            (Music, "Jazz Club", "JAZZ CLUB"),
+            (Music, "Matrix", "MATRIX"),
+            (Game, "Video Game", "VIDEO GAME"),
+            (Pure, "Direct", "DIRECT"),
+            (Pure, "Pure Direct", "PURE DIRECT"),
+        ];
+        for (category, name, code) in list {
+            assert_eq!(entry(category, name).code(), Some(code), "{name}");
+        }
+    }
+
+    #[test]
+    fn case_and_spaces_in_a_name_do_not_matter_and_an_unknown_name_has_no_code() {
+        let movie = SoundModeCategory::Movie;
+        assert_eq!(
+            entry(movie, "  dolby   SURROUND ").code(),
+            Some("DOLBY DIGITAL")
+        );
+        assert_eq!(entry(movie, "Something New").code(), None);
+        assert_eq!(entry(movie, "").code(), None);
+        assert_eq!(entry(movie, "Stereo").group(), Some(SoundModeGroup::Stereo));
     }
 }

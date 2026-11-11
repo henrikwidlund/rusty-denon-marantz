@@ -89,7 +89,7 @@ mod zone_control;
 pub use denon_marantz_proto as proto;
 pub use denon_marantz_proto::{
     Brand, Change, Channel, ChannelLevel, DeviceState, NowPlaying, PlayingKind, ReceiverType,
-    Setting, State, ToneLevel, Volume, Zone, ZoneState,
+    Setting, SoundModeEntry, State, ToneLevel, Volume, Zone, ZoneState,
 };
 pub use error::{Error, ToneBlocker};
 pub use pacer::{Adaptive, Pacer, Pacing};

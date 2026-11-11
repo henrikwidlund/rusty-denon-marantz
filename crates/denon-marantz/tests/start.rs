@@ -513,3 +513,52 @@ async fn refresh_signal_uses_appcommand_for_the_channels() {
             .any(|seen| seen.path == VIDEO_SIGNAL_PATH)
     );
 }
+
+async fn start_2016_receiver(answer: Option<&'static str>) -> FakeTelnet {
+    let web = web_interface().await;
+    let receiver = common::receiver_with_audyssey(answer, true).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = Arc::new(
+        builder(&receiver, ReceiverType::AvrX2016)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    avr.start().await.unwrap().finished().await;
+    wait_until("the last first query", || {
+        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
+    })
+    .await;
+    // The queries of the fallback come after the first ones.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    telnet
+}
+
+#[tokio::test]
+async fn a_receiver_with_appcommand_is_not_asked_for_the_audio_values_over_telnet() {
+    let answer: &'static str = Box::leak(common::appcommand0300_answer("").into_boxed_str());
+    let telnet = start_2016_receiver(Some(answer)).await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    // The receiver pushes changes by itself, so these were only for the first
+    // value, and AppCommand gave it.
+    for query in ["SYSDA ?", "SYSMI ?", "SSINFAISFSV ?"] {
+        assert!(!sent.contains(&query), "{query}");
+    }
+    // What only telnet answers is still asked.
+    assert!(sent.contains(&"SYHDMIDIAGMAXRES ?"));
+    assert!(sent.contains(&"SSINFSIGECI ?"));
+}
+
+#[tokio::test]
+async fn a_receiver_that_does_not_answer_appcommand_gets_the_audio_queries_later() {
+    let telnet = start_2016_receiver(None).await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    for query in ["SYSDA ?", "SYSMI ?", "SSINFAISFSV ?"] {
+        assert!(sent.contains(&query), "{query}");
+    }
+}

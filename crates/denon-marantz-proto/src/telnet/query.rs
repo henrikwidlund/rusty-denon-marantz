@@ -150,9 +150,11 @@ pub enum SignalPart {
     /// The channels. The web interface page
     /// [`AUDIO_CHANNELS_PATH`](crate::AUDIO_CHANNELS_PATH) answers it.
     Channels,
-    /// The audio signal, the sampling rate and the HDMI limit. Only telnet
-    /// answers it.
-    Audio,
+    /// The kind of the audio signal and of the sound, and the sampling rate.
+    /// `AppCommand0300.xml` answers it too ([`GET_AUDIO_INFO`](crate::appcommand::GET_AUDIO_INFO)).
+    AudioInfo,
+    /// The HDMI limit and the extended colorimetry. Only telnet answers it.
+    TelnetOnly,
 }
 
 impl SignalPart {
@@ -161,7 +163,8 @@ impl SignalPart {
             "SSINFSIGRES ?" | "SYSDVIN ?" | "SYSDVOUT ?" | "SSINFSIGHDR ?" | "SSINFSIGPIX ?"
             | "SSINFSIGFRL ?" | "SSINFSIGCOS ?" => Self::Video,
             "OPINFASP ?" | "OPINFINS ?" => Self::Channels,
-            _ => Self::Audio,
+            "SSINFAISFSV ?" | "SYSDA ?" | "SYSMI ?" => Self::AudioInfo,
+            _ => Self::TelnetOnly,
         }
     }
 }
@@ -467,13 +470,20 @@ mod tests {
     fn the_parts_of_the_signal_group_cover_it() {
         for brand in [Brand::Denon, Brand::Marantz] {
             let all = group_queries(brand, Signal).count();
-            let parts: usize = [SignalPart::Video, SignalPart::Channels, SignalPart::Audio]
-                .into_iter()
-                .map(|part| signal_queries(brand, part).count())
-                .sum();
+            let parts: usize = [
+                SignalPart::Video,
+                SignalPart::Channels,
+                SignalPart::AudioInfo,
+                SignalPart::TelnetOnly,
+            ]
+            .into_iter()
+            .map(|part| signal_queries(brand, part).count())
+            .sum();
             assert_eq!(all, parts);
             assert_eq!(signal_queries(brand, SignalPart::Channels).count(), 2);
-            assert!(signal_queries(brand, SignalPart::Audio).any(|q| q == "SYSDA ?"));
+            assert!(signal_queries(brand, SignalPart::AudioInfo).any(|q| q == "SYSDA ?"));
+            assert_eq!(signal_queries(brand, SignalPart::AudioInfo).count(), 3);
+            assert!(signal_queries(brand, SignalPart::TelnetOnly).any(|q| q == "SSINFSIGECI ?"));
             assert!(!signal_queries(brand, SignalPart::Video).any(|q| q == "SYSDA ?"));
         }
     }
