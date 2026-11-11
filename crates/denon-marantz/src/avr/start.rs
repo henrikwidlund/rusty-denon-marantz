@@ -113,6 +113,25 @@ pub struct StartReport {
     pub web_interface: Result<StartPages, Error>,
 }
 
+/// Marks a start as running, from the call until the task of the start ends.
+/// It also ends when the call is dropped or the task is stopped.
+struct StartGuard(Arc<Avr>);
+
+impl StartGuard {
+    fn new(avr: &Arc<Avr>) -> Result<Self, Error> {
+        avr.starting
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| Error::StartRunning)?;
+        Ok(Self(Arc::clone(avr)))
+    }
+}
+
+impl Drop for StartGuard {
+    fn drop(&mut self) {
+        self.0.starting.store(false, Ordering::Release);
+    }
+}
+
 /// A start that runs in the background. Dropping it does not stop the start.
 #[derive(Debug)]
 pub struct Started {
@@ -154,7 +173,9 @@ impl Avr {
     /// Fills the state as fast as the receiver allows.
     ///
     /// It reads the zones with [`Avr::update`]. If that works, it opens telnet
-    /// and returns, so the state is usable then. In the background it asks
+    /// and returns, so the state is usable then. If the telnet port does not
+    /// answer, the call waits for the connect timeout of the telnet settings
+    /// first. In the background it asks
     /// telnet first for what the HTTP read does not give. It
     /// also reads, one after the other, the pages that say which settings are
     /// available, and the signal pages, with one more try for a page that
@@ -171,9 +192,14 @@ impl Avr {
     /// The errors of [`Avr::update`]. Telnet is not opened then. A failure of
     /// telnet or of the web interface is in the report.
     ///
+    /// [`Error::StartRunning`] if another start of this receiver is still
+    /// running, also in the background. Nothing is read then. A start after
+    /// a finished one reads again.
+    ///
     /// If the future is dropped before it returns, for example by a timeout,
     /// no connection stays open.
     pub async fn start_with(self: &Arc<Self>, options: StartOptions) -> Result<Started, Error> {
+        let running = StartGuard::new(self)?;
         self.update().await?;
         #[cfg(feature = "telnet")]
         let telnet = if options.telnet {
@@ -185,7 +211,11 @@ impl Avr {
         let telnet = TelnetStart::Disabled;
         let avr = Arc::clone(self);
         Ok(Started {
-            handle: tokio::spawn(async move { avr.finish_start(options, telnet).await }),
+            handle: tokio::spawn(async move {
+                let report = avr.finish_start(options, telnet).await;
+                drop(running);
+                report
+            }),
         })
     }
 

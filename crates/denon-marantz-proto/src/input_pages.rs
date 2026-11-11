@@ -6,6 +6,7 @@
 //! sources by an index. The index is converted to the telnet source name for
 //! the sources that are known. Other sources keep only the index.
 
+use crate::MAX_SOURCES;
 use crate::error::Error;
 use crate::reading::Reading;
 use crate::speaker_tables::{number, root};
@@ -57,9 +58,6 @@ impl SourceLevels {
         Ok(levels)
     }
 }
-
-/// Most sources of a page that are kept.
-const MAX_SOURCES: usize = 32;
 
 /// Telnet source name of an index of the web interface.
 #[must_use]
@@ -173,6 +171,7 @@ impl InputAssignment {
 
 /// The names of one source.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SourceNameEntry {
     /// Index of the source on the web interface.
     pub index: u8,

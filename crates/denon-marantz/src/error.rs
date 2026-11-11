@@ -99,7 +99,14 @@ pub enum Error {
     /// is only in the report of that start.
     #[error("the start was stopped before it finished")]
     Stopped,
+    /// Another start of this receiver is still running, so nothing was read.
+    /// A start is running until [`Started::finished`](crate::Started::finished)
+    /// would return.
+    #[error("another start of this receiver is still running")]
+    StartRunning,
     /// The telnet connection is not open, so nothing was sent.
+    ///
+    /// After a write was begun, the line may still have been sent.
     #[error("the telnet connection is not open")]
     NotConnected,
     /// A command cannot be sent, for example because its text has a control
@@ -180,6 +187,7 @@ impl Error {
             | Self::Protocol { request, .. }
             | Self::ResponseTooLarge { request, .. } => Some(request),
             Self::Stopped
+            | Self::StartRunning
             | Self::NothingRead
             | Self::NotConnected
             | Self::InvalidCommand(_)
@@ -347,6 +355,7 @@ mod tests {
         for error in [
             Error::NotConnected,
             Error::Stopped,
+            Error::StartRunning,
             Error::DiracNotSupported,
         ] {
             assert_eq!(error.request(), None, "{error}");

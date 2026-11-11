@@ -4,6 +4,7 @@
 /// value then. That is not the same as a value that is empty or has no
 /// signal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Reading<T> {
     /// The page does not have the value.
     Absent,
@@ -96,6 +97,7 @@ impl Reading<String> {
 
 /// A value of the page for the input and one for the output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Sides<T> {
     /// Value of the signal that the receiver gets.
     pub input: Reading<T>,

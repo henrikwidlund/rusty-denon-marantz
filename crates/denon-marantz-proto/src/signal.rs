@@ -22,7 +22,7 @@ pub struct ChannelLayout {
 
 /// Number of channel positions of the telnet text and of the web interface
 /// page. A position after these is not a channel.
-const CHANNEL_POSITIONS: usize = 32;
+const CHANNEL_POSITIONS: usize = 64;
 
 impl ChannelLayout {
     /// Reads the channel text of the receiver. Each position of the text is a
@@ -58,9 +58,10 @@ impl ChannelLayout {
 
     /// Counts the active channels of the answer to `GetInputSignal` or
     /// `GetActiveSpeaker`, as [`ChannelLayout::from_grid`] does. The text of
-    /// each `param` is the name of the channel. An item with an error has no
-    /// channels and gives `None`, like a grid with no active channel: do not
-    /// apply it, see [`State::apply_channel_item`](crate::State::apply_channel_item).
+    /// each `param` is the name of the channel. An item with an error gives
+    /// `None`, as an item with no active channel does. To store an item, use
+    /// [`State::apply_channel_item`](crate::State::apply_channel_item): it keeps
+    /// the values of the state on an error.
     #[must_use]
     pub fn from_appcommand(item: &Item<'_>) -> Option<Self> {
         let mut layout = Self::default();
@@ -102,12 +103,12 @@ impl ChannelLayout {
         };
         // Receiver data decides the positions: count each one once, and
         // ignore the ones after the last known position.
-        let mut seen = 0_u32;
+        let mut seen = 0_u64;
         for index in positions {
-            if index >= CHANNEL_POSITIONS || seen & (1 << index) != 0 {
+            if index >= CHANNEL_POSITIONS || seen & (1_u64 << index) != 0 {
                 continue;
             }
-            seen |= 1 << index;
+            seen |= 1_u64 << index;
             match index {
                 0..=2 | 4..=8 => layout.bed += 1,
                 3 => layout.lfe += 1,
@@ -516,14 +517,23 @@ mod tests {
 
     #[test]
     fn a_long_text_does_not_overflow() {
-        // A line can have thousands of positions. Only the first 32 count.
+        // A line can have thousands of positions. Only the first 64 count.
         let long = "2".repeat(8000);
         let layout = |text: &str| ChannelLayout::from_status(text).map(|l| l.to_string());
-        assert_eq!(layout(&long).as_deref(), Some("8.1.24"));
-        assert_eq!(layout(&long[..32]), layout(&long));
-        // The 33rd position is not a channel.
-        let after = format!("{}2", "0".repeat(32));
+        assert_eq!(layout(&long).as_deref(), Some("8.1.56"));
+        assert_eq!(layout(&long[..64]), layout(&long));
+        // The 65th position is not a channel.
+        let after = format!("{}2", "0".repeat(64));
         assert_eq!(layout(&after), None);
+    }
+
+    #[test]
+    fn a_page_index_above_31_is_a_channel() {
+        // The web page of a receiver has the index 35 in `InputSignal`.
+        let layout = |index: usize| ChannelLayout::from_active([index].into_iter(), false);
+        assert_eq!(layout(35).map(|l| l.immersive), Some(1));
+        assert_eq!(layout(63).map(|l| l.immersive), Some(1));
+        assert_eq!(layout(64), None);
     }
 
     #[test]

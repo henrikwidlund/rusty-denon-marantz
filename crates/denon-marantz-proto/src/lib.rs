@@ -37,6 +37,10 @@ mod volume;
 mod xml;
 mod zone_settings;
 
+/// Most sources that a list or a page keeps. A receiver has less than 40, and
+/// a source that comes after this is ignored.
+pub(crate) const MAX_SOURCES: usize = 64;
+
 pub mod appcommand;
 mod sound_mode_list;
 pub mod source;

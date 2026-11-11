@@ -11,13 +11,13 @@ use denon_marantz_proto::status_page::{self, Page};
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
-    BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, ChannelLayout,
-    DISTANCES_PATH, DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH,
-    INPUT_ASSIGN_PATH, InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH,
-    Playback2Ch, PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH,
-    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State,
-    SystemSettings, TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT,
-    XLR_ASSIGN_PATH, XlrAssign, Zone,
+    BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
+    DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
+    InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch,
+    PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH,
+    SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings,
+    TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
+    Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -205,6 +205,8 @@ pub struct Avr {
     /// `AppCommand0300.xml`.
     signal_from_appcommand: AtomicBool,
     channels: Channels,
+    /// A start is running, see [`Avr::start_with`].
+    starting: AtomicBool,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
     /// The reset key that was given out last.
@@ -762,8 +764,9 @@ impl Avr {
     ///
     /// Events from the receiver then change the state at once. If the
     /// connection is lost, a task connects again. Does nothing while the
-    /// task runs, also while it connects again. Older receivers allow one telnet connection, so
-    /// another client can take it away; the task takes it back.
+    /// task runs, also while it connects again. Older receivers allow one
+    /// telnet connection, so another client can take it away; the task takes
+    /// it back.
     ///
     /// # Errors
     ///
@@ -805,6 +808,8 @@ impl Avr {
     /// Returns [`Error::NotConnected`] if the telnet connection is not open.
     /// Nothing is queued then, so a command is never sent late. Returns
     /// [`Error::InvalidCommand`] if the command has text that cannot be sent.
+    /// If the connection ends while the command is being written, this also
+    /// returns [`Error::NotConnected`], and the receiver may have got the line.
     #[cfg(feature = "telnet")]
     pub async fn telnet_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet
@@ -926,6 +931,7 @@ impl Avr {
     /// # Errors
     ///
     /// Returns [`Error::NotConnected`] if the telnet connection is not open.
+    /// A request that arrives as the connection ends can be dropped with `Ok`.
     #[cfg(feature = "telnet")]
     pub async fn telnet_refresh(&self) -> Result<(), Error> {
         self.telnet.refresh().await
@@ -1018,15 +1024,9 @@ impl Avr {
                                 notify(state.apply_field(Zone::Main, field, value));
                             });
                             if *definition == appcommand::GET_INPUT_SIGNAL {
-                                notify(state.apply_channel_grid(
-                                    true,
-                                    ChannelLayout::from_appcommand(&item),
-                                ));
+                                notify(state.apply_channel_item(true, &item));
                             } else if *definition == appcommand::GET_ACTIVE_SPEAKER {
-                                notify(state.apply_channel_grid(
-                                    false,
-                                    ChannelLayout::from_appcommand(&item),
-                                ));
+                                notify(state.apply_channel_item(false, &item));
                             }
                         }
                     });
@@ -1278,6 +1278,7 @@ impl AvrBuilder {
             appcommand0300_missing: AtomicBool::new(false),
             signal_from_appcommand: AtomicBool::new(false),
             channels: Channels::new(State::new(single_zone)),
+            starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),
             #[cfg(feature = "telnet")]

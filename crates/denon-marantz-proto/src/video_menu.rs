@@ -8,14 +8,12 @@
 
 use std::collections::HashSet;
 
+use crate::MAX_SOURCES;
 use crate::error::Error;
 use crate::input_pages::source_for_index;
 use crate::settings_availability::Availability;
 use crate::speaker_tables::{number, root};
 use crate::xml::Node;
-
-/// Most sources of a page that are kept.
-const MAX_SOURCES: usize = 32;
 
 code_enum! {
     /// Where the web interface shows the volume bar on the screen.

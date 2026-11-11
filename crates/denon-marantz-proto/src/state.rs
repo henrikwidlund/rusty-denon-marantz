@@ -859,7 +859,9 @@ impl State {
 
     /// Stores the channels of the audio signal that the receiver gets
     /// (`is_input`) or plays, as the `AppCommand0300.xml` grids give them. They
-    /// are in [`DeviceState::signal`], with the values of telnet.
+    /// are in [`DeviceState::signal`], with the values of telnet. `None`
+    /// clears the channels. For an answer item use
+    /// [`State::apply_channel_item`], which keeps the values on an error.
     pub fn apply_channel_grid(
         &mut self,
         is_input: bool,
@@ -1459,6 +1461,7 @@ fn on_off(text: &str) -> Option<bool> {
 
 /// `on` and `off` in any case, as an `AppCommand` answer has them.
 fn on_off_answer(text: &str) -> Option<bool> {
+    let text = text.trim();
     if text.eq_ignore_ascii_case("on") {
         Some(true)
     } else if text.eq_ignore_ascii_case("off") {
@@ -2109,6 +2112,8 @@ mod tests {
         assert_eq!(state.zone(zone).muted, Some(false));
         state.apply_field(zone, Field::Muted, Some("On"));
         assert_eq!(state.zone(zone).muted, Some(true));
+        state.apply_field(zone, Field::Muted, Some(" off\n"));
+        assert_eq!(state.zone(zone).muted, Some(false));
         for text in ["garbage", ""] {
             state.apply_field(zone, Field::Muted, Some("on"));
             state.apply_field(zone, Field::Muted, Some(text));
@@ -2767,29 +2772,8 @@ mod tests {
     }
 
     #[test]
-    fn a_page_of_another_kind_is_refused_and_the_state_is_kept() {
-        let mut state = State::new(false);
-        state.apply_speaker_distances(
-            SpeakerTable::parse_distances(
-                br#"<Distances><List><Speaker index="0">25</Speaker></List></Distances>"#,
-            )
-            .unwrap(),
-        );
-        state.apply_bass_settings(
-            BassSettings::parse(b"<Bass><LPFforLFE>120</LPFforLFE></Bass>").unwrap(),
-        );
-        state.apply_system_settings(
-            SystemSettings::parse(b"<AdvancedMenu><AirPlay>1</AirPlay></AdvancedMenu>").unwrap(),
-        );
-        state.apply_now_playing(
-            NowPlaying::parse_net_audio(
-                b"<item><szLine><value>Now Playing</value><value>Song</value></szLine></item>",
-            )
-            .unwrap(),
-        );
-        let before = state.device().clone();
+    fn the_parsers_refuse_a_document_of_another_kind() {
         // The receiver can answer a page with a document of another kind.
-        // The parsers refuse it, so nothing reaches the state.
         let foreign = b"<Error/>";
         assert!(SpeakerTable::parse_distances(foreign).is_err());
         assert!(SpeakerTable::parse_crossovers(foreign).is_err());
@@ -2798,12 +2782,6 @@ mod tests {
         assert!(SystemSettings::parse(foreign).is_err());
         assert!(NowPlaying::parse_net_audio(foreign).is_err());
         assert!(NowPlaying::parse_hd_radio(foreign).is_err());
-        assert_eq!(*state.device(), before);
-        let stored = &state.device().speaker_setup;
-        assert_eq!(stored.distances.as_ref().unwrap().entries.len(), 1);
-        assert_eq!(stored.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
-        assert_eq!(state.device().system_settings.airplay, Some(true));
-        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
     }
 
     #[test]

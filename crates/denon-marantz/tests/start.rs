@@ -15,8 +15,8 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Avr, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig, TelnetStart,
-    Zone,
+    Avr, Error, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig,
+    TelnetStart, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -267,6 +267,41 @@ async fn a_start_that_is_dropped_leaves_telnet_closed() {
 }
 
 #[tokio::test]
+async fn a_second_start_is_refused_while_the_first_runs() {
+    let hang = Arc::new(AtomicBool::new(false));
+    let http = common::avr_x_receiver_that_can_hang(hang.clone()).await;
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    hang.store(true, Ordering::SeqCst);
+    let first = tokio::spawn({
+        let avr = avr.clone();
+        async move { avr.start().await }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let before = http.requests().len();
+    let second = avr.start().await.unwrap_err();
+    assert!(matches!(second, Error::StartRunning), "{second}");
+    // The refused start sent no request.
+    assert_eq!(http.requests().len(), before);
+    assert_eq!(telnet.connections(), 0);
+
+    // A stopped start lets the next one run, also after a finished one.
+    first.abort();
+    let _ = first.await;
+    hang.store(false, Ordering::SeqCst);
+    avr.start().await.unwrap().finished().await;
+    avr.start().await.unwrap().finished().await;
+}
+
+#[tokio::test]
 async fn telnet_can_be_left_closed() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
@@ -458,10 +493,7 @@ async fn refresh_signal_says_when_nothing_was_read() {
 
     good.store(false, Ordering::SeqCst);
     let error = avr.refresh_signal().await.unwrap_err();
-    assert!(
-        matches!(error, denon_marantz::Error::NothingRead),
-        "{error:?}"
-    );
+    assert!(matches!(error, Error::NothingRead), "{error:?}");
     // The other page did not clear what was known.
     assert_eq!(
         avr.snapshot().device().signal.video.input.as_deref(),

@@ -2,11 +2,8 @@
 //! physical inputs that they use. Telnet reports the names and if a source is
 //! in use. The other values come from the web interface.
 
+use crate::MAX_SOURCES;
 use crate::input_pages::{InputAssignment, SourceNameEntry, SourceNames};
-
-/// Most sources that the list keeps. A receiver has less than 40, and a
-/// source that comes after this is ignored.
-const MAX_SOURCES: usize = 64;
 
 /// One input source.
 #[derive(Debug, Clone, PartialEq, Eq)]

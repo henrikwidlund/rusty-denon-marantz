@@ -2047,13 +2047,18 @@ async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
     // A port that takes the connection and never reads, so a large write blocks.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (written, first_bytes) = tokio::sync::oneshot::channel();
     let holder = tokio::spawn(async move {
-        let _socket = listener.accept().await;
+        let (socket, _) = listener.accept().await.unwrap();
+        // The first bytes show that the write has started.
+        socket.readable().await.unwrap();
+        let _ = written.send(());
         std::future::pending::<()>().await;
     });
     let http = avr_x_receiver().await;
     let config = TelnetConfig {
         write_timeout: Duration::from_secs(10),
+        query_groups: &[],
         ..telnet_config(port)
     };
     let avr = std::sync::Arc::new(
@@ -2064,12 +2069,17 @@ async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
             .unwrap(),
     );
     avr.telnet_connect().await.unwrap();
-    let huge = "A".repeat(64 * 1024 * 1024);
+    // More than the buffers of both sockets hold.
+    let huge = "A".repeat(16 * 1024 * 1024);
     let sender = tokio::spawn({
         let avr = avr.clone();
         async move { avr.telnet_send(Zone::Main, Command::Raw(&huge)).await }
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    timeout(Duration::from_secs(5), first_bytes)
+        .await
+        .expect("the write did not start")
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(!sender.is_finished());
 
     let stopped = std::time::Instant::now();

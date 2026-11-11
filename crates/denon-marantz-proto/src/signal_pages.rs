@@ -58,7 +58,14 @@ impl VideoSignalPage {
         }
         let text = |name: &str| {
             let side = node.child(name).map(|child| child.node());
+            // A value with neither side has no signal.
+            let empty = side.is_some_and(|side| {
+                side.child("Input").is_none() && side.child("Output").is_none()
+            });
             let read = |side_name: &str| -> Reading<String> {
+                if empty {
+                    return Reading::Empty;
+                }
                 let Some(element) = side.and_then(|side| side.child(side_name)) else {
                     return Reading::Absent;
                 };
@@ -319,6 +326,18 @@ mod tests {
             }
         );
         assert!(AudioChannelsPage::parse(b"<Audio><InputSignal/></Audio>").is_ok());
+    }
+
+    #[test]
+    fn a_value_with_neither_side_has_no_signal() {
+        let page = VideoSignalPage::parse(b"<Video><Resolution/><HDR></HDR></Video>").unwrap();
+        let empty = Sides {
+            input: Empty,
+            output: Empty,
+        };
+        assert_eq!(page.resolution, empty);
+        assert_eq!(page.hdr, empty);
+        assert_eq!(page.frl_rate, Sides::default());
     }
 
     #[test]
