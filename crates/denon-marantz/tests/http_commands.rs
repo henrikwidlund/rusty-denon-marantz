@@ -96,7 +96,8 @@ async fn a_query_is_not_sent_over_http() {
         .http_send(Zone::Main, Command::Raw("PW?"))
         .await
         .unwrap_err();
-    assert!(error.is_not_connected(), "{error}");
+    assert!(matches!(error, Error::QueryNeedsTelnet), "{error}");
+    assert!(error.is_unsupported() && !error.is_not_connected());
     assert_eq!(commands(&fake), [] as [String; 0]);
 }
 

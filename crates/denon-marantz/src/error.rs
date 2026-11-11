@@ -104,6 +104,11 @@ pub enum Error {
     /// would return.
     #[error("another start of this receiver is still running")]
     StartRunning,
+    /// The command asks for a value, and the receiver answers that on telnet
+    /// only, so nothing was sent over HTTP. Another try over HTTP gives the
+    /// same error.
+    #[error("the command asks for a value, which the receiver answers on telnet only")]
+    QueryNeedsTelnet,
     /// The telnet connection is not open, so nothing was sent.
     ///
     /// After a write was begun, the line may still have been sent.
@@ -188,6 +193,7 @@ impl Error {
             | Self::ResponseTooLarge { request, .. } => Some(request),
             Self::Stopped
             | Self::StartRunning
+            | Self::QueryNeedsTelnet
             | Self::NothingRead
             | Self::NotConnected
             | Self::InvalidCommand(_)
@@ -250,8 +256,9 @@ impl Error {
     }
 
     /// Returns true if this receiver or zone does not have the function:
-    /// Dirac Live, a zone, the sound mode of a zone or a remote key. Another
-    /// try gives the same error. Nothing was sent.
+    /// Dirac Live, a zone, the sound mode of a zone or a remote key, or if the
+    /// way does not allow it: a query over HTTP. Another try gives the same
+    /// error. Nothing was sent.
     #[must_use]
     pub const fn is_unsupported(&self) -> bool {
         matches!(
@@ -260,6 +267,7 @@ impl Error {
                 | Self::NoSuchZone(_)
                 | Self::NoSoundMode(_)
                 | Self::DiracNotSupported
+                | Self::QueryNeedsTelnet
         )
     }
 
@@ -356,11 +364,15 @@ mod tests {
             Error::NotConnected,
             Error::Stopped,
             Error::StartRunning,
+            Error::QueryNeedsTelnet,
             Error::DiracNotSupported,
         ] {
             assert_eq!(error.request(), None, "{error}");
         }
         assert!(Error::NotConnected.is_not_connected());
+        assert!(!Error::QueryNeedsTelnet.is_not_connected());
+        assert!(Error::QueryNeedsTelnet.is_unsupported());
+        assert!(!Error::QueryNeedsTelnet.is_transient());
     }
 
     #[test]

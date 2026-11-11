@@ -46,6 +46,8 @@ jobs:
           for f in "" telnet http discovery mdns telnet,http; do
             echo "::group::features '$f'"
             cargo clippy --locked -p denon-marantz --no-default-features --features "$f" --all-targets
+            # Without the dev-dependencies, which add tokio features.
+            cargo check --locked -p denon-marantz --no-default-features --features "$f"
             echo "::endgroup::"
           done
 

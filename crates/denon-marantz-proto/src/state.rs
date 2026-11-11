@@ -1457,10 +1457,14 @@ impl State {
             && self.device.now_playing != NowPlaying::default()
         {
             self.device.now_playing = NowPlaying::default();
-            self.follow_ups.push(Change {
+            let change = Change {
                 zone: None,
                 setting: Setting::NowPlaying,
-            });
+            };
+            // One is enough, so it stays small if nobody takes them.
+            if !self.follow_ups.contains(&change) {
+                self.follow_ups.push(change);
+            }
         }
         change
     }
@@ -3123,6 +3127,19 @@ mod tests {
         state.apply_field(Zone::Main, Field::InputFunc, Some("CD"));
         assert_eq!(state.take_follow_ups().len(), 1);
         assert_eq!(state.device().now_playing, NowPlaying::default());
+    }
+
+    #[test]
+    fn follow_ups_that_nobody_takes_do_not_pile_up() {
+        let mut state = State::new(false);
+        for index in 0..50 {
+            apply(&mut state, "NSE1Song");
+            apply(
+                &mut state,
+                if index % 2 == 0 { "SIGAME" } else { "SIMPLAY" },
+            );
+        }
+        assert_eq!(state.take_follow_ups().len(), 1);
     }
 
     #[test]

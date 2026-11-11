@@ -281,7 +281,7 @@ impl Avr {
     /// Reads all values again, in the way that fits. If the telnet connection
     /// is open, it asks on telnet, as `Avr::telnet_refresh` does, and reads
     /// over HTTP only what telnet does not report: the names of the zones, and
-    /// the dimmer, eco and auto standby if [`TelnetConfig::query_groups`] has
+    /// the dimmer, eco and auto standby if `TelnetConfig::query_groups` has
     /// no `Device` group. If telnet is not open, it does what [`Avr::update`]
     /// does.
     ///
@@ -851,14 +851,14 @@ impl Avr {
 
     /// Sends a command to the receiver.
     ///
-    /// It goes on telnet if the connection is open, as [`Avr::telnet_send`]
+    /// It goes on telnet if the connection is open, as `Avr::telnet_send`
     /// does, and over HTTP otherwise, as [`Avr::http_send`] does. All typed
     /// controls ([`Avr::zone`] and the others) use this call, so they work
     /// without telnet. A caller that does not want telnet never opens it.
     ///
     /// # Errors
     ///
-    /// The errors of [`Avr::telnet_send`] if telnet is used, and of
+    /// The errors of `Avr::telnet_send` if telnet is used, and of
     /// [`Avr::http_send`] otherwise.
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
@@ -883,13 +883,13 @@ impl Avr {
     /// # Errors
     ///
     /// Returns [`Error::InvalidCommand`] if the command has text that cannot be
-    /// sent. Returns [`Error::NotConnected`] for a query (a command that asks
+    /// sent. Returns [`Error::QueryNeedsTelnet`] for a query (a command that asks
     /// for a value): the receiver answers it on telnet only. Returns the
     /// errors of an HTTP request if it fails.
     pub async fn http_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         let line = command::encode(self.info.brand, zone, &command)?;
         if command::is_query(&line) {
-            return Err(Error::NotConnected);
+            return Err(Error::QueryNeedsTelnet);
         }
         {
             // The lock keeps the order of the callers.

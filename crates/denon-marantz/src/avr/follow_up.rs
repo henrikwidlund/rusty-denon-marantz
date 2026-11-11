@@ -8,7 +8,7 @@ use bytes::Bytes;
 use denon_marantz_proto::Zone;
 use denon_marantz_proto::appcommand::{self, Definition, Endpoint};
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::{Instant, sleep_until, timeout};
+use tokio::time::{Instant, timeout, timeout_at};
 
 use super::{Info, UpdateMethod, read_appcommand, read_status_pages, request_body};
 use crate::channels::Channels;
@@ -168,20 +168,19 @@ async fn run(
 ) {
     let mut retry: Option<Retry> = None;
     loop {
-        let first = if let Some(next) = retry.as_mut() {
-            tokio::select! {
-                bits = queue.recv() => bits,
-                () = sleep_until(next.at) => {
-                    let (wanted, left) = (next.wanted, next.left - 1);
-                    tracing::debug!(wanted, "read again over HTTP");
-                    let unseen = read_until_seen(&reader, &requests, wanted).await;
-                    retry = (unseen != 0 && left > 0).then(|| Retry {
-                        at: Instant::now() + config.retry_every,
-                        wanted: unseen,
-                        left,
-                    });
-                    continue;
-                }
+        let first = if let Some(next) = retry.as_ref() {
+            if let Ok(bits) = timeout_at(next.at, queue.recv()).await {
+                bits
+            } else {
+                let (wanted, left) = (next.wanted, next.left - 1);
+                tracing::debug!(wanted, "read again over HTTP");
+                let unseen = read_until_seen(&reader, &requests, wanted).await;
+                retry = (unseen != 0 && left > 0).then(|| Retry {
+                    at: Instant::now() + config.retry_every,
+                    wanted: unseen,
+                    left,
+                });
+                continue;
             }
         } else {
             queue.recv().await
