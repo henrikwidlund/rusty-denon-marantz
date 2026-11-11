@@ -22,13 +22,13 @@ criterion = { version = "0.8", default-features = false }
 bytes = "1"
 http = "1"
 if-addrs = "0.15"
-mdns-sd = { version = "0.21.7", default-features = false, features = ["async"] }
 http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt"] }
+mdns-sd = { version = "0.21.7", default-features = false, features = ["async"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

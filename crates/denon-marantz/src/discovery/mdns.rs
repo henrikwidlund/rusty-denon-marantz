@@ -8,7 +8,10 @@ use denon_marantz_proto::{Brand, ReceiverType};
 use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent};
 use tokio::time::Instant;
 
-use super::{DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local};
+use super::{
+    DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local, serial,
+    sort_by_address,
+};
 use crate::error::Error;
 use crate::identify::{identify, identify_on};
 
@@ -101,14 +104,12 @@ pub async fn discover_mdns(config: &DiscoveryConfig) -> Result<Vec<DiscoveredRec
     }
     let mut receivers: Vec<DiscoveredReceiver> = Vec::new();
     while let Some(result) = fetches.join_next().await {
-        if let Ok(Some(found)) = result
-            && !receivers.iter().any(|r| r.host == found.host)
-        {
+        if let Ok(Some(found)) = result {
             receivers.push(found);
         }
     }
-    receivers.sort_by(|a, b| a.host.cmp(&b.host));
-    Ok(receivers)
+    // Two addresses of one receiver have the same serial number.
+    Ok(join(Vec::new(), receivers))
 }
 
 /// Looks for receivers with SSDP and mDNS and joins the answers.
@@ -156,14 +157,22 @@ fn join(
     for receiver in second {
         let same = |r: &DiscoveredReceiver| {
             r.host == receiver.host
-                || (r.serial_number.is_some() && r.serial_number == receiver.serial_number)
+                || same_serial(
+                    r.serial_number.as_deref(),
+                    receiver.serial_number.as_deref(),
+                )
         };
         if !all.iter().any(same) {
             all.push(receiver);
         }
     }
-    all.sort_by(|a, b| a.host.cmp(&b.host));
+    sort_by_address(&mut all);
     all
+}
+
+/// True if both have the same serial number, and it has some text.
+fn same_serial(first: Option<&str>, second: Option<&str>) -> bool {
+    matches!((first.map(str::trim), second.map(str::trim)), (Some(a), Some(b)) if !a.is_empty() && a == b)
 }
 
 /// Browses until the wait is over.
@@ -185,24 +194,33 @@ async fn browse(config: &DiscoveryConfig) -> Result<Vec<Announced>, Error> {
             found.remove(name);
         }
         if let ServiceEvent::ServiceResolved(service) = event {
-            match Announced::from_resolved(&service) {
-                Some(_)
-                    if found.len() >= MAX_SERVICES && !found.contains_key(&service.fullname) =>
-                {
-                    tracing::debug!(name = %service.fullname, "mDNS service ignored, too many");
-                }
-                Some(announced) => {
-                    tracing::debug!(name = %service.fullname, address = %announced.address, "mDNS service resolved");
-                    found.insert(service.fullname.clone(), announced);
-                }
-                None => {
-                    tracing::debug!(name = %service.fullname, "mDNS service without a usable address");
-                }
-            }
+            store(
+                &mut found,
+                &service.fullname,
+                Announced::from_resolved(&service),
+            );
         }
     }
     tracing::debug!(count = found.len(), "mDNS search ended");
     Ok(found.into_values().collect())
+}
+
+/// Keeps the answer for a service name. An answer without a usable address
+/// replaces the old one with nothing.
+fn store(found: &mut HashMap<String, Announced>, name: &str, announced: Option<Announced>) {
+    match announced {
+        Some(_) if found.len() >= MAX_SERVICES && !found.contains_key(name) => {
+            tracing::debug!(name, "mDNS service ignored, too many");
+        }
+        Some(announced) => {
+            tracing::debug!(name, address = %announced.address, "mDNS service resolved");
+            found.insert(name.to_owned(), announced);
+        }
+        None => {
+            found.remove(name);
+            tracing::debug!(name, "mDNS service without a usable address");
+        }
+    }
 }
 
 /// Reads the description of an announced receiver.
@@ -226,7 +244,7 @@ async fn receiver(
         }
     }
     if let Some(mut found) = described {
-        found.serial_number = found.serial_number.or_else(|| announced.did.clone());
+        found.serial_number = serial(found.serial_number).or_else(|| announced.did.clone());
         return Some(found);
     }
     // No description. A receiver that answers the device information is kept.
@@ -289,7 +307,7 @@ mod tests {
             .iter()
             .map(|r| (r.host.as_str(), r.friendly_name.as_deref().unwrap()))
             .collect();
-        assert_eq!(names, [("192.168.1.20", "ssdp"), ("192.168.1.3", "mdns")]);
+        assert_eq!(names, [("192.168.1.3", "mdns"), ("192.168.1.20", "ssdp")]);
     }
 
     #[test]
@@ -353,5 +371,71 @@ mod tests {
     fn a_service_without_a_usable_address_is_left_out() {
         let addresses = ["fe80::1".parse::<IpAddr>().unwrap()];
         assert_eq!(Announced::from_parts(addresses, |_| None), None);
+    }
+
+    fn announced(address: &str) -> Announced {
+        Announced {
+            address: address.parse().unwrap(),
+            model: None,
+            did: None,
+        }
+    }
+
+    #[test]
+    fn a_blank_serial_number_does_not_join_receivers() {
+        let mut first = receiver("192.168.1.20", "a");
+        first.serial_number = Some(" ".to_owned());
+        let mut second = receiver("192.168.1.3", "b");
+        second.serial_number = Some(" ".to_owned());
+        assert_eq!(join(vec![first], vec![second]).len(), 2);
+    }
+
+    #[test]
+    fn two_addresses_with_one_serial_number_are_one_receiver() {
+        let mut first = receiver("192.168.1.20", "a");
+        first.serial_number = Some("S1".to_owned());
+        let mut second = receiver("fd00::1", "b");
+        second.serial_number = Some("S1".to_owned());
+        let all = join(
+            Vec::new(),
+            vec![first, second, receiver("192.168.1.3", "c")],
+        );
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn the_result_is_sorted_by_the_address_as_a_number() {
+        let all = join(
+            Vec::new(),
+            vec![receiver("192.168.1.20", "a"), receiver("192.168.1.3", "b")],
+        );
+        assert_eq!(all[0].host, "192.168.1.3");
+        assert_eq!(all[1].host, "192.168.1.20");
+    }
+
+    #[test]
+    fn an_answer_without_an_address_removes_the_old_one() {
+        let mut found = HashMap::new();
+        store(&mut found, "a", Some(announced("192.168.1.3")));
+        store(&mut found, "b", Some(announced("192.168.1.4")));
+        store(&mut found, "a", None);
+        assert_eq!(found.keys().collect::<Vec<_>>(), ["b"]);
+    }
+
+    #[test]
+    fn a_new_name_is_ignored_at_the_limit_but_a_known_one_is_updated() {
+        let mut found = HashMap::new();
+        for index in 0..MAX_SERVICES {
+            store(
+                &mut found,
+                &index.to_string(),
+                Some(announced("192.168.1.3")),
+            );
+        }
+        store(&mut found, "new", Some(announced("192.168.1.4")));
+        assert_eq!(found.len(), MAX_SERVICES);
+        assert!(!found.contains_key("new"));
+        store(&mut found, "0", Some(announced("192.168.1.5")));
+        assert_eq!(found["0"].address, "192.168.1.5".parse::<IpAddr>().unwrap());
     }
 }

@@ -205,8 +205,22 @@ pub async fn discover(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver
             receivers.push(receiver);
         }
     }
-    receivers.sort_by(|a, b| a.host.cmp(&b.host));
+    sort_by_address(&mut receivers);
     Ok(receivers)
+}
+
+/// Sorts by the address as a number, so `192.168.1.3` comes before
+/// `192.168.1.20`. A host that is not an address comes last.
+pub(crate) fn sort_by_address(receivers: &mut [DiscoveredReceiver]) {
+    receivers.sort_by_cached_key(|r| {
+        let address = r.host.parse::<IpAddr>().ok();
+        (address.is_none(), address, r.host.clone())
+    });
+}
+
+/// A serial number that has some text.
+pub(crate) fn serial(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.trim().is_empty())
 }
 
 /// The IPv4 addresses that a search is sent from.
@@ -289,7 +303,7 @@ async fn describe(
         manufacturer: description.manufacturer.to_string(),
         model_name: description.model_name.map(|v| v.to_string()),
         friendly_name: description.friendly_name.map(|v| v.to_string()),
-        serial_number: description.serial_number.map(|v| v.to_string()),
+        serial_number: serial(description.serial_number.map(|v| v.to_string())),
     })
 }
 
@@ -325,6 +339,50 @@ mod tests {
         assert!(strict.allows(sender, &from_sender));
         assert!(!strict.allows(sender, &from_receiver));
         assert!(!strict.allows(sender, &name));
+    }
+
+    fn receiver(host: &str) -> DiscoveredReceiver {
+        DiscoveredReceiver {
+            host: host.to_owned(),
+            brand: Brand::Denon,
+            manufacturer: "Denon".to_owned(),
+            model_name: None,
+            friendly_name: None,
+            serial_number: None,
+        }
+    }
+
+    #[test]
+    fn receivers_are_sorted_by_the_address_as_a_number() {
+        let mut receivers = [
+            "192.168.1.20",
+            "name.local",
+            "192.168.1.3",
+            "fd00::1",
+            "10.0.0.9",
+        ]
+        .map(receiver)
+        .to_vec();
+        sort_by_address(&mut receivers);
+        let hosts: Vec<_> = receivers.iter().map(|r| r.host.as_str()).collect();
+        assert_eq!(
+            hosts,
+            [
+                "10.0.0.9",
+                "192.168.1.3",
+                "192.168.1.20",
+                "fd00::1",
+                "name.local"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_blank_serial_number_is_none() {
+        assert_eq!(serial(Some(" ".to_owned())), None);
+        assert_eq!(serial(Some(String::new())), None);
+        assert_eq!(serial(Some("S1".to_owned())), Some("S1".to_owned()));
+        assert_eq!(serial(None), None);
     }
 
     #[test]
