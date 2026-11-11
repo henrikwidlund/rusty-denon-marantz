@@ -81,6 +81,16 @@ fn answer_values_have_the_expected_state() {
         } else {
             expected
         };
+        // The same for the mute: only `on` and `off` are values.
+        let expected = if name == "Muted"
+            && !raw
+                .as_deref()
+                .is_some_and(|text| ["on", "off"].iter().any(|v| text.eq_ignore_ascii_case(v)))
+        {
+            None
+        } else {
+            expected
+        };
         assert!(
             same(name, actual.as_deref(), expected.as_deref()),
             "{name} {raw:?}: got {actual:?}, expected {expected:?}"

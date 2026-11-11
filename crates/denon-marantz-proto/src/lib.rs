@@ -14,6 +14,7 @@ mod general_menu;
 mod input_pages;
 mod now_playing;
 mod picture;
+mod reading;
 mod remote_key;
 mod settings_availability;
 mod signal;
@@ -64,6 +65,7 @@ pub use now_playing::{
     STATIC_ARTWORK_PATH,
 };
 pub use picture::{PictureSettingValue, PictureSettings};
+pub use reading::{Reading, Sides};
 pub use remote_key::RemoteKey;
 pub use settings_availability::{
     Availability, GroupAvailability, SettingAvailability, SettingsAvailability, SettingsGroup,

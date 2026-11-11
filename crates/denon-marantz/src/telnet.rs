@@ -11,6 +11,8 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
@@ -164,9 +166,6 @@ enum Request {
     RefreshGroup(QueryGroup),
     /// Ask the receiver these queries.
     Queries(Vec<&'static str>),
-    /// Forget the last values that were seen. A page of the web interface has
-    /// set values, so the next event with the old value is a real change.
-    ForgetValues,
 }
 
 /// The telnet connection of one receiver.
@@ -176,6 +175,9 @@ pub(crate) struct Telnet {
     queries: Queries,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
+    /// Set when the next event with the last value is a real change. The task
+    /// then forgets the last values before it reads on.
+    forget: Arc<AtomicBool>,
     /// The running task. The lock also stops two calls from connecting at once.
     task: Mutex<Option<Task>>,
 }
@@ -223,8 +225,14 @@ impl Telnet {
             },
             events: broadcast::Sender::new(EVENT_CAPACITY),
             status: watch::Sender::new(TelnetStatus::Disconnected),
+            forget: Arc::new(AtomicBool::new(false)),
             task: Mutex::new(None),
         }
+    }
+
+    /// The connection asks for this group after a connect.
+    pub(crate) fn fetches(&self, group: QueryGroup) -> bool {
+        self.config.query_groups.contains(&group)
     }
 
     pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<TelnetEvent> {
@@ -235,7 +243,8 @@ impl Telnet {
         self.status.subscribe()
     }
 
-    /// Opens the connection and starts the task. Does nothing if it runs.
+    /// Opens the connection and starts the task. Does nothing if the task
+    /// runs, also while it tries to connect again.
     ///
     /// `first` replaces the queries of the first session: the groups of the
     /// settings are not asked then. A session after a lost connection asks for
@@ -264,10 +273,14 @@ impl Telnet {
             channels: channels.clone(),
             events: self.events.clone(),
             status: self.status.clone(),
+            forget: self.forget.clone(),
         };
         // The connection is open when this returns, so a command can follow.
         set_status(&self.status, TelnetStatus::Connected);
-        let handle = tokio::spawn(worker.run(stream, request_receiver, shutdown_receiver));
+        // The task owns the guard from the start, so the status is reset also
+        // if the task is stopped before it runs.
+        let guard = StatusGuard(self.status.clone());
+        let handle = tokio::spawn(worker.run(stream, request_receiver, shutdown_receiver, guard));
         *task = Some(Task {
             shutdown,
             requests,
@@ -306,10 +319,12 @@ impl Telnet {
         self.request(Request::RefreshGroup(group)).await
     }
 
-    /// Asks the task to forget the last values that it saw. It does nothing if
-    /// there is no connection.
-    pub(crate) async fn forget_values(&self) {
-        let _ = self.request(Request::ForgetValues).await;
+    /// Makes the task forget the last values that it saw, so that the next
+    /// event with the old value is a real change. A page of the web interface
+    /// has set values then. It does not wait, and it does nothing for a
+    /// connection that opens later.
+    pub(crate) fn forget_values(&self) {
+        self.forget.store(true, Ordering::Relaxed);
     }
 
     /// Asks the task to send these queries after the ones that wait.
@@ -391,6 +406,7 @@ struct Worker {
     channels: Channels,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
+    forget: Arc<AtomicBool>,
 }
 
 /// Longest time a query waits after the last write for the receiver to be quiet.
@@ -474,14 +490,14 @@ impl Worker {
         first: TcpStream,
         mut requests: mpsc::Receiver<Request>,
         mut shutdown: watch::Receiver<bool>,
+        _guard: StatusGuard,
     ) {
-        let _guard = StatusGuard(self.status.clone());
         let mut stream = Some(first);
         loop {
             let stream = if let Some(stream) = stream.take() {
                 stream
             } else {
-                let Some(stream) = self.reconnect(&mut shutdown).await else {
+                let Some(stream) = self.reconnect(&mut shutdown, &mut requests).await else {
                     return;
                 };
                 // Requests that came while there was no connection are late.
@@ -507,11 +523,27 @@ impl Worker {
     /// It waits before the first try: the receiver needs a moment to free
     /// its only telnet connection, and a receiver that closes each connection
     /// at once must not be asked in a tight loop.
-    async fn reconnect(&self, shutdown: &mut watch::Receiver<bool>) -> Option<TcpStream> {
+    ///
+    /// A request that comes in the meantime is refused at once, so that its
+    /// caller does not wait for a connection that may not come.
+    async fn reconnect(
+        &self,
+        shutdown: &mut watch::Receiver<bool>,
+        requests: &mut mpsc::Receiver<Request>,
+    ) -> Option<TcpStream> {
         let mut wait = self.config.reconnect_min;
         loop {
-            until_stopped(shutdown, tokio::time::sleep(wait)).await?;
-            match until_stopped(shutdown, open(&self.host, &self.config)).await? {
+            until_stopped(
+                shutdown,
+                refusing_requests(requests, tokio::time::sleep(wait)),
+            )
+            .await?;
+            let opened = until_stopped(
+                shutdown,
+                refusing_requests(requests, open(&self.host, &self.config)),
+            )
+            .await?;
+            match opened {
                 Ok(stream) => return Some(stream),
                 Err(error) => tracing::debug!(host = %self.host, %error, "telnet reconnect failed"),
             }
@@ -529,6 +561,8 @@ impl Worker {
     ) -> End {
         let mut decoder = LineDecoder::new();
         let mut filter = DuplicateFilter::new();
+        // A new connection has no last values to forget.
+        self.forget.store(false, Ordering::Relaxed);
         let mut queue = Queue::new(background);
         let mut buffer = [0_u8; READ_BUFFER];
         let mut line = String::new();
@@ -544,6 +578,9 @@ impl Worker {
                 read = stream.read(&mut buffer) => match read {
                     Ok(0) => break End::Closed,
                     Ok(count) => {
+                        if self.forget.swap(false, Ordering::Relaxed) {
+                            filter.clear();
+                        }
                         idle_since = Instant::now();
                         queue.last_read = Some(idle_since);
                         asked = false;
@@ -573,7 +610,6 @@ impl Worker {
                         filter.clear();
                         queue.add(queries);
                     }
-                    Some(Request::ForgetValues) => filter.clear(),
                     None => break End::Shutdown,
                 },
                 () = tokio::time::sleep_until(idle_since + self.config.keep_alive) => {
@@ -587,8 +623,8 @@ impl Worker {
                     queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
                 }
                 () = tokio::time::sleep_until(write_time.unwrap_or_else(Instant::now)), if write_time.is_some() => {
-                    if let Err(error) = self.write_next(&mut stream, &mut queue, &mut line).await {
-                        break End::Failed(error);
+                    if let Err(end) = self.write_next(&mut stream, &mut queue, &mut line, shutdown).await {
+                        break end;
                     }
                 }
             }
@@ -598,13 +634,15 @@ impl Worker {
         end
     }
 
-    /// Writes the next line: from the caller first, then a query.
+    /// Writes the next line: from the caller first, then a query. A stop of
+    /// the task ends the write.
     async fn write_next(
         &self,
         stream: &mut TcpStream,
         queue: &mut Queue,
         line: &mut String,
-    ) -> Result<(), std::io::Error> {
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> Result<(), End> {
         let (text, done, from_user) = if let Some(outgoing) = queue.user.pop_front() {
             (outgoing.line, outgoing.done, true)
         } else if let Some(query) = queue.background.pop_front() {
@@ -615,10 +653,15 @@ impl Worker {
         } else {
             return Ok(());
         };
-        let result =
-            tokio::time::timeout(self.config.write_timeout, stream.write_all(text.as_bytes()))
-                .await
-                .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()));
+        let write =
+            tokio::time::timeout(self.config.write_timeout, stream.write_all(text.as_bytes()));
+        let Some(result) = until_stopped(shutdown, write).await else {
+            if let Some(done) = done {
+                let _ = done.send(Err(Error::NotConnected));
+            }
+            return Err(End::Shutdown);
+        };
+        let result = result.unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()));
         let now = Instant::now();
         queue.last_write = Some(now);
         if from_user {
@@ -636,7 +679,7 @@ impl Worker {
                 }),
             });
         }
-        result
+        result.map_err(End::Failed)
     }
 
     fn handle_line(&self, line: &str, filter: &mut DuplicateFilter) {
@@ -674,6 +717,25 @@ fn drop_requests(requests: &mut mpsc::Receiver<Request>) {
     while let Ok(request) = requests.try_recv() {
         if let Request::Send(outgoing) = request {
             outgoing.fail();
+        }
+    }
+}
+
+/// Runs `work`. Requests that come in meanwhile are refused, because there is
+/// no connection to send them on.
+async fn refusing_requests<T>(
+    requests: &mut mpsc::Receiver<Request>,
+    work: impl Future<Output = T>,
+) -> T {
+    tokio::pin!(work);
+    loop {
+        tokio::select! {
+            output = &mut work => return output,
+            Some(request) = requests.recv() => {
+                if let Request::Send(outgoing) = request {
+                    outgoing.fail();
+                }
+            }
         }
     }
 }
@@ -797,6 +859,26 @@ mod tests {
             single.len(),
             1 + queries(Brand::Marantz, QueryGroup::DEFAULT_ORDER).count()
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn requests_are_refused_while_there_is_no_connection() {
+        let (sender, mut requests) = mpsc::channel(4);
+        let (done, refused) = oneshot::channel();
+        let outgoing = Outgoing {
+            line: "MVUP\r".to_owned(),
+            done: Some(done),
+        };
+        sender.send(Request::Send(outgoing)).await.unwrap();
+        sender.send(Request::Refresh).await.unwrap();
+        let output = refusing_requests(&mut requests, async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            7
+        })
+        .await;
+        assert_eq!(output, 7);
+        assert!(matches!(refused.await, Ok(Err(Error::NotConnected))));
+        assert!(requests.try_recv().is_err());
     }
 
     #[tokio::test(start_paused = true)]

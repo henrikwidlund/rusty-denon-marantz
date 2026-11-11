@@ -6,18 +6,19 @@
 mod common;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use common::{
     AVR_X_INFO, Fake, FakeTelnet, Reply, avr_x_receiver, builder, config, friendly_name_answer,
     is_friendly_name_request, wait_until,
 };
+use denon_marantz::TelnetStatus;
 use denon_marantz::{
     Avr, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig, TelnetStart,
     Zone,
 };
-use denon_marantz_proto::telnet::{SignalPart, signal_queries};
+use denon_marantz_proto::telnet::{SignalPart, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
 
 const VIDEO_PAGE: &[u8] =
@@ -62,6 +63,19 @@ async fn started(web: &Fake, telnet: &FakeTelnet) -> Arc<Avr> {
             .await
             .unwrap(),
     )
+}
+
+/// Waits until the queries that wait in the connection are written. A group
+/// that the start does not ask for goes last, so its last query shows the end.
+async fn wait_for_the_queue(avr: &Avr, telnet: &FakeTelnet) {
+    avr.telnet_refresh_group(QueryGroup::Zones).await.unwrap();
+    let last = group_queries(Brand::Denon, QueryGroup::Zones)
+        .last()
+        .unwrap();
+    wait_until("the end of the queue", || {
+        lines(&telnet.received()).contains(&last)
+    })
+    .await;
 }
 
 fn lines(received: &str) -> Vec<&str> {
@@ -227,6 +241,37 @@ async fn a_closed_telnet_port_is_in_the_report() {
 }
 
 #[tokio::test]
+async fn a_start_that_is_dropped_leaves_telnet_closed() {
+    let hang = Arc::new(AtomicBool::new(false));
+    let http = common::avr_x_receiver_that_can_hang(hang.clone()).await;
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    // The zones are not read in time, so the start is dropped.
+    hang.store(true, Ordering::SeqCst);
+    let late = tokio::time::timeout(Duration::from_millis(100), avr.start()).await;
+    assert!(late.is_err());
+    assert_eq!(telnet.connections(), 0);
+    assert_eq!(*avr.telnet_status().borrow(), TelnetStatus::Disconnected);
+
+    // Another start works, and its queries are the ones of a first start.
+    hang.store(false, Ordering::SeqCst);
+    let report = avr.start().await.unwrap().finished().await;
+    assert!(matches!(report.telnet, TelnetStart::Open));
+    wait_until("the first query", || {
+        lines(&telnet.received()).first() == Some(&"MSQUICK ?")
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn telnet_can_be_left_closed() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
@@ -321,7 +366,7 @@ fn the_default_options_are_the_new_ones() {
 }
 
 #[tokio::test]
-async fn a_failed_read_ends_the_start_and_closes_telnet() {
+async fn a_failed_read_ends_the_start_and_telnet_stays_closed() {
     let http = Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
         ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
         ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
@@ -340,7 +385,7 @@ async fn a_failed_read_ends_the_start_and_closes_telnet() {
             .unwrap(),
     );
     assert!(avr.start().await.is_err());
-    wait_until("telnet closed", || telnet.closed_by_client() == 1).await;
+    assert_eq!(telnet.connections(), 0);
 }
 
 #[tokio::test]
@@ -389,15 +434,12 @@ async fn a_failed_start_keeps_a_telnet_connection_that_it_did_not_open() {
     assert!(avr.start().await.is_err());
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(telnet.closed_by_client(), 0);
-    assert_eq!(
-        *avr.telnet_status().borrow(),
-        denon_marantz::TelnetStatus::Connected
-    );
+    assert_eq!(*avr.telnet_status().borrow(), TelnetStatus::Connected);
 }
 
 #[tokio::test]
 async fn refresh_signal_says_when_nothing_was_read() {
-    let good = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let good = Arc::new(AtomicBool::new(true));
     let web = {
         let good = good.clone();
         Fake::start(move |seen| match seen.path.as_str() {
@@ -476,7 +518,7 @@ async fn the_channels_page_is_not_read_when_appcommand_gave_the_channels() {
         "2.0"
     );
     // Telnet is not asked for the channels either.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    wait_for_the_queue(&avr, &telnet).await;
     assert!(!telnet.received().contains("OPINFINS ?"));
 }
 
@@ -528,12 +570,8 @@ async fn start_2016_receiver(answer: Option<&'static str>) -> FakeTelnet {
             .unwrap(),
     );
     avr.start().await.unwrap().finished().await;
-    wait_until("the last first query", || {
-        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
-    })
-    .await;
     // The queries of the fallback come after the first ones.
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    wait_for_the_queue(&avr, &telnet).await;
     telnet
 }
 

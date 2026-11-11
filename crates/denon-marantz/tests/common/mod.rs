@@ -3,7 +3,7 @@
 #![allow(dead_code)] // Each test file uses a part of this.
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -222,11 +222,31 @@ pub(crate) fn friendly_name_answer(name: &str) -> Vec<u8> {
 /// True if the request body asks for the zone names and nothing else.
 pub(crate) fn is_zone_names_request(body: &[u8]) -> bool {
     let body = String::from_utf8_lossy(body);
-    body.contains("GetZoneName") && !body.contains("GetAllZonePowerStatus")
+    body.contains("GetZoneName")
+        && !body.contains("GetAllZonePowerStatus")
+        && !body.contains("GetAutoStandby")
 }
 
 pub(crate) fn zone_names_answer() -> Vec<u8> {
     b"<rx><cmd><zone1>Cinema </zone1><zone2>Kitchen</zone2><zone3>Porch</zone3></cmd></rx>".to_vec()
+}
+
+/// True if the request body asks for the zone names, the auto standby, the
+/// dimmer and the eco mode, as the refresh does when telnet has no device group.
+pub(crate) fn is_zone_names_with_device_request(body: &[u8]) -> bool {
+    let body = String::from_utf8_lossy(body);
+    body.contains("GetZoneName")
+        && body.contains("GetAutoStandby")
+        && !body.contains("GetAllZonePowerStatus")
+}
+
+pub(crate) fn zone_names_with_device_answer() -> Vec<u8> {
+    b"<rx><cmd><zone1>Cinema </zone1><zone2>Kitchen</zone2><zone3>Porch</zone3></cmd>\
+    <cmd><list><listvalue><zone>Main</zone><value>60</value></listvalue>\
+        <listvalue><zone>Zone2</zone><value>0</value></listvalue></list></cmd>\
+    <cmd><value>2</value></cmd>\
+    <cmd><mode>1</mode></cmd></rx>"
+        .to_vec()
 }
 
 /// An AVR-X receiver that has all the pages.
@@ -244,8 +264,23 @@ pub(crate) async fn avr_x_receiver_with_pages(
     info: &'static [u8],
     pages: &'static [(&'static str, &'static [u8])],
 ) -> Fake {
+    avr_x_receiver_with(info, pages, Arc::new(AtomicBool::new(false))).await
+}
+
+/// Like [`avr_x_receiver`]. It does not answer `AppCommand` requests while
+/// `hang` is true.
+pub(crate) async fn avr_x_receiver_that_can_hang(hang: Arc<AtomicBool>) -> Fake {
+    avr_x_receiver_with(AVR_X_INFO, &[], hang).await
+}
+
+async fn avr_x_receiver_with(
+    info: &'static [u8],
+    pages: &'static [(&'static str, &'static [u8])],
+    hang: Arc<AtomicBool>,
+) -> Fake {
     Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("POST", "/goform/AppCommand.xml") if hang.load(Ordering::SeqCst) => Reply::Hang,
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
             ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
             ("GET", path) if pages.iter().any(|(page, _)| *page == path) => {
@@ -254,6 +289,9 @@ pub(crate) async fn avr_x_receiver_with_pages(
             }
             ("POST", "/goform/AppCommand.xml") if is_zone_names_request(&seen.body) => {
                 Reply::Body(zone_names_answer())
+            }
+            ("POST", "/goform/AppCommand.xml") if is_zone_names_with_device_request(&seen.body) => {
+                Reply::Body(zone_names_with_device_answer())
             }
             ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("Living room"))

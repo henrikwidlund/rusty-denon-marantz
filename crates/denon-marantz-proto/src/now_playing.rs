@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 
 use crate::error::Error;
-use crate::speaker_tables::root;
+use crate::speaker_tables::named_root;
 use crate::xml::Node;
 
 /// Path of the status page of network audio.
@@ -78,13 +78,20 @@ impl NowPlaying {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the status page, or has no display lines. A page without content must
+    /// not replace what the state has.
     pub fn parse_net_audio(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
-        let lines = node.child("szLine").map(|lines| lines.node());
+        let node = named_root(body, "item")?.node();
+        let lines = node
+            .child("szLine")
+            .ok_or(Error::UnexpectedDocument { expected: "szLine" })?
+            .node();
         let line = |index: usize| {
             lines
-                .and_then(|lines| lines.children().filter(|c| c.is("value")).nth(index))
+                .children()
+                .filter(|c| c.is("value"))
+                .nth(index)
                 .and_then(|value| clean(&value.node().text()?).map(Cow::into_owned))
         };
         Ok(Self {
@@ -100,9 +107,20 @@ impl NowPlaying {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the status page, or has none of its elements. A page with empty
+    /// elements is a page with nothing playing. A page without content must
+    /// not replace what the state has.
     pub fn parse_hd_radio(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let node = named_root(body, "item")?.node();
+        if !["Title", "Artist", "Album", "StationNameSh"]
+            .iter()
+            .any(|name| node.child(name).is_some())
+        {
+            return Err(Error::UnexpectedDocument {
+                expected: "a page with the title or the station",
+            });
+        }
         Ok(Self {
             status: None,
             title: value_of(node, "Title"),
@@ -243,6 +261,21 @@ mod tests {
         assert_eq!(now.album.as_deref(), Some("Example Album"));
         assert_eq!(now.station.as_deref(), Some("WXYZ-HD2"));
         assert!(NowPlaying::parse_hd_radio(HD_EMPTY).unwrap().is_empty());
+    }
+
+    #[test]
+    fn foreign_and_empty_pages_are_errors() {
+        // A page of another kind must not clear what plays.
+        for body in [&b"<Error/>"[..], b"<Audio><Title/></Audio>", b"<item/>"] {
+            assert!(NowPlaying::parse_net_audio(body).is_err());
+            assert!(NowPlaying::parse_hd_radio(body).is_err());
+        }
+        assert!(NowPlaying::parse_net_audio(b"<item><Other/></item>").is_err());
+        assert!(NowPlaying::parse_hd_radio(HD).is_ok());
+        assert!(NowPlaying::parse_hd_radio(PLAYING).is_err());
+        // A page with empty lines is a page with nothing playing.
+        let empty = NowPlaying::parse_net_audio(b"<item><szLine/></item>").unwrap();
+        assert!(empty.is_empty());
     }
 
     #[test]

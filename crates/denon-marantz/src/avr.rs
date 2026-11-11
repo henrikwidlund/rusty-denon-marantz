@@ -90,6 +90,16 @@ const APPCOMMAND0300_COMMANDS: [Definition; 5] = [
 #[cfg(feature = "telnet")]
 const HTTP_ONLY_COMMANDS: [Definition; 1] = [appcommand::GET_ZONE_NAME];
 
+/// [`HTTP_ONLY_COMMANDS`] and the settings of [`QueryGroup::Device`]. The
+/// refresh sends these when the telnet connection does not fetch that group.
+#[cfg(feature = "telnet")]
+const HTTP_ONLY_WITH_DEVICE_COMMANDS: [Definition; 4] = [
+    appcommand::GET_ZONE_NAME,
+    appcommand::GET_AUTO_STANDBY,
+    appcommand::GET_DIMMER,
+    appcommand::GET_ECO,
+];
+
 /// How the state is read over HTTP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -182,6 +192,9 @@ pub struct Avr {
     /// The request body of [`HTTP_ONLY_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_body: Bytes,
+    /// The request body of [`HTTP_ONLY_WITH_DEVICE_COMMANDS`].
+    #[cfg(feature = "telnet")]
+    http_only_with_device_body: Bytes,
     /// The request body of [`APPCOMMAND0300_COMMANDS`]. Receivers of the 2016
     /// generation and later have them.
     appcommand0300_body: Bytes,
@@ -261,8 +274,10 @@ impl Avr {
 
     /// Reads all values again, in the way that fits. If the telnet connection
     /// is open, it asks on telnet, as `Avr::telnet_refresh` does, and reads
-    /// over HTTP only what telnet does not report: the names of the zones. If
-    /// telnet is not open, it does what [`Avr::update`] does.
+    /// over HTTP only what telnet does not report: the names of the zones, and
+    /// the dimmer, eco and auto standby if [`TelnetConfig::query_groups`] has
+    /// no `Device` group. If telnet is not open, it does what [`Avr::update`]
+    /// does.
     ///
     /// Values from telnet arrive as events after the call returns. With
     /// telnet open both are tried, and the first error is returned. Use
@@ -563,7 +578,7 @@ impl Avr {
     /// [`Error::is_unreachable`].
     pub async fn update_now_playing(&self) -> Result<PageStatus, Error> {
         let result = self.read_now_playing_page().await;
-        self.forget_telnet_values(&result).await;
+        self.forget_telnet_values(&result);
         result
     }
 
@@ -746,8 +761,8 @@ impl Avr {
     /// Opens the telnet connection and keeps it open.
     ///
     /// Events from the receiver then change the state at once. If the
-    /// connection is lost, a task connects again. Does nothing if the
-    /// connection is open. Older receivers allow one telnet connection, so
+    /// connection is lost, a task connects again. Does nothing while the
+    /// task runs, also while it connects again. Older receivers allow one telnet connection, so
     /// another client can take it away; the task takes it back.
     ///
     /// # Errors
@@ -1024,7 +1039,7 @@ impl Avr {
                 // The start asks telnet again for what an error item left out.
                 self.signal_from_appcommand
                     .store(complete, Ordering::Relaxed);
-                self.forget_telnet_values(&Ok(PageStatus::Read)).await;
+                self.forget_telnet_values(&Ok(PageStatus::Read));
                 Ok(PageStatus::Read)
             }
             // A timeout or a network error can pass.
@@ -1045,18 +1060,23 @@ impl Avr {
         }
     }
 
-    /// Reads only what telnet does not report: the names of the zones. A
-    /// receiver that uses the status pages does not have them.
+    /// Reads only what telnet does not report: the names of the zones, and the
+    /// dimmer, eco and auto standby if telnet does not fetch the `Device`
+    /// group. A receiver that uses the status pages does not have them.
     #[cfg(feature = "telnet")]
     async fn update_http_only(&self) -> Result<(), Error> {
         match self.info.update_method {
             UpdateMethod::AppCommand => {
-                self.read_appcommand(
-                    Endpoint::AppCommand,
-                    &HTTP_ONLY_COMMANDS,
-                    self.http_only_body.clone(),
-                )
-                .await
+                let (commands, body) = if self.telnet.fetches(QueryGroup::Device) {
+                    (&HTTP_ONLY_COMMANDS[..], &self.http_only_body)
+                } else {
+                    (
+                        &HTTP_ONLY_WITH_DEVICE_COMMANDS[..],
+                        &self.http_only_with_device_body,
+                    )
+                };
+                self.read_appcommand(Endpoint::AppCommand, commands, body.clone())
+                    .await
             }
             UpdateMethod::StatusPages => Ok(()),
         }
@@ -1248,6 +1268,10 @@ impl AvrBuilder {
             update_body,
             #[cfg(feature = "telnet")]
             http_only_body: request_body(&HTTP_ONLY_COMMANDS.map(|definition| definition.cmd))?,
+            #[cfg(feature = "telnet")]
+            http_only_with_device_body: request_body(
+                &HTTP_ONLY_WITH_DEVICE_COMMANDS.map(|definition| definition.cmd),
+            )?,
             appcommand0300_body: request_body(
                 &APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd),
             )?,

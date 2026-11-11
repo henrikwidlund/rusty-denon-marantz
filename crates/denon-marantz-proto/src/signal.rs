@@ -4,6 +4,7 @@
 use std::fmt;
 
 use crate::appcommand::{Field, Item};
+use crate::reading::Sides;
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::values::{ColorSpace, PixelDepth};
 
@@ -18,6 +19,10 @@ pub struct ChannelLayout {
     /// Height and other overhead channels.
     pub immersive: u8,
 }
+
+/// Number of channel positions of the telnet text and of the web interface
+/// page. A position after these is not a channel.
+const CHANNEL_POSITIONS: usize = 32;
 
 impl ChannelLayout {
     /// Reads the channel text of the receiver. Each position of the text is a
@@ -53,7 +58,9 @@ impl ChannelLayout {
 
     /// Counts the active channels of the answer to `GetInputSignal` or
     /// `GetActiveSpeaker`, as [`ChannelLayout::from_grid`] does. The text of
-    /// each `param` is the name of the channel.
+    /// each `param` is the name of the channel. An item with an error has no
+    /// channels and gives `None`, like a grid with no active channel: do not
+    /// apply it, see [`State::apply_channel_item`](crate::State::apply_channel_item).
     #[must_use]
     pub fn from_appcommand(item: &Item<'_>) -> Option<Self> {
         let mut layout = Self::default();
@@ -94,10 +101,10 @@ impl ChannelLayout {
             immersive: 0,
         };
         // Receiver data decides the positions: count each one once, and
-        // ignore the ones after the last known channel.
-        let mut seen = 0_u64;
+        // ignore the ones after the last known position.
+        let mut seen = 0_u32;
         for index in positions {
-            if index >= u64::BITS as usize || seen & (1 << index) != 0 {
+            if index >= CHANNEL_POSITIONS || seen & (1 << index) != 0 {
                 continue;
             }
             seen |= 1 << index;
@@ -138,6 +145,13 @@ impl<T> Default for InOut<T> {
             input: None,
             output: None,
         }
+    }
+}
+
+impl<T: Copy + PartialEq> InOut<T> {
+    /// Sets the sides that the page has.
+    fn set_page(&mut self, page: &Sides<T>) -> bool {
+        page.input.store(&mut self.input) | page.output.store(&mut self.output)
     }
 }
 
@@ -261,8 +275,9 @@ impl SignalState {
     }
 
     /// Applies a value of the answer to `GetVideoInfo` or `GetAudioInfo`.
-    /// Returns true if a value changed. The text has no signal if it is
-    /// blank, `---` or `Unknown`.
+    /// Returns true if a value changed. A blank text has no signal. The video
+    /// text also has none for `---`, the audio text for `Unknown` and the
+    /// sampling rate for `NON`.
     pub(crate) fn apply_appcommand(&mut self, field: Field, value: Option<&str>) -> bool {
         let value = value.map(str::trim);
         match field {
@@ -282,25 +297,23 @@ impl SignalState {
     }
 
     /// Applies the video page of the web interface. Returns true if a value
-    /// changed. A side with no signal clears its values.
+    /// changed. A value that the page has and that has no signal clears the
+    /// state. A value that the page does not have keeps it.
     pub(crate) fn apply_video_page(&mut self, page: &VideoSignalPage) -> bool {
-        let mut changed = self.video.set_both(&page.resolution);
-        changed |= self.hdr.set_both(&page.hdr);
-        changed |= self.max_frl.set_both(&page.frl_rate);
-        changed |= self.color_space.set(true, page.color_space.input)
-            | self.color_space.set(false, page.color_space.output);
-        changed |= self.pixel_depth.set(true, page.pixel_depth.input)
-            | self.pixel_depth.set(false, page.pixel_depth.output);
-        changed |= replace(&mut self.allm, page.allm);
-        changed |= replace(&mut self.qft, page.qft);
+        let mut changed = self.video.set_text_page(&page.resolution);
+        changed |= self.hdr.set_text_page(&page.hdr);
+        changed |= self.max_frl.set_text_page(&page.frl_rate);
+        changed |= self.color_space.set_page(&page.color_space);
+        changed |= self.pixel_depth.set_page(&page.pixel_depth);
+        changed |= page.allm.store(&mut self.allm);
+        changed |= page.qft.store(&mut self.qft);
         changed
     }
 
     /// Applies the channel page of the web interface. Returns true if a value
-    /// changed.
+    /// changed. A side that the page does not have keeps its value.
     pub(crate) fn apply_channels_page(&mut self, page: &AudioChannelsPage) -> bool {
-        self.channels.set(true, page.channels.input)
-            | self.channels.set(false, page.channels.output)
+        self.channels.set_page(&page.channels)
     }
 
     fn set_video(&mut self, rest: &str) -> bool {
@@ -312,9 +325,9 @@ impl SignalState {
 }
 
 impl InOut<String> {
-    /// Sets the input and the output. Returns true if a value changed.
-    fn set_both(&mut self, new: &Self) -> bool {
-        self.set_text(true, new.input.as_deref()) | self.set_text(false, new.output.as_deref())
+    /// Sets the sides that the page has. Returns true if a value changed.
+    fn set_text_page(&mut self, page: &Sides<String>) -> bool {
+        page.input.store_text(&mut self.input) | page.output.store_text(&mut self.output)
     }
 
     pub(crate) fn set_text(&mut self, is_input: bool, value: Option<&str>) -> bool {
@@ -372,16 +385,6 @@ fn sampling_rate(text: &str) -> Option<&str> {
     }
 }
 
-/// Replaces a value. Returns true if it was different.
-fn replace<T: PartialEq>(slot: &mut Option<T>, value: Option<T>) -> bool {
-    if *slot == value {
-        false
-    } else {
-        *slot = value;
-        true
-    }
-}
-
 /// Replaces the text. Returns true if it was different. The buffer is reused.
 fn set_text(slot: &mut Option<String>, value: Option<&str>) -> bool {
     match (slot.as_mut(), value) {
@@ -406,6 +409,7 @@ fn set_text(slot: &mut Option<String>, value: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reading::Reading;
 
     fn ss(signal: &mut SignalState, text: &str) -> bool {
         signal.apply_ss(text)
@@ -512,14 +516,14 @@ mod tests {
 
     #[test]
     fn a_long_text_does_not_overflow() {
-        // A line can have thousands of positions. Only the known ones count.
+        // A line can have thousands of positions. Only the first 32 count.
         let long = "2".repeat(8000);
-        assert_eq!(
-            ChannelLayout::from_status(&long)
-                .map(|l| l.to_string())
-                .as_deref(),
-            Some("8.1.56")
-        );
+        let layout = |text: &str| ChannelLayout::from_status(text).map(|l| l.to_string());
+        assert_eq!(layout(&long).as_deref(), Some("8.1.24"));
+        assert_eq!(layout(&long[..32]), layout(&long));
+        // The 33rd position is not a channel.
+        let after = format!("{}2", "0".repeat(32));
+        assert_eq!(layout(&after), None);
     }
 
     #[test]
@@ -532,6 +536,118 @@ mod tests {
         assert_eq!(layout("22000000000002").as_deref(), Some("2.0.2"));
         assert_eq!(layout("00000000"), None);
         assert_eq!(layout(""), None);
+    }
+
+    #[test]
+    fn example_status_texts_give_the_channel_layout() {
+        // Example texts, padded to 32 positions. Position 13 counts as two
+        // channels.
+        for (text, expected) in [
+            ("00200000", "1.0"),
+            ("22000000", "2.0"),
+            ("22020000", "2.1"),
+            ("22211111111111000000", "3.0"),
+            ("20222000", "3.1"),
+            ("22112211111111000000", "4.0"),
+            ("22022200", "4.1"),
+            ("22212211111111000000", "5.0"),
+            ("22222211111111000000", "5.1"),
+            ("22202220", "6.0"),
+            ("22222211211111000000", "6.1"),
+            ("22202222", "7.0"),
+            ("22222222", "7.1"),
+            ("22222211122111000000", "5.1.2"),
+            ("22222211111112000000", "5.1.2"),
+            ("22222211111112202000", "5.1.4"),
+            ("22222222111111000000", "7.1"),
+            ("22222222111111220000", "7.1.2"),
+            ("22222222122112000000", "7.1.4"),
+            ("22222222022000000000000002200000", "7.1.4"),
+            ("22222222122112220000", "7.1.6"),
+        ] {
+            let padded = format!("{text:0<32}");
+            let layout = ChannelLayout::from_status(&padded).map(|l| l.to_string());
+            assert_eq!(layout.as_deref(), Some(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_web_page_and_the_appcommand_answer_agree_on_the_channels_that_the_page_has() {
+        let page = AudioChannelsPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-audio-channels-atmos.xml"
+        ))
+        .unwrap();
+        let mut state = crate::State::new(false);
+        apply_answer(
+            &mut state,
+            include_bytes!("../tests/data/xml/AVC-A10H-AppCommand0300-answer-atmos.xml"),
+        );
+        let channels = &state.device().signal.channels;
+        assert_eq!(page.channels.output.as_value(), channels.output.as_ref());
+        // The page of an object based stream has a text for the input, and
+        // no channels. The answer has the channels of the base layer.
+        assert_eq!(page.channels.input, Reading::Empty);
+        assert_eq!(channels.input.as_ref().unwrap().to_string(), "7.1");
+    }
+
+    #[test]
+    fn a_partial_video_page_keeps_the_other_values() {
+        let mut signal = SignalState::default();
+        let full = VideoSignalPage::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-video-signal.xml"
+        ))
+        .unwrap();
+        assert!(signal.apply_video_page(&full));
+        let partial = VideoSignalPage::parse(
+            b"<Video><Resolution><Input>1080p60</Input></Resolution></Video>",
+        )
+        .unwrap();
+        assert!(signal.apply_video_page(&partial));
+        assert_eq!(signal.video.input.as_deref(), Some("1080p60"));
+        assert_eq!(signal.video.output.as_deref(), Some("4K50"));
+        assert_eq!(signal.color_space.input, Some(ColorSpace::Yuv444));
+        assert_eq!(signal.pixel_depth.output, Some(PixelDepth::Bits8));
+        assert_eq!(signal.allm, Some(false));
+        assert!(!signal.apply_video_page(&partial));
+        // A value that the page has and that has no signal clears it.
+        let none = VideoSignalPage::parse(
+            b"<Video><Resolution><Output>---</Output></Resolution><ALLM>9</ALLM></Video>",
+        )
+        .unwrap();
+        assert!(signal.apply_video_page(&none));
+        assert_eq!(signal.video.input.as_deref(), Some("1080p60"));
+        assert_eq!(signal.video.output, None);
+        assert_eq!(signal.allm, None);
+    }
+
+    #[test]
+    fn a_partial_channels_page_keeps_the_other_side() {
+        let mut signal = SignalState::default();
+        signal.apply_op("INFINS 22000000");
+        signal.apply_op("INFASP 22222222");
+        let page =
+            AudioChannelsPage::parse(b"<Audio><InputSignal>DOLBY</InputSignal></Audio>").unwrap();
+        assert!(signal.apply_channels_page(&page));
+        assert_eq!(signal.channels.input, None);
+        assert_eq!(signal.channels.output.unwrap().to_string(), "7.1");
+    }
+
+    #[test]
+    fn an_item_with_an_error_does_not_clear_the_channels() {
+        use crate::appcommand::Response;
+        let mut state = crate::State::new(false);
+        apply_answer(
+            &mut state,
+            include_bytes!("../tests/data/xml/AVC-A10H-AppCommand0300-answer-atmos.xml"),
+        );
+        let before = state.device().signal.channels.clone();
+        assert!(before.input.is_some() && before.output.is_some());
+        let response = Response::parse(b"<rx><error>2</error><error>2</error></rx>", 2).unwrap();
+        for (is_input, item) in [true, false].into_iter().zip(response.items()) {
+            assert!(item.is_error());
+            assert_eq!(state.apply_channel_item(is_input, &item), None);
+        }
+        assert_eq!(state.device().signal.channels, before);
     }
 
     #[test]
@@ -588,8 +704,7 @@ mod tests {
                 state.apply_field(Zone::Main, field, value);
             });
             if *definition == GET_INPUT_SIGNAL || *definition == GET_ACTIVE_SPEAKER {
-                let layout = ChannelLayout::from_appcommand(&item);
-                state.apply_channel_grid(*definition == GET_INPUT_SIGNAL, layout);
+                state.apply_channel_item(*definition == GET_INPUT_SIGNAL, &item);
             }
         }
     }
@@ -628,5 +743,6 @@ mod tests {
         assert_eq!(signal.audio_signal, None);
         assert_eq!(signal.sampling_rate, None);
         assert_eq!(signal.channels.input, None);
+        assert_eq!(signal.channels.output, None);
     }
 }

@@ -4,7 +4,7 @@
 //! The page does not send changes. Read it again to read it again.
 
 use crate::error::Error;
-use crate::speaker_tables::{number, root};
+use crate::speaker_tables::{named_root, number};
 
 /// Path of the page.
 pub const SYSTEM_SETTINGS_PATH: &str = "/ajax/advanced/get_config?type=3";
@@ -63,15 +63,17 @@ impl SystemSettings {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the system settings page, or has no known value. A page without
+    /// content must not replace what the state has.
     pub fn parse(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let node = named_root(body, "AdvancedMenu")?.node();
         let on = |name: &str| match number::<u8>(node, name) {
             Some(1) => Some(true),
             Some(2) => Some(false),
             _ => None,
         };
-        Ok(Self {
+        let settings = Self {
             network_control: number::<u8>(node, "NetworkControl")
                 .and_then(NetworkControl::from_code),
             hdmi_control: on("HDMIControl"),
@@ -82,7 +84,13 @@ impl SystemSettings {
             roon_ready: on("Roon"),
             tidal_connect: on("Tidal"),
             qobuz_connect: on("Qobuz"),
-        })
+        };
+        if settings == Self::default() {
+            return Err(Error::UnexpectedDocument {
+                expected: "a page with a known value",
+            });
+        }
+        Ok(settings)
     }
 }
 
@@ -116,6 +124,19 @@ mod tests {
         assert_eq!(settings.menu_lock, Some(true));
         assert_eq!(settings.airplay, None);
         assert_eq!(settings.hdmi_control, None);
+    }
+
+    #[test]
+    fn foreign_and_empty_pages_are_errors() {
+        // A page that gives no value must not clear the settings.
+        for body in [
+            &b"<Error/>"[..],
+            b"<AdvancedMenu/>",
+            b"<AdvancedMenu><AirPlay>x</AirPlay><Other>1</Other></AdvancedMenu>",
+            b"<Bass><AirPlay>1</AirPlay></Bass>",
+        ] {
+            assert!(SystemSettings::parse(body).is_err());
+        }
     }
 
     #[test]

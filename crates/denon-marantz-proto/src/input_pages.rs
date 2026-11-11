@@ -7,6 +7,7 @@
 //! the sources that are known. Other sources keep only the index.
 
 use crate::error::Error;
+use crate::reading::Reading;
 use crate::speaker_tables::{number, root};
 use crate::xml::Node;
 
@@ -179,12 +180,12 @@ pub struct SourceNameEntry {
     pub source: Option<&'static str>,
     /// The name of the source when nothing is changed, for example
     /// `Media Player`.
-    pub default_name: Option<String>,
+    pub default_name: Reading<String>,
     /// The name that the user gave, for example `Apple TV`.
-    pub rename: Option<String>,
+    pub rename: Reading<String>,
     /// The name that the device on the input reported itself, for example
     /// `UDP-203`. It can be used as a name by the receiver.
-    pub auto_name: Option<String>,
+    pub auto_name: Reading<String>,
 }
 
 /// The source names page.
@@ -233,9 +234,9 @@ impl SourceNames {
             names.entries.push(SourceNameEntry {
                 index,
                 source: source_for_index(index),
-                default_name: text_of(content, "Default"),
-                rename: text_of(content, "Rename"),
-                auto_name: text_of(content, "Auto"),
+                default_name: reading_of(content, "Default"),
+                rename: reading_of(content, "Rename"),
+                auto_name: reading_of(content, "Auto"),
             });
         }
         if names.entries.is_empty() {
@@ -252,6 +253,14 @@ fn text_of(node: Node<'_>, name: &str) -> Option<String> {
     let text = node.child(name)?.node().text()?;
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// Like [`text_of`], and [`Reading::Absent`] if the child is missing.
+fn reading_of(node: Node<'_>, name: &str) -> Reading<String> {
+    if node.child(name).is_none() {
+        return Reading::Absent;
+    }
+    Reading::from_option(text_of(node, name))
 }
 
 #[cfg(test)]
@@ -289,9 +298,18 @@ mod tests {
         assert_eq!(names.entries.len(), 5);
         let bluray = &names.entries[1];
         assert_eq!(bluray.source, Some("BD"));
-        assert_eq!(bluray.default_name.as_deref(), Some("Blu-ray"));
-        assert_eq!(bluray.rename.as_deref(), Some("Blu-ray"));
-        assert_eq!(bluray.auto_name.as_deref(), Some("UDP-203"));
+        assert_eq!(
+            bluray.default_name.as_value().map(String::as_str),
+            Some("Blu-ray")
+        );
+        assert_eq!(
+            bluray.rename.as_value().map(String::as_str),
+            Some("Blu-ray")
+        );
+        assert_eq!(
+            bluray.auto_name.as_value().map(String::as_str),
+            Some("UDP-203")
+        );
     }
 
     #[test]
@@ -332,7 +350,10 @@ mod tests {
             <Source index="3"><Rename>Second</Rename></Source></SourceRename>"#;
         let names = SourceNames::parse(xml).unwrap();
         assert_eq!(names.entries.len(), 1);
-        assert_eq!(names.entries[0].rename.as_deref(), Some("First"));
+        assert_eq!(
+            names.entries[0].rename.as_value().map(String::as_str),
+            Some("First")
+        );
         let xml = br#"<InputAssign><Source index="5"><Name>A</Name></Source>
             <Source index="5"><Name>B</Name></Source></InputAssign>"#;
         let list = InputAssignment::parse(xml).unwrap();
@@ -348,8 +369,10 @@ mod tests {
         let xml = b"<SourceRename><Source index=\"3\"><Default/><Rename> </Rename></Source></SourceRename>";
         let names = SourceNames::parse(xml).unwrap();
         assert_eq!(names.max_length, None);
-        assert_eq!(names.entries[0].default_name, None);
-        assert_eq!(names.entries[0].rename, None);
+        // An element without a text is empty, and a missing element is absent.
+        assert_eq!(names.entries[0].default_name, Reading::Empty);
+        assert_eq!(names.entries[0].rename, Reading::Empty);
+        assert_eq!(names.entries[0].auto_name, Reading::Absent);
         assert!(SourceNames::parse(b"<html/>").is_err());
         assert!(InputAssignment::parse(b"").is_err());
     }

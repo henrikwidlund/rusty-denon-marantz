@@ -281,10 +281,35 @@ impl VideoMenu {
             VideoMenuPart::TvFormat(value) => put(&mut self.tv_format, value),
             VideoMenuPart::ScreenSaver(value) => put(&mut self.screen_saver, value),
             VideoMenuPart::HdmiUpscaler(value) => put(&mut self.hdmi_upscaler, value),
-            VideoMenuPart::Hdcp(value) => put(&mut self.hdcp, value),
-            VideoMenuPart::SignalFormat(value) => put(&mut self.signal_format, value),
+            VideoMenuPart::Hdcp(list) => merge_sources(&mut self.hdcp, list),
+            VideoMenuPart::SignalFormat(list) => merge_sources(&mut self.signal_format, list),
         }
     }
+}
+
+/// Stores the sources of a page by their index. A source that the page does
+/// not list keeps its entry, and a value that the page has no known number for
+/// keeps the known value. Returns true if the list changed.
+fn merge_sources<T: Clone + PartialEq>(
+    list: &mut Vec<SourceSetting<T>>,
+    new: Vec<SourceSetting<T>>,
+) -> bool {
+    let mut changed = false;
+    for mut entry in new {
+        if let Some(known) = list.iter_mut().find(|known| known.index == entry.index) {
+            if entry.value.is_none() {
+                entry.value.clone_from(&known.value);
+            }
+            if *known != entry {
+                *known = entry;
+                changed = true;
+            }
+        } else if list.len() < MAX_SOURCES {
+            list.push(entry);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Reads the text of the child `name` with `read`, without a copy.
@@ -501,6 +526,33 @@ mod tests {
         };
         assert!(menu.apply(hdcp()));
         assert!(!menu.apply(hdcp()));
+    }
+
+    #[test]
+    fn a_page_with_unknown_values_keeps_the_known_values_of_each_source() {
+        let mut menu = VideoMenu::default();
+        let hdcp = |first, second| {
+            format!(
+                "<HDCPSetup><Source index=\"1\"><Name>A</Name><Value>{first}</Value></Source>\
+                 <Source index=\"3\"><Name>B</Name><Value>{second}</Value></Source></HDCPSetup>"
+            )
+        };
+        let part = |first, second| page(VideoMenuPage::Hdcp, hdcp(first, second).as_bytes());
+        assert!(menu.apply(part("1", "2")));
+        let known: Vec<_> = menu.hdcp.iter().map(|s| s.value).collect();
+        assert_eq!(known.len(), 2);
+        assert!(known.iter().all(Option::is_some));
+        // One source has a number that is not known: it keeps its value.
+        assert!(!menu.apply(part("1", "99")));
+        assert_eq!(menu.hdcp.iter().map(|s| s.value).collect::<Vec<_>>(), known);
+        // A source that the page does not list keeps its entry.
+        let one = page(
+            VideoMenuPage::Hdcp,
+            b"<HDCPSetup><Source index=\"1\"><Name>A</Name><Value>2</Value></Source></HDCPSetup>",
+        );
+        assert!(menu.apply(one));
+        assert_eq!(menu.hdcp.len(), 2);
+        assert_eq!(menu.hdcp[1].value, known[1]);
     }
 
     #[test]

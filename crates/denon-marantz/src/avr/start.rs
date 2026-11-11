@@ -105,8 +105,8 @@ pub struct StartReport {
     /// The signal, the channels and the Audyssey settings from
     /// `AppCommand0300.xml`, see [`Avr::update_signal`]. [`PageStatus::Read`]
     /// means that the state has them. [`PageStatus::NotFound`] means that the
-    /// receiver does not have the file, and [`PageStatus::NoAnswer`] that it
-    /// did not answer in time.
+    /// receiver does not have the file, and [`PageStatus::NoAnswer`] that the
+    /// request timed out or the connection failed.
     pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
@@ -153,9 +153,9 @@ impl Avr {
 
     /// Fills the state as fast as the receiver allows.
     ///
-    /// It reads the zones with [`Avr::update`] and returns when that is done,
-    /// so the state is usable then. In the background it opens telnet at the
-    /// same time, and asks it first for what the HTTP read does not give. It
+    /// It reads the zones with [`Avr::update`]. If that works, it opens telnet
+    /// and returns, so the state is usable then. In the background it asks
+    /// telnet first for what the HTTP read does not give. It
     /// also reads, one after the other, the pages that say which settings are
     /// available, and the signal pages, with one more try for a page that
     /// fails. The telnet queries for the signal that the pages answer are not
@@ -168,24 +168,21 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// The errors of [`Avr::update`]. A telnet connection that this call
-    /// opened is closed again then. A failure of telnet or of the web
-    /// interface is in the report.
+    /// The errors of [`Avr::update`]. Telnet is not opened then. A failure of
+    /// telnet or of the web interface is in the report.
+    ///
+    /// If the future is dropped before it returns, for example by a timeout,
+    /// no connection stays open.
     pub async fn start_with(self: &Arc<Self>, options: StartOptions) -> Result<Started, Error> {
+        self.update().await?;
         #[cfg(feature = "telnet")]
-        let (read, telnet) = if options.telnet {
-            tokio::join!(self.update(), self.start_telnet())
+        let telnet = if options.telnet {
+            self.start_telnet().await
         } else {
-            (self.update().await, TelnetStart::Disabled)
+            TelnetStart::Disabled
         };
         #[cfg(not(feature = "telnet"))]
-        let (read, telnet) = (self.update().await, TelnetStart::Disabled);
-        // Close only the connection that this start opened.
-        #[cfg(feature = "telnet")]
-        if read.is_err() && matches!(telnet, TelnetStart::Open) {
-            self.telnet_disconnect().await;
-        }
-        read?;
+        let telnet = TelnetStart::Disabled;
         let avr = Arc::clone(self);
         Ok(Started {
             handle: tokio::spawn(async move { avr.finish_start(options, telnet).await }),
@@ -281,7 +278,7 @@ impl Avr {
                 state.apply_video_signal_page(&page)
             })
             .await;
-        self.forget_telnet_values(&result).await;
+        self.forget_telnet_values(&result);
         result
     }
 
@@ -293,17 +290,21 @@ impl Avr {
                 |state, page| state.apply_audio_channels_page(&page),
             )
             .await;
-        self.forget_telnet_values(&result).await;
+        self.forget_telnet_values(&result);
         result
     }
 
     /// After a page set values, the next telnet event with the old value is a
     /// real change, so telnet must not drop it as a repeat.
-    #[cfg_attr(not(feature = "telnet"), allow(clippy::unused_async))]
-    pub(super) async fn forget_telnet_values(&self, result: &Result<PageStatus, Error>) {
+    // Without telnet there is nothing to forget, and the body is empty.
+    #[cfg_attr(
+        not(feature = "telnet"),
+        allow(clippy::missing_const_for_fn, clippy::unused_self)
+    )]
+    pub(super) fn forget_telnet_values(&self, result: &Result<PageStatus, Error>) {
         #[cfg(feature = "telnet")]
         if matches!(result, Ok(PageStatus::Read)) {
-            self.telnet.forget_values().await;
+            self.telnet.forget_values();
         }
         #[cfg(not(feature = "telnet"))]
         let _ = result;

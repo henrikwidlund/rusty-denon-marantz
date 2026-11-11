@@ -151,15 +151,22 @@ impl Pacer {
     }
 
     /// Waits until a request may be sent.
+    ///
+    /// The slot is taken when the wait ends, so a call that is dropped while it
+    /// waits delays no other call.
     pub async fn wait(&self) {
-        let start = {
-            let mut inner = self.lock();
-            let now = Instant::now();
-            let start = inner.next.max(now);
-            inner.next = start + inner.interval;
-            start
-        };
-        tokio::time::sleep_until(start).await;
+        loop {
+            let next = {
+                let mut inner = self.lock();
+                let now = Instant::now();
+                if inner.next <= now {
+                    inner.next = now + inner.interval;
+                    return;
+                }
+                inner.next
+            };
+            tokio::time::sleep_until(next).await;
+        }
     }
 
     /// Reports how long an answer took, since `started`.
@@ -227,6 +234,19 @@ mod tests {
         let start = Instant::now();
         pacer.wait().await;
         assert_eq!(start.elapsed(), ms(0));
+        pacer.wait().await;
+        assert_eq!(start.elapsed(), ms(50));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dropped_wait_does_not_delay_the_next_call() {
+        let pacer = Pacer::new(Pacing::Fixed { interval: ms(50) }).unwrap();
+        let start = Instant::now();
+        pacer.wait().await;
+        for _ in 0..3 {
+            let dropped = tokio::time::timeout(ms(1), pacer.wait()).await;
+            assert!(dropped.is_err());
+        }
         pacer.wait().await;
         assert_eq!(start.elapsed(), ms(50));
     }

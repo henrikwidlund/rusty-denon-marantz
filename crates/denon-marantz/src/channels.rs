@@ -3,8 +3,9 @@
 use denon_marantz_proto::{Change, State};
 use tokio::sync::{broadcast, watch};
 
-/// Changes that a slow subscriber can fall behind before it loses some.
-const CHANGE_CAPACITY: usize = 64;
+/// Changes that a slow subscriber can fall behind before it loses some. One
+/// read of all zones can report more than 64 changes.
+const CHANGE_CAPACITY: usize = 256;
 
 /// The state of a receiver and the stream of its changes.
 ///

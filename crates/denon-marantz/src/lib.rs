@@ -37,10 +37,14 @@
 //!
 //! # async fn run() -> Result<(), denon_marantz::Error> {
 //! let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
+//! // Subscribe before the start, so that no change is missed.
+//! let mut changes = avr.changes();
 //! let started = avr.start().await?;
 //! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
 //!
-//! let mut changes = avr.changes();
+//! // Optional: wait until everything that the start reads has been read.
+//! let report = started.finished().await;
+//!
 //! loop {
 //!     match changes.recv().await {
 //!         Ok(change) => println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main)),
@@ -49,8 +53,6 @@
 //!         Err(RecvError::Closed) => break,
 //!     }
 //! }
-//! // Optional: wait until everything that the start reads has been read.
-//! let report = started.finished().await;
 //! # Ok(())
 //! # }
 //! ```

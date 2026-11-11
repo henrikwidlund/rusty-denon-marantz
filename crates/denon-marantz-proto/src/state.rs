@@ -766,7 +766,7 @@ impl State {
     pub fn apply_field(&mut self, zone: Zone, field: Field, value: Option<&str>) -> Option<Change> {
         match field {
             Field::Muted => {
-                let muted = value.map(|v| v.eq_ignore_ascii_case("on"));
+                let muted = value.and_then(on_off_answer);
                 self.zone_change(zone, Setting::Muted, |z| set(&mut z.muted, muted))
             }
             Field::Power => {
@@ -866,6 +866,20 @@ impl State {
         layout: Option<ChannelLayout>,
     ) -> Option<Change> {
         self.signal_change(|signal| signal.channels.set(is_input, layout))
+    }
+
+    /// Stores the channels of the answer to `GetInputSignal` (`is_input`) or
+    /// `GetActiveSpeaker`, as [`State::apply_channel_grid`] does. An item with
+    /// an error has no channels, and the state keeps its values.
+    pub fn apply_channel_item(
+        &mut self,
+        is_input: bool,
+        item: &crate::appcommand::Item<'_>,
+    ) -> Option<Change> {
+        if item.is_error() {
+            return None;
+        }
+        self.apply_channel_grid(is_input, ChannelLayout::from_appcommand(item))
     }
 
     /// Applies a `PS` event. The state holds the tone control, the Audyssey
@@ -1419,7 +1433,6 @@ impl State {
     }
 }
 
-/// `ON` and `OFF`, as telnet events have them.
 /// Splits a volume setting event, for example `VCTZ2SLIM 070`, into the zone,
 /// the kind (`LIM`) and the value. `MA` is the main zone, `2S` and `3S` are
 /// zone 2 and 3.
@@ -1435,6 +1448,7 @@ fn zone_volume_event(parameter: &str) -> Option<(Zone, &str, &str)> {
     Some((zone, rest.get(..3)?, rest.get(3..)?))
 }
 
+/// `ON` and `OFF`, as telnet events have them.
 fn on_off(text: &str) -> Option<bool> {
     match text {
         "ON" => Some(true),
@@ -1443,7 +1457,17 @@ fn on_off(text: &str) -> Option<bool> {
     }
 }
 
-/// `1` is on and `0` is off, as in an `AppCommand` answer.
+/// `on` and `off` in any case, as an `AppCommand` answer has them.
+fn on_off_answer(text: &str) -> Option<bool> {
+    if text.eq_ignore_ascii_case("on") {
+        Some(true)
+    } else if text.eq_ignore_ascii_case("off") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 const fn sources_change() -> Change {
     Change {
         zone: None,
@@ -1468,6 +1492,7 @@ const fn speaker_setup_change() -> Change {
     }
 }
 
+/// `1` is on and `0` is off, as in an `AppCommand` answer.
 fn on_off_digit(text: &str) -> Option<bool> {
     match text.trim() {
         "1" => Some(true),
@@ -2079,6 +2104,16 @@ mod tests {
         );
         assert_eq!(state.zone(zone).source, None);
         assert_eq!(state.apply_field(zone, Field::InputFunc, None), None);
+        // Only `on` and `off` are values of the mute, in any case.
+        state.apply_field(zone, Field::Muted, Some("OFF"));
+        assert_eq!(state.zone(zone).muted, Some(false));
+        state.apply_field(zone, Field::Muted, Some("On"));
+        assert_eq!(state.zone(zone).muted, Some(true));
+        for text in ["garbage", ""] {
+            state.apply_field(zone, Field::Muted, Some("on"));
+            state.apply_field(zone, Field::Muted, Some(text));
+            assert_eq!(state.zone(zone).muted, None, "{text:?}");
+        }
         // Values that the state does not hold are ignored.
         assert_eq!(
             state.apply_field(zone, Field::BassLevel, Some("+1dB")),
@@ -2729,6 +2764,46 @@ mod tests {
             [(SpeakerGroup::Center, Crossover::Hz(80))]
         );
         assert_eq!(stored.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
+    }
+
+    #[test]
+    fn a_page_of_another_kind_is_refused_and_the_state_is_kept() {
+        let mut state = State::new(false);
+        state.apply_speaker_distances(
+            SpeakerTable::parse_distances(
+                br#"<Distances><List><Speaker index="0">25</Speaker></List></Distances>"#,
+            )
+            .unwrap(),
+        );
+        state.apply_bass_settings(
+            BassSettings::parse(b"<Bass><LPFforLFE>120</LPFforLFE></Bass>").unwrap(),
+        );
+        state.apply_system_settings(
+            SystemSettings::parse(b"<AdvancedMenu><AirPlay>1</AirPlay></AdvancedMenu>").unwrap(),
+        );
+        state.apply_now_playing(
+            NowPlaying::parse_net_audio(
+                b"<item><szLine><value>Now Playing</value><value>Song</value></szLine></item>",
+            )
+            .unwrap(),
+        );
+        let before = state.device().clone();
+        // The receiver can answer a page with a document of another kind.
+        // The parsers refuse it, so nothing reaches the state.
+        let foreign = b"<Error/>";
+        assert!(SpeakerTable::parse_distances(foreign).is_err());
+        assert!(SpeakerTable::parse_crossovers(foreign).is_err());
+        assert!(SpeakerTable::parse_channel_levels(foreign).is_err());
+        assert!(BassSettings::parse(foreign).is_err());
+        assert!(SystemSettings::parse(foreign).is_err());
+        assert!(NowPlaying::parse_net_audio(foreign).is_err());
+        assert!(NowPlaying::parse_hd_radio(foreign).is_err());
+        assert_eq!(*state.device(), before);
+        let stored = &state.device().speaker_setup;
+        assert_eq!(stored.distances.as_ref().unwrap().entries.len(), 1);
+        assert_eq!(stored.bass.as_ref().unwrap().lpf_for_lfe, Some(120));
+        assert_eq!(state.device().system_settings.airplay, Some(true));
+        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
     }
 
     #[test]

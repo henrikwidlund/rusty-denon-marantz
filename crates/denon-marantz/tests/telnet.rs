@@ -1977,6 +1977,8 @@ async fn refresh_reads_http_and_asks_on_telnet_when_it_is_open() {
     let body = String::from_utf8_lossy(&last.body);
     assert!(body.contains("GetZoneName"), "{body}");
     assert!(!body.contains("GetAllZoneVolume"), "{body}");
+    // The default groups of this test have the device settings.
+    assert!(!body.contains("GetDimmer"), "{body}");
     assert_eq!(
         avr.snapshot().zone(Zone::Zone2).name.as_deref(),
         Some("Kitchen")
@@ -1985,6 +1987,96 @@ async fn refresh_reads_http_and_asks_on_telnet_when_it_is_open() {
         telnet.received().matches("SI?\r").count() > asked
     })
     .await;
+}
+
+#[tokio::test]
+async fn refresh_reads_the_device_settings_that_telnet_does_not_fetch() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: QueryGroup::START_ORDER,
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    assert_eq!(avr.snapshot().device().dimmer, None);
+
+    avr.refresh().await.unwrap();
+    let last = http.requests().pop().unwrap();
+    let body = String::from_utf8_lossy(&last.body);
+    for command in ["GetZoneName", "GetAutoStandby", "GetDimmer", "GetECO"] {
+        assert!(body.contains(command), "{command}: {body}");
+    }
+    let state = avr.snapshot();
+    assert_eq!(state.device().dimmer, Some(DimmerMode::Dim));
+    assert_eq!(state.device().eco_mode, Some(EcoMode::On));
+    assert_eq!(
+        state.zone(Zone::Main).auto_standby,
+        Some(AutoStandby::Minutes60)
+    );
+    assert_eq!(state.zone(Zone::Zone2).name.as_deref(), Some("Kitchen"));
+}
+
+#[tokio::test]
+async fn the_status_is_reset_when_the_task_stops_before_it_runs() {
+    // This test runs on one thread, so the task does not run before the drop.
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    let status = avr.telnet_status();
+    avr.telnet_connect().await.unwrap();
+    assert_eq!(*status.borrow(), TelnetStatus::Connected);
+    drop(avr);
+    wait_until("the status", || {
+        *status.borrow() == TelnetStatus::Disconnected
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
+    // A port that takes the connection and never reads, so a large write blocks.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let holder = tokio::spawn(async move {
+        let _socket = listener.accept().await;
+        std::future::pending::<()>().await;
+    });
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        write_timeout: Duration::from_secs(10),
+        ..telnet_config(port)
+    };
+    let avr = std::sync::Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .telnet_config(config)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    avr.telnet_connect().await.unwrap();
+    let huge = "A".repeat(64 * 1024 * 1024);
+    let sender = tokio::spawn({
+        let avr = avr.clone();
+        async move { avr.telnet_send(Zone::Main, Command::Raw(&huge)).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!sender.is_finished());
+
+    let stopped = std::time::Instant::now();
+    avr.telnet_disconnect().await;
+    assert!(stopped.elapsed() < Duration::from_secs(2));
+    assert!(matches!(sender.await.unwrap(), Err(Error::NotConnected)));
+    holder.abort();
 }
 
 const VIDEO_PATH: &str = "/ajax/info/get_config?type=3";

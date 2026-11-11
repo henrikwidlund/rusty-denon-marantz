@@ -46,12 +46,12 @@ use denon_marantz::{Avr, Zone};
 use tokio::sync::broadcast::error::RecvError;
 
 let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
+let mut changes = avr.changes(); // subscribe before the start, so no change is missed
 let started = avr.start().await?; // the zones are in the state when this returns
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
 let report = started.finished().await; // optional: wait for the rest
 
-let mut changes = avr.changes();
 loop {
     match changes.recv().await {
         Ok(change) => println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main)),

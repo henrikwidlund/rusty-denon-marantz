@@ -4,6 +4,10 @@
 
 use crate::input_pages::{InputAssignment, SourceNameEntry, SourceNames};
 
+/// Most sources that the list keeps. A receiver has less than 40, and a
+/// source that comes after this is ignored.
+const MAX_SOURCES: usize = 64;
+
 /// One input source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceInfo {
@@ -144,10 +148,16 @@ impl SourceList {
 
     /// Stores the default and automatic names of the source names page, and
     /// the longest name. The names that the user gave are not used: telnet
-    /// reports them. Returns true if the list changed.
+    /// reports them. A value that the page does not have keeps the old value.
+    /// Returns true if the list changed.
     pub(crate) fn set_name_details(&mut self, names: &SourceNames) -> bool {
-        let mut changed = self.max_name_length != names.max_length;
-        self.max_name_length = names.max_length;
+        let mut changed = match names.max_length {
+            Some(length) if self.max_name_length != Some(length) => {
+                self.max_name_length = Some(length);
+                true
+            }
+            _ => false,
+        };
         for SourceNameEntry {
             source,
             default_name,
@@ -159,23 +169,27 @@ impl SourceList {
                 continue;
             };
             changed |= self.source(code, |source| {
-                let mut changed = set_text(&mut source.default_name, default_name.as_deref());
-                changed |= set_text(&mut source.auto_name, auto_name.as_deref());
-                changed
+                default_name.store_text(&mut source.default_name)
+                    | auto_name.store_text(&mut source.auto_name)
             });
         }
         changed
     }
 
     /// Updates a source, and adds it first if the list has none with this
-    /// code. Returns true if the list changed.
+    /// code. Returns true if the list changed. A new source is ignored when
+    /// the list is full.
     fn source(&mut self, code: &str, update: impl FnOnce(&mut SourceInfo) -> bool) -> bool {
         let found = self.sources.iter().position(|source| source.code == code);
         let is_new = found.is_none();
-        let index = found.unwrap_or_else(|| {
-            self.sources.push(SourceInfo::new(code));
-            self.sources.len() - 1
-        });
+        let index = match found {
+            Some(index) => index,
+            None if self.sources.len() < MAX_SOURCES => {
+                self.sources.push(SourceInfo::new(code));
+                self.sources.len() - 1
+            }
+            None => return false,
+        };
         update(&mut self.sources[index]) || is_new
     }
 }
@@ -281,6 +295,42 @@ mod tests {
         .unwrap();
         assert!(list.set_assignments(&moved));
         assert_eq!(list.get("MPLAY").unwrap().hdmi_input.as_deref(), Some("3"));
+    }
+
+    #[test]
+    fn the_list_is_limited() {
+        let mut list = SourceList::default();
+        for index in 0..MAX_SOURCES + 10 {
+            let changed = list.apply_ss(&format!("FUNX{index} Name"));
+            assert_eq!(changed, Some(index < MAX_SOURCES), "{index}");
+        }
+        assert_eq!(list.as_slice().len(), MAX_SOURCES);
+        // A source that is in the list can still change.
+        assert_eq!(list.apply_ss("FUNX0 Other"), Some(true));
+        assert_eq!(list.name("X0"), Some("Other"));
+        assert_eq!(list.get("X70"), None);
+    }
+
+    #[test]
+    fn a_names_page_keeps_what_it_does_not_have() {
+        let mut list = SourceList::default();
+        let full = SourceNames::parse(
+            br#"<SourceRename><CharacterMax>16</CharacterMax><Source index="5">
+            <Default>Media Player</Default><Rename>A</Rename><Auto>Box</Auto>
+            </Source></SourceRename>"#,
+        )
+        .unwrap();
+        assert!(list.set_name_details(&full));
+        // The page has no length and no `Default`, and an empty `Auto`.
+        let partial = SourceNames::parse(
+            br#"<SourceRename><Source index="5"><Rename>A</Rename><Auto/></Source></SourceRename>"#,
+        )
+        .unwrap();
+        assert!(list.set_name_details(&partial));
+        let source = list.get("MPLAY").unwrap();
+        assert_eq!(list.max_name_length(), Some(16));
+        assert_eq!(source.default_name.as_deref(), Some("Media Player"));
+        assert_eq!(source.auto_name, None);
     }
 
     #[test]

@@ -236,9 +236,13 @@ impl SpeakerTable<Channel> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the distances page, or has no value. A page without content must not
+    /// replace what the state has.
     pub fn parse_distances(body: &[u8]) -> Result<Self, Error> {
-        parse(body, |index| DISTANCE_ORDER.get(index).copied())
+        parse(body, "Distances", |index| {
+            DISTANCE_ORDER.get(index).copied()
+        })
     }
 }
 
@@ -252,9 +256,13 @@ impl SpeakerTable<Channel> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the channel level page, or has no value. A page without content must
+    /// not replace what the state has.
     pub fn parse_channel_levels(body: &[u8]) -> Result<Self, Error> {
-        parse(body, |index| CHANNEL_LEVEL_ORDER.get(index).copied())
+        parse(body, "ChannelLevel", |index| {
+            CHANNEL_LEVEL_ORDER.get(index).copied()
+        })
     }
 }
 
@@ -263,9 +271,13 @@ impl SpeakerTable<SpeakerGroup> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the crossovers page, or has no value. A page without content must not
+    /// replace what the state has.
     pub fn parse_crossovers(body: &[u8]) -> Result<Self, Error> {
-        parse(body, |index| CROSSOVER_ORDER.get(index).copied())
+        parse(body, "Crossovers", |index| {
+            CROSSOVER_ORDER.get(index).copied()
+        })
     }
 }
 
@@ -280,6 +292,19 @@ pub(crate) fn root(body: &[u8]) -> Result<crate::xml::Child<'_>, Error> {
         return Err(Error::HtmlResponse);
     }
     Ok(root)
+}
+
+/// Like [`root`], and the root element must be named `name`.
+pub(crate) fn named_root<'a>(
+    body: &'a [u8],
+    name: &'static str,
+) -> Result<crate::xml::Child<'a>, Error> {
+    let root = root(body)?;
+    if root.is(name) {
+        Ok(root)
+    } else {
+        Err(Error::UnexpectedDocument { expected: name })
+    }
 }
 
 /// Number in the text of the child `name`.
@@ -329,10 +354,13 @@ fn read_choices(list: Node<'_>) -> Vec<i32> {
         .collect()
 }
 
-fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTable<K>, Error> {
-    let root = root(body)?;
-    let node = root.node();
-    Ok(SpeakerTable {
+fn parse<K>(
+    body: &[u8],
+    root_name: &'static str,
+    key: impl Fn(usize) -> Option<K>,
+) -> Result<SpeakerTable<K>, Error> {
+    let node = named_root(body, root_name)?.node();
+    let table = SpeakerTable {
         entries: node
             .child("List")
             .map(|list| read_entries(list.node(), key))
@@ -348,7 +376,17 @@ fn parse<K>(body: &[u8], key: impl Fn(usize) -> Option<K>) -> Result<SpeakerTabl
             .and_then(|kind| number::<u8>(kind.node(), "CurrentNumber"))
             .and_then(|code| code.checked_sub(SUBWOOFER_CODE_BASE))
             .filter(|count| (1..=4).contains(count)),
-    })
+    };
+    if table.entries.is_empty()
+        && table.choices.is_empty()
+        && table.unit.is_none()
+        && table.subwoofer_count.is_none()
+    {
+        return Err(Error::UnexpectedDocument {
+            expected: "a page with a value",
+        });
+    }
+    Ok(table)
 }
 
 /// Groups of the LFE distribution, in the order of the index. The indexes
@@ -415,9 +453,11 @@ impl BassSettings {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the bass page, or has no value. A page without content must not
+    /// replace what the state has.
     pub fn parse(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let node = named_root(body, "Bass")?.node();
         let display = |child: &crate::xml::Child<'_>| {
             child
                 .attribute("display")
@@ -426,7 +466,7 @@ impl BassSettings {
         let output = node.child("SubwooferOutput");
         let lpf = node.child("LPFforLFE");
         let distribution = node.child("LFEDistribution");
-        Ok(Self {
+        let page = Self {
             subwoofer_output: number::<u8>(node, "SubwooferOutput")
                 .and_then(SubwooferOutputMode::from_code),
             subwoofer_output_display: output.as_ref().and_then(display),
@@ -451,7 +491,17 @@ impl BassSettings {
                 })
                 .unwrap_or_default(),
             lfe_distribution_display: distribution.as_ref().and_then(display),
-        })
+        };
+        if page.subwoofer_output.is_none()
+            && page.lpf_for_lfe.is_none()
+            && page.lpf_choices.is_empty()
+            && page.lfe_distribution.is_empty()
+        {
+            return Err(Error::UnexpectedDocument {
+                expected: "a page with a value",
+            });
+        }
+        Ok(page)
     }
 }
 
@@ -547,9 +597,12 @@ mod tests {
 
     #[test]
     fn a_bass_page_with_missing_parts_is_empty() {
-        let bass = BassSettings::parse(b"<Bass><LPFforLFE>x</LPFforLFE></Bass>").unwrap();
+        let bass = BassSettings::parse(
+            b"<Bass><SubwooferOutput>2</SubwooferOutput><LPFforLFE>x</LPFforLFE></Bass>",
+        )
+        .unwrap();
         assert_eq!(bass.lpf_for_lfe, None);
-        assert_eq!(bass.subwoofer_output, None);
+        assert_eq!(bass.subwoofer_output, Some(SubwooferOutputMode::LfeAndMain));
         assert_eq!(bass.lpf_choices.len(), 0);
         assert_eq!(bass.lfe_distribution.len(), 0);
         assert!(BassSettings::parse(b"<html/>").is_err());
@@ -601,10 +654,44 @@ mod tests {
         assert_eq!(table.subwoofer_count, None);
         for code in ["4", "10", "x"] {
             let xml = format!(
-                "<D><SubwooferType><CurrentNumber>{code}</CurrentNumber></SubwooferType></D>"
+                "<Distances><Unit>1</Unit><SubwooferType><CurrentNumber>{code}</CurrentNumber></SubwooferType></Distances>"
             );
             let table = SpeakerTable::parse_distances(xml.as_bytes()).unwrap();
             assert_eq!(table.subwoofer_count, None, "{code}");
+        }
+    }
+
+    #[test]
+    fn foreign_and_empty_pages_are_errors() {
+        // A page of another kind or without a value must not replace the state.
+        for body in [
+            &b"<Error/>"[..],
+            b"<Audio><Other/></Audio>",
+            b"<Distances/>",
+            b"<Distances><List/></Distances>",
+            b"<Distances><List><Speaker index=\"99\">1</Speaker></List></Distances>",
+            // The page of another table.
+            CROSSOVERS,
+        ] {
+            assert!(SpeakerTable::parse_distances(body).is_err());
+        }
+        assert!(SpeakerTable::parse_channel_levels(DISTANCES).is_err());
+        assert!(SpeakerTable::parse_channel_levels(b"<ChannelLevel/>").is_err());
+        assert!(SpeakerTable::parse_crossovers(DISTANCES).is_err());
+        assert!(SpeakerTable::parse_crossovers(b"<Crossovers><Other/></Crossovers>").is_err());
+        assert_eq!(
+            SpeakerTable::parse_crossovers(b"<Error/>").unwrap_err(),
+            Error::UnexpectedDocument {
+                expected: "Crossovers"
+            }
+        );
+        for body in [
+            &b"<Error/>"[..],
+            b"<Bass/>",
+            b"<Bass><Other/></Bass>",
+            DISTANCES,
+        ] {
+            assert!(BassSettings::parse(body).is_err());
         }
     }
 

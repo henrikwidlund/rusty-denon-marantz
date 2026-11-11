@@ -6,7 +6,8 @@
 //! changes.
 
 use crate::error::Error;
-use crate::signal::{ChannelLayout, InOut};
+use crate::reading::{Reading, Sides};
+use crate::signal::ChannelLayout;
 use crate::speaker_tables::{number, root};
 use crate::values::{ColorSpace, PixelDepth};
 use crate::xml::Node;
@@ -17,24 +18,23 @@ pub const VIDEO_SIGNAL_PATH: &str = "/ajax/info/get_config?type=3";
 /// Path of the page with the channels of the audio signal.
 pub const AUDIO_CHANNELS_PATH: &str = "/ajax/info/get_config?type=2";
 
-/// The video signal that the receiver gets and sends. A value is `None` if
-/// there is no signal or the page does not have it.
+/// The video signal that the receiver gets and sends.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct VideoSignalPage {
     /// Resolution and frame rate, for example `4K50`.
-    pub resolution: InOut<String>,
+    pub resolution: Sides<String>,
     /// HDR format.
-    pub hdr: InOut<String>,
+    pub hdr: Sides<String>,
     /// HDMI FRL rate.
-    pub frl_rate: InOut<String>,
+    pub frl_rate: Sides<String>,
     /// Color space.
-    pub color_space: InOut<ColorSpace>,
+    pub color_space: Sides<ColorSpace>,
     /// Bits for each color.
-    pub pixel_depth: InOut<PixelDepth>,
+    pub pixel_depth: Sides<PixelDepth>,
     /// Auto low latency mode is on.
-    pub allm: Option<bool>,
+    pub allm: Reading<bool>,
     /// Quick frame transport is on.
-    pub qft: Option<bool>,
+    pub qft: Reading<bool>,
 }
 
 impl VideoSignalPage {
@@ -58,11 +58,14 @@ impl VideoSignalPage {
         }
         let text = |name: &str| {
             let side = node.child(name).map(|child| child.node());
-            let read = |side_name: &str| {
-                let value = side?.child(side_name)?.node().text()?;
-                signal_text(&value).map(str::to_owned)
+            let read = |side_name: &str| -> Reading<String> {
+                let Some(element) = side.and_then(|side| side.child(side_name)) else {
+                    return Reading::Absent;
+                };
+                let value = element.node().text();
+                Reading::from_option(value.as_deref().and_then(signal_text).map(str::to_owned))
             };
-            InOut {
+            Sides {
                 input: read("Input"),
                 output: read("Output"),
             }
@@ -73,13 +76,13 @@ impl VideoSignalPage {
             resolution: text("Resolution"),
             hdr: text("HDR"),
             frl_rate: text("FRLRate"),
-            color_space: InOut {
-                input: color_space.input.as_deref().and_then(color_space_of),
-                output: color_space.output.as_deref().and_then(color_space_of),
+            color_space: Sides {
+                input: color_space.input.convert(color_space_of),
+                output: color_space.output.convert(color_space_of),
             },
-            pixel_depth: InOut {
-                input: pixel_depth.input.as_deref().and_then(pixel_depth_of),
-                output: pixel_depth.output.as_deref().and_then(pixel_depth_of),
+            pixel_depth: Sides {
+                input: pixel_depth.input.convert(pixel_depth_of),
+                output: pixel_depth.output.convert(pixel_depth_of),
             },
             allm: on(node, "ALLM"),
             qft: on(node, "QFT"),
@@ -90,9 +93,9 @@ impl VideoSignalPage {
 /// The channels of the audio signal that the receiver gets and plays.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AudioChannelsPage {
-    /// Channels of the signal and the speakers that play it. `None` if no
-    /// channel is active.
-    pub channels: InOut<ChannelLayout>,
+    /// Channels of the signal and the speakers that play it. A side with no
+    /// active channel is [`Reading::Empty`].
+    pub channels: Sides<ChannelLayout>,
 }
 
 impl AudioChannelsPage {
@@ -115,8 +118,15 @@ impl AudioChannelsPage {
             return Err(Error::UnexpectedDocument { expected: "Audio" });
         }
         let layout = |name: &str| {
-            let list = node.child(name)?.node().child("List")?.node();
+            let Some(element) = node.child(name) else {
+                return Reading::Absent;
+            };
+            // An element with only a text has no channels.
+            let Some(list) = element.node().child("List") else {
+                return Reading::Empty;
+            };
             let active = list
+                .node()
                 .children()
                 .filter(|c| c.is("Speaker"))
                 .filter_map(|speaker| {
@@ -125,10 +135,10 @@ impl AudioChannelsPage {
                     let index = speaker.attribute("index")?.trim().parse().ok()?;
                     is_active.then_some(index)
                 });
-            ChannelLayout::from_active(active, false)
+            Reading::from_option(ChannelLayout::from_active(active, false))
         };
         Ok(Self {
-            channels: InOut {
+            channels: Sides {
                 input: layout("InputSignal"),
                 output: layout("ActiveSpeaker"),
             },
@@ -136,13 +146,17 @@ impl AudioChannelsPage {
     }
 }
 
-/// `1` is on and `2` is off, as in the other pages.
-fn on(node: Node<'_>, name: &str) -> Option<bool> {
-    match number::<u8>(node, name)? {
-        1 => Some(true),
-        2 => Some(false),
-        _ => None,
+/// `1` is on and `2` is off, as in the other pages. An element with another
+/// text is [`Reading::Empty`].
+fn on(node: Node<'_>, name: &str) -> Reading<bool> {
+    if node.child(name).is_none() {
+        return Reading::Absent;
     }
+    Reading::from_option(match number::<u8>(node, name) {
+        Some(1) => Some(true),
+        Some(2) => Some(false),
+        _ => None,
+    })
 }
 
 /// A value of the video page. `---` and an empty text mean that there is no
@@ -180,34 +194,72 @@ mod tests {
     const NO_VIDEO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-video-no-signal.xml");
     const AUDIO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-audio-channels.xml");
 
+    use Reading::{Absent, Empty, Value};
+
+    fn text(value: &str) -> Reading<String> {
+        Value(value.to_owned())
+    }
+
     #[test]
     fn video_page_with_a_signal() {
         let page = VideoSignalPage::parse(VIDEO).unwrap();
-        assert_eq!(page.resolution.input.as_deref(), Some("4K50"));
-        assert_eq!(page.resolution.output.as_deref(), Some("4K50"));
-        assert_eq!(page.hdr, InOut::default());
-        assert_eq!(page.frl_rate, InOut::default());
-        assert_eq!(page.color_space.input, Some(ColorSpace::Yuv444));
-        assert_eq!(page.pixel_depth.output, Some(PixelDepth::Bits8));
-        assert_eq!(page.allm, Some(false));
-        assert_eq!(page.qft, Some(false));
+        assert_eq!(page.resolution.input, text("4K50"));
+        assert_eq!(page.resolution.output, text("4K50"));
+        // `---` is a value with no signal.
+        assert_eq!(
+            page.hdr,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
+        assert_eq!(
+            page.frl_rate,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
+        assert_eq!(page.color_space.input, Value(ColorSpace::Yuv444));
+        assert_eq!(page.pixel_depth.output, Value(PixelDepth::Bits8));
+        assert_eq!(page.allm, Value(false));
+        assert_eq!(page.qft, Value(false));
     }
 
     #[test]
     fn video_page_without_a_signal_has_no_values() {
         let page = VideoSignalPage::parse(NO_VIDEO).unwrap();
-        assert_eq!(page.resolution, InOut::default());
-        assert_eq!(page.color_space, InOut::default());
-        assert_eq!(page.pixel_depth, InOut::default());
-        assert_eq!(page.allm, Some(false));
+        assert_eq!(
+            page.resolution,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
+        assert_eq!(
+            page.color_space,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
+        assert_eq!(
+            page.pixel_depth,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
+        assert_eq!(page.allm, Value(false));
+        assert_eq!(page.resolution.input.as_value(), None);
     }
 
     #[test]
     fn audio_page_counts_the_active_channels() {
         let page = AudioChannelsPage::parse(AUDIO).unwrap();
-        let input = page.channels.input.unwrap();
+        let input = page.channels.input.as_value().unwrap();
         assert_eq!(input.to_string(), "2.0");
-        let output = page.channels.output.unwrap();
+        let output = page.channels.output.as_value().unwrap();
         assert_eq!(output.to_string(), "2.1");
     }
 
@@ -218,9 +270,12 @@ mod tests {
         ))
         .unwrap();
         // The input of an object based stream is only a text, not channels.
-        assert_eq!(page.channels.input, None);
+        assert_eq!(page.channels.input, Empty);
         // Index 13 of the page is one channel: the receiver plays 7.1.4.
-        assert_eq!(page.channels.output.unwrap().to_string(), "7.1.4");
+        assert_eq!(
+            page.channels.output.as_value().unwrap().to_string(),
+            "7.1.4"
+        );
     }
 
     #[test]
@@ -252,9 +307,45 @@ mod tests {
         assert!(VideoSignalPage::parse(b"<Video/>").is_err());
         assert!(AudioChannelsPage::parse(b"<Audio/>").is_err());
         // A page with no signal still has its elements.
-        let page = VideoSignalPage::parse(b"<Video><Resolution/></Video>").unwrap();
-        assert_eq!(page.resolution.input, None);
+        let page = VideoSignalPage::parse(
+            b"<Video><Resolution><Input/><Output>---</Output></Resolution></Video>",
+        )
+        .unwrap();
+        assert_eq!(
+            page.resolution,
+            Sides {
+                input: Empty,
+                output: Empty
+            }
+        );
         assert!(AudioChannelsPage::parse(b"<Audio><InputSignal/></Audio>").is_ok());
+    }
+
+    #[test]
+    fn a_partial_page_leaves_the_other_values_out() {
+        let page = VideoSignalPage::parse(
+            b"<Video><Resolution><Input>1080p60</Input></Resolution></Video>",
+        )
+        .unwrap();
+        assert_eq!(page.resolution.input, text("1080p60"));
+        assert_eq!(page.resolution.output, Absent);
+        assert_eq!(page.hdr, Sides::default());
+        assert_eq!(page.color_space, Sides::default());
+        assert_eq!(page.allm, Absent);
+        // An element with a text that is not known has no value.
+        let page = VideoSignalPage::parse(
+            b"<Video><ALLM>9</ALLM><ColorSpace><Input>YCbCr 4:4:0</Input></ColorSpace></Video>",
+        )
+        .unwrap();
+        assert_eq!(page.allm, Empty);
+        assert_eq!(page.color_space.input, Empty);
+        assert_eq!(page.color_space.output, Absent);
+        let page = AudioChannelsPage::parse(
+            b"<Audio><InputSignal><List><Speaker index=\"0\">2</Speaker></List></InputSignal></Audio>",
+        )
+        .unwrap();
+        assert_eq!(page.channels.input.as_value().unwrap().to_string(), "1.0");
+        assert_eq!(page.channels.output, Absent);
     }
 
     #[test]
@@ -264,12 +355,8 @@ mod tests {
             page.push_str("<Speaker index=\"20\">2</Speaker>");
         }
         page.push_str("<Speaker index=\"70000\">2</Speaker></List></InputSignal></Audio>");
-        let layout = AudioChannelsPage::parse(page.as_bytes())
-            .unwrap()
-            .channels
-            .input
-            .unwrap();
+        let page = AudioChannelsPage::parse(page.as_bytes()).unwrap();
         // One position counts once, and an unknown position is ignored.
-        assert_eq!(layout.to_string(), "0.0.1");
+        assert_eq!(page.channels.input.as_value().unwrap().to_string(), "0.0.1");
     }
 }
