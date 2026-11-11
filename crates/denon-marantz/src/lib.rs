@@ -124,6 +124,8 @@ pub use device_control::{DeviceControl, ResetKey};
 pub use dirac::Dirac;
 #[cfg(feature = "discovery")]
 pub use discovery::{DiscoveredReceiver, DiscoveryConfig, LocationPolicy, discover};
+#[cfg(feature = "mdns")]
+pub use discovery::{discover_all, discover_mdns};
 #[cfg(feature = "http")]
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]

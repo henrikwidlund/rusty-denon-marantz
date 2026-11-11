@@ -109,10 +109,7 @@ async fn telnet_is_asked_first_for_what_http_does_not_answer() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     avr.start().await.unwrap().finished().await;
-    wait_until("the queries", || {
-        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
-    })
-    .await;
+    wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
     assert_eq!(sent[0], "MSQUICK ?");
@@ -142,12 +139,10 @@ async fn a_signal_page_that_fails_is_asked_on_telnet() {
     let pages = report.web_interface.unwrap();
     assert_eq!(pages.video_signal, PageStatus::NotFound);
     assert_eq!(pages.audio_channels, PageStatus::Read);
-    wait_until("the video queries", || {
-        lines(&telnet.received()).contains(&"SSINFSIGRES ?")
-    })
-    .await;
+    wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
+    assert!(sent.contains(&"SSINFSIGRES ?"));
     assert!(sent.contains(&"SYSDVIN ?"));
     assert!(!sent.contains(&"OPINFASP ?"));
 }

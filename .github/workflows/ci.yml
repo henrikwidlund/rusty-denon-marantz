@@ -43,7 +43,7 @@ jobs:
       - name: Clippy per feature
         shell: bash
         run: |
-          for f in "" telnet http discovery telnet,http; do
+          for f in "" telnet http discovery mdns telnet,http; do
             echo "::group::features '$f'"
             cargo clippy --locked -p denon-marantz --no-default-features --features "$f" --all-targets
             echo "::endgroup::"

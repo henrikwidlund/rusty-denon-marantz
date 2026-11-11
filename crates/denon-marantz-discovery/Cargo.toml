@@ -1,6 +1,6 @@
 [package]
 name = "denon-marantz-discovery"
-description = "Sans-IO SSDP and mDNS parsing to find Denon and Marantz AV receivers"
+description = "Sans-IO SSDP and mDNS helpers to find Denon and Marantz AV receivers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

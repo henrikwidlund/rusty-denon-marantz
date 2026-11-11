@@ -1,4 +1,5 @@
-//! Finding receivers on the network with SSDP.
+//! Finding receivers on the network with SSDP, and with mDNS if the `mdns`
+//! feature is on.
 
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -14,6 +15,11 @@ use tokio::time::Instant;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{identify, identify_on};
+
+#[cfg(feature = "mdns")]
+mod mdns;
+#[cfg(feature = "mdns")]
+pub use mdns::{discover_all, discover_mdns};
 
 /// Largest datagram that is read. SSDP answers are far smaller.
 const DATAGRAM_BYTES: usize = 4096;

@@ -32,7 +32,7 @@ state with `Avr::snapshot` and watch it with `Avr::changes`.
 - What plays: title, artist, album and station of network audio and HD radio,
   band and frequency of the tuner, and the address of the picture. A receiver
   that uses HEOS for network audio does not give this.
-- Discovery with SSDP and mDNS.
+- Discovery with SSDP, and with mDNS when the `mdns` feature is on.
 
 A command that the receiver would ignore without an answer is not sent when the
 state shows why. The call returns an error that names the reason, for example
@@ -136,6 +136,7 @@ see `Error::is_unreachable`.
 | `telnet` | yes | Live events and commands on port 23. Needs `http`. |
 | `http` | yes | AppCommand XML and the web interface. |
 | `discovery` | yes | Receiver search with SSDP. Needs `http`. |
+| `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
 
 ## Tested
@@ -185,7 +186,7 @@ have not run on a receiver:
 |---|---|
 | `denon-marantz` | Async client (tokio). |
 | `denon-marantz-proto` | Protocol without IO. |
-| `denon-marantz-discovery` | SSDP and mDNS parsing without IO. |
+| `denon-marantz-discovery` | SSDP messages and mDNS service records, without IO. |
 
 The `denon-marantz` crate re-exports the types that most programs need, for
 example `Zone` and `Volume`. All others are in `denon_marantz::proto`.
