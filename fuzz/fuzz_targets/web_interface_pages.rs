@@ -2,8 +2,9 @@
 #![no_main]
 
 use denon_marantz_proto::{
-    AudioChannelsPage, BassSettings, GroupAvailability, InputAssignment, SettingsGroup,
-    SourceNames, SpeakerTable, State, SystemSettings, VideoSignalPage,
+    AudioChannelsPage, BassSettings, GeneralPage, GroupAvailability, InputAssignment, Playback2Ch,
+    SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings, VideoMenuPage,
+    VideoSignalPage, XlrAssign,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -40,5 +41,24 @@ fuzz_target!(|data: &[u8]| {
     }
     if let Ok(page) = AudioChannelsPage::parse(data) {
         let _ = state.apply_audio_channels_page(&page);
+    }
+    for page in VideoMenuPage::ALL {
+        if let Ok(part) = page.parse(data) {
+            let _ = state.apply_video_menu(part);
+        }
+    }
+    for page in GeneralPage::ALL {
+        if let Ok(part) = page.parse(data) {
+            let _ = state.apply_general_settings(part);
+        }
+    }
+    if let Ok(page) = Playback2Ch::parse(data) {
+        let _ = state.apply_playback_2ch(page);
+    }
+    if let Ok(page) = XlrAssign::parse(data) {
+        let _ = state.apply_xlr_assign(page);
+    }
+    if let Ok(levels) = SourceLevels::parse(data) {
+        let _ = state.apply_source_levels(levels);
     }
 });

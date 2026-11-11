@@ -14,6 +14,8 @@
 use std::borrow::Cow;
 
 use crate::appcommand::Field;
+use crate::general_menu::{GeneralPart, GeneralSettings};
+use crate::input_pages::SourceLevels;
 use crate::input_pages::{InputAssignment, SourceNames};
 use crate::now_playing::NowPlaying;
 use crate::picture::PictureSettings;
@@ -24,12 +26,14 @@ use crate::sound_mode_list::SoundModeList;
 use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
+use crate::speaker_extras::{Playback2Ch, XlrAssign};
 use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
 use crate::speaker_tables::{BassSettings, SpeakerTable};
 use crate::system_settings::SystemSettings;
 use crate::telnet::{Event, Message};
 use crate::tuner::{TunerPage, TunerState};
 use crate::video::VideoSettings;
+use crate::video_menu::{VideoMenu, VideoMenuPart};
 use crate::zone_settings::MAX_QUICK_SELECT;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
@@ -69,6 +73,19 @@ pub enum Setting {
     SystemSettings,
     /// What the receiver plays: title, artist, album and station.
     NowPlaying,
+    /// The video menu of the web interface: on-screen display, TV format,
+    /// screen saver, HDMI upscaler, HDCP and the signal format of the inputs.
+    /// Any value of the menu changed.
+    VideoMenu,
+    /// The general menu of the web interface: language, firmware update
+    /// settings, usage data and the trigger assignment. Any value changed.
+    GeneralSettings,
+    /// How the receiver plays two-channel sources, from the web interface.
+    Playback2Ch,
+    /// What the XLR outputs of the subwoofers carry, from the web interface.
+    XlrAssign,
+    /// The levels of the analog and digital inputs, from the web interface.
+    SourceLevels,
     /// Variable or fixed volume of a zone.
     VolumeMode,
     /// The volume of a zone when it is switched on.
@@ -323,6 +340,19 @@ pub struct DeviceState {
     /// lock and when the network answers. Only the web interface has them,
     /// and it does not send changes, so it is read on request.
     pub system_settings: SystemSettings,
+    /// The video menu of the web interface. Only the web interface has it, so
+    /// it is read on request.
+    pub video_menu: VideoMenu,
+    /// The general menu of the web interface: language, firmware update
+    /// settings, usage data and the trigger assignment.
+    pub general_settings: GeneralSettings,
+    /// How the receiver plays two-channel sources. `None` until the page was
+    /// read.
+    pub playback_2ch: Option<Playback2Ch>,
+    /// What the XLR outputs carry. `None` until the page was read.
+    pub xlr_assign: Option<XlrAssign>,
+    /// The levels of the inputs.
+    pub source_levels: SourceLevels,
     /// The sound settings that the state has no value for above, such as
     /// the audio restorer. Telnet reports them.
     pub sound_settings: SoundSettings,
@@ -595,6 +625,43 @@ impl State {
     /// [`DeviceState::signal`], with the values of telnet.
     pub fn apply_audio_channels_page(&mut self, page: &AudioChannelsPage) -> Option<Change> {
         self.signal_change(|signal| signal.apply_channels_page(page))
+    }
+
+    /// Stores what a page of the video menu told. It is in
+    /// [`DeviceState::video_menu`].
+    pub fn apply_video_menu(&mut self, part: VideoMenuPart) -> Option<Change> {
+        self.device_change(Setting::VideoMenu, |device| device.video_menu.apply(part))
+    }
+
+    /// Stores what a page of the general menu told. It is in
+    /// [`DeviceState::general_settings`].
+    pub fn apply_general_settings(&mut self, part: GeneralPart) -> Option<Change> {
+        self.device_change(Setting::GeneralSettings, |device| {
+            device.general_settings.apply(part)
+        })
+    }
+
+    /// Stores the playback page of two-channel sources. It is
+    /// [`DeviceState::playback_2ch`].
+    pub fn apply_playback_2ch(&mut self, page: Playback2Ch) -> Option<Change> {
+        self.device_change(Setting::Playback2Ch, |device| {
+            replace_if_different(&mut device.playback_2ch, Some(page))
+        })
+    }
+
+    /// Stores the XLR output assignment. It is [`DeviceState::xlr_assign`].
+    pub fn apply_xlr_assign(&mut self, page: XlrAssign) -> Option<Change> {
+        self.device_change(Setting::XlrAssign, |device| {
+            replace_if_different(&mut device.xlr_assign, Some(page))
+        })
+    }
+
+    /// Stores the levels of the inputs. They are
+    /// [`DeviceState::source_levels`].
+    pub fn apply_source_levels(&mut self, levels: SourceLevels) -> Option<Change> {
+        self.device_change(Setting::SourceLevels, |device| {
+            replace_if_different(&mut device.source_levels, levels)
+        })
     }
 
     /// Stores the system settings of the web interface. They are
@@ -1362,6 +1429,16 @@ const fn sources_change() -> Change {
     Change {
         zone: None,
         setting: Setting::Sources,
+    }
+}
+
+/// Stores the value. Returns true if it was different.
+fn replace_if_different<T: PartialEq>(slot: &mut T, value: T) -> bool {
+    if *slot == value {
+        false
+    } else {
+        *slot = value;
+        true
     }
 }
 
@@ -2810,6 +2887,61 @@ mod tests {
         .unwrap();
         assert_eq!(state.apply_audio_channels_page(&audio), changed());
         assert_eq!(state.apply_audio_channels_page(&audio), None);
+    }
+
+    #[test]
+    fn menu_pages_change_the_state_only_when_a_value_differs() {
+        use crate::general_menu::GeneralPage;
+        use crate::speaker_extras::{Playback2Ch, XlrAssign};
+        use crate::video_menu::VideoMenuPage;
+        let mut state = State::new(false);
+        let video = || {
+            VideoMenuPage::ScreenSaver
+                .parse(b"<ScreenSaver>1</ScreenSaver>")
+                .unwrap()
+        };
+        assert_eq!(
+            state.apply_video_menu(video()),
+            change(None, Setting::VideoMenu)
+        );
+        assert_eq!(state.apply_video_menu(video()), None);
+        let general = || {
+            GeneralPage::UsageData
+                .parse(b"<UsageData><Send>1</Send></UsageData>")
+                .unwrap()
+        };
+        assert_eq!(
+            state.apply_general_settings(general()),
+            change(None, Setting::GeneralSettings)
+        );
+        assert_eq!(state.apply_general_settings(general()), None);
+        let playback =
+            || Playback2Ch::parse(b"<Playback2Ch><Setting>1</Setting></Playback2Ch>").unwrap();
+        assert_eq!(
+            state.apply_playback_2ch(playback()),
+            change(None, Setting::Playback2Ch)
+        );
+        assert_eq!(state.apply_playback_2ch(playback()), None);
+        let xlr = || {
+            XlrAssign::parse(
+                b"<SwXLROutputAssign><Speaker index=\"0\"><Value>1</Value></Speaker></SwXLROutputAssign>",
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            state.apply_xlr_assign(xlr()),
+            change(None, Setting::XlrAssign)
+        );
+        assert_eq!(state.apply_xlr_assign(xlr()), None);
+        let levels = SourceLevels {
+            analog_db: Some(1),
+            digital_db: None,
+        };
+        assert_eq!(
+            state.apply_source_levels(levels),
+            change(None, Setting::SourceLevels)
+        );
+        assert_eq!(state.apply_source_levels(levels), None);
     }
 
     #[test]

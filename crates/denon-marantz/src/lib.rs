@@ -107,7 +107,8 @@ pub use denon_marantz_proto::RemoteKey;
 pub use denon_marantz_proto::telnet::{Command, QueryGroup};
 #[cfg(feature = "http")]
 pub use details::{
-    PageStatus, SettingsAvailabilityDetails, SkipReason, SourceDetails, SpeakerDetails,
+    GeneralDetails, PageResults, PageStatus, SettingsAvailabilityDetails, SkipReason,
+    SourceDetails, SpeakerDetails, VideoMenuDetails,
 };
 #[cfg(feature = "telnet")]
 pub use device_control::{DeviceControl, ResetKey};

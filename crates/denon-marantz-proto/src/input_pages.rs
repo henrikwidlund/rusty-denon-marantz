@@ -14,6 +14,48 @@ use crate::xml::Node;
 pub const INPUT_ASSIGN_PATH: &str = "/ajax/inputs/get_config?type=2";
 /// Path of the source names page.
 pub const SOURCE_NAMES_PATH: &str = "/ajax/inputs/get_config?type=3";
+/// Path of the source levels page.
+pub const SOURCE_LEVELS_PATH: &str = "/ajax/inputs/get_config?type=5";
+
+/// The level that the receiver adds to the inputs of one kind, in whole dB
+/// from -12 to 12.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SourceLevels {
+    /// The level of the analog inputs.
+    pub analog_db: Option<i8>,
+    /// The level of the digital inputs.
+    pub digital_db: Option<i8>,
+}
+
+impl SourceLevels {
+    /// Reads the source levels page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the source levels page, or has no level in range.
+    pub fn parse(body: &[u8]) -> Result<Self, Error> {
+        let root = root(body)?;
+        if !root.is("SourceLevels") {
+            return Err(Error::UnexpectedDocument {
+                expected: "SourceLevels",
+            });
+        }
+        let node = root.node();
+        let level = |name: &str| number::<i8>(node, name).filter(|db| (-12..=12).contains(db));
+        let levels = Self {
+            analog_db: level("AnalogInputs"),
+            digital_db: level("DigitalInputs"),
+        };
+        if levels == Self::default() {
+            // A page without a level must not replace what the state has.
+            return Err(Error::UnexpectedDocument {
+                expected: "a page with a level",
+            });
+        }
+        Ok(levels)
+    }
+}
 
 /// Most sources of a page that are kept.
 const MAX_SOURCES: usize = 32;
@@ -257,5 +299,26 @@ mod tests {
         assert_eq!(names.entries[0].rename, None);
         assert!(SourceNames::parse(b"<html/>").is_err());
         assert!(InputAssignment::parse(b"").is_err());
+    }
+
+    #[test]
+    fn source_levels_page() {
+        let levels = SourceLevels::parse(include_bytes!(
+            "../tests/data/xml/AVC-A10H-web-inputs-source-levels.xml"
+        ))
+        .unwrap();
+        assert_eq!((levels.analog_db, levels.digital_db), (Some(0), Some(0)));
+        let odd = SourceLevels::parse(
+            b"<SourceLevels><AnalogInputs>-3</AnalogInputs><DigitalInputs>40</DigitalInputs></SourceLevels>",
+        )
+        .unwrap();
+        assert_eq!((odd.analog_db, odd.digital_db), (Some(-3), None));
+        assert!(SourceLevels::parse(b"<HideSources/>").is_err());
+        // The right root without a level in range must not clear the state.
+        assert!(SourceLevels::parse(b"<SourceLevels/>").is_err());
+        assert!(
+            SourceLevels::parse(b"<SourceLevels><AnalogInputs>99</AnalogInputs></SourceLevels>")
+                .is_err()
+        );
     }
 }

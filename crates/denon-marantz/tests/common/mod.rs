@@ -270,6 +270,20 @@ pub(crate) async fn avr_x_receiver_with_pages(
     .await
 }
 
+/// A fake web interface that answers `GET` for the paths in `pages` and 404
+/// for all others.
+pub(crate) async fn web_interface_with_pages(
+    pages: &'static [(&'static str, &'static [u8])],
+) -> Fake {
+    Fake::start(move |seen| {
+        pages
+            .iter()
+            .find(|(path, _)| *path == seen.path)
+            .map_or(Reply::Status(404), |(_, body)| Reply::Body(body.to_vec()))
+    })
+    .await
+}
+
 /// The settings for an `Avr` that talks to `fake`.
 pub(crate) fn builder(fake: &Fake, receiver_type: ReceiverType) -> AvrBuilder {
     Avr::builder("127.0.0.1")

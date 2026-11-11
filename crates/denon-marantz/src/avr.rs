@@ -11,10 +11,12 @@ use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{Command, QueryGroup};
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
-    DeviceDescription, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH, InputAssignment,
-    NET_AUDIO_STATUS_PATH, NowPlaying, PlayingKind, ReceiverType, SOURCE_NAMES_PATH,
-    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceNames, SpeakerTable, State, SystemSettings,
-    TUNER_STATUS_PATH, TunerPage, WEB_INTERFACE_PORT, Zone,
+    DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
+    InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch,
+    PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH,
+    SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings,
+    TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
+    Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -22,7 +24,8 @@ use tokio::sync::{broadcast, watch};
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
 use crate::details::{
-    PageStatus, SettingsAvailabilityDetails, SkipReason, SourceDetails, SpeakerDetails,
+    GeneralDetails, PageResults, PageStatus, SettingsAvailabilityDetails, SkipReason,
+    SourceDetails, SpeakerDetails, VideoMenuDetails,
 };
 #[cfg(feature = "telnet")]
 use crate::device_control::{DeviceControl, ResetKeys};
@@ -258,13 +261,17 @@ impl Avr {
         self.update().await
     }
 
-    /// Reads the speaker distances, the crossovers, the channel levels and the
-    /// bass settings from the web interface on port 11080.
+    /// Reads the speaker distances, the crossovers, the channel levels, the
+    /// bass settings, how two-channel sources are played and what the XLR
+    /// outputs carry from the web interface on port 11080.
     ///
     /// Only these pages have them, and they do not send changes: call it
     /// again to read them again. The values join the telnet values in
     /// [`DeviceState::speaker_setup`](denon_marantz_proto::DeviceState::speaker_setup) and
     /// [`DeviceState::channel_volumes`](denon_marantz_proto::DeviceState::channel_volumes).
+    /// The last two are
+    /// [`DeviceState::playback_2ch`](denon_marantz_proto::DeviceState::playback_2ch) and
+    /// [`DeviceState::xlr_assign`](denon_marantz_proto::DeviceState::xlr_assign).
     ///
     /// The result says what happened to each page. A page that the receiver
     /// does not have, refuses or sends in a form that the library cannot read
@@ -309,16 +316,29 @@ impl Avr {
         let bass = self
             .read_web_interface(BASS_PATH, BassSettings::parse, State::apply_bass_settings)
             .await?;
+        let playback_2ch = self
+            .read_web_interface(
+                PLAYBACK_2CH_PATH,
+                Playback2Ch::parse,
+                State::apply_playback_2ch,
+            )
+            .await?;
+        let xlr_assign = self
+            .read_web_interface(XLR_ASSIGN_PATH, XlrAssign::parse, State::apply_xlr_assign)
+            .await?;
         Ok(SpeakerDetails {
             distances,
             crossovers,
             channel_levels,
             bass,
+            playback_2ch,
+            xlr_assign,
         })
     }
 
-    /// Reads the physical input of each source and the names of the sources
-    /// (default, user and automatic) from the web interface on port 11080.
+    /// Reads the physical input of each source, the names of the sources
+    /// (default, user and automatic) and the levels of the analog and digital
+    /// inputs from the web interface on port 11080.
     ///
     /// Telnet has the names that the user gave, but not the others and not the
     /// inputs. The pages do not send changes: call it again to read them
@@ -342,7 +362,18 @@ impl Avr {
                 state.apply_web_source_names(&names)
             })
             .await?;
-        Ok(SourceDetails { assignments, names })
+        let levels = self
+            .read_web_interface(
+                SOURCE_LEVELS_PATH,
+                SourceLevels::parse,
+                State::apply_source_levels,
+            )
+            .await?;
+        Ok(SourceDetails {
+            assignments,
+            names,
+            levels,
+        })
     }
 
     /// Reads which settings the receiver offers and lets the user change
@@ -392,18 +423,83 @@ impl Avr {
         &self,
         groups: &[SettingsGroup],
     ) -> Result<SettingsAvailabilityDetails, Error> {
-        let mut pages = Vec::with_capacity(groups.len());
-        for &group in groups {
+        self.read_page_list(
+            groups,
+            SettingsGroup::path,
+            GroupAvailability::parse,
+            State::apply_settings_availability,
+        )
+        .await
+    }
+
+    /// Reads the video menu from the web interface on port 11080: the
+    /// on-screen display, the TV format, the screen saver, the HDMI upscaler,
+    /// the HDCP version of each input and the 4K/8K signal format of each
+    /// input.
+    ///
+    /// The pages do not send changes: call it again to read them again. The
+    /// values are in
+    /// [`DeviceState::video_menu`](denon_marantz_proto::DeviceState::video_menu).
+    /// The result says what happened to each page. A page that the receiver
+    /// does not have or refuses is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_video_details(&self) -> Result<VideoMenuDetails, Error> {
+        self.read_page_list(
+            &VideoMenuPage::ALL,
+            VideoMenuPage::path,
+            VideoMenuPage::parse,
+            State::apply_video_menu,
+        )
+        .await
+    }
+
+    /// Reads the general menu from the web interface on port 11080: the
+    /// language, the settings of the firmware update, whether usage data is
+    /// sent, and what switches each of the three trigger outputs.
+    ///
+    /// The pages do not send changes: call it again to read them again. The
+    /// values are in
+    /// [`DeviceState::general_settings`](denon_marantz_proto::DeviceState::general_settings).
+    /// The result says what happened to each page. A page that the receiver
+    /// does not have or refuses is not an error.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Avr::update_speaker_details`].
+    pub async fn update_general_settings(&self) -> Result<GeneralDetails, Error> {
+        self.read_page_list(
+            &GeneralPage::ALL,
+            GeneralPage::path,
+            GeneralPage::parse,
+            State::apply_general_settings,
+        )
+        .await
+    }
+
+    /// Reads these pages of the web interface one after the other and puts
+    /// them into the state. `parse` reads the page that `page` names.
+    async fn read_page_list<P, T>(
+        &self,
+        pages: &[P],
+        path: fn(P) -> &'static str,
+        parse: fn(P, &[u8]) -> Result<T, denon_marantz_proto::Error>,
+        apply: fn(&mut State, T) -> Option<Change>,
+    ) -> Result<PageResults<P>, Error>
+    where
+        P: Copy + Send + Sync,
+        T: Send,
+    {
+        let mut results = Vec::with_capacity(pages.len());
+        for &page in pages {
             let status = self
-                .read_web_interface(
-                    group.path(),
-                    |body| GroupAvailability::parse(group, body),
-                    State::apply_settings_availability,
-                )
+                .read_web_interface(path(page), move |body| parse(page, body), apply)
                 .await?;
-            pages.push((group, status));
+            results.push((page, status));
         }
-        Ok(SettingsAvailabilityDetails { pages })
+        Ok(PageResults { pages: results })
     }
 
     /// Reads the settings that telnet does not report from the web interface

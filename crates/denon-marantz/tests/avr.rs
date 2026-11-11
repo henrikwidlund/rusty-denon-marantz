@@ -6,7 +6,7 @@ mod common;
 
 use common::{
     AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, avr_x_receiver, builder, config, friendly_name_answer,
-    is_friendly_name_request,
+    is_friendly_name_request, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
@@ -753,4 +753,150 @@ async fn system_settings_are_read_from_the_web_control_page() {
     let mut changes = avr.changes();
     avr.update_system_settings().await.unwrap();
     assert!(changes.try_recv().is_err());
+}
+
+macro_rules! fixture {
+    ($name:literal) => {
+        include_bytes!(concat!(
+            "../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-",
+            $name,
+            ".xml"
+        ))
+    };
+}
+
+async fn avr_with_web_interface(pages: &'static [(&'static str, &'static [u8])]) -> (Avr, Fake) {
+    let receiver = avr_x_receiver().await;
+    let web = web_interface_with_pages(pages).await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    (avr, web)
+}
+
+#[tokio::test]
+async fn the_video_menu_is_read_from_its_pages() {
+    use denon_marantz_proto::{HdcpMode, OsdVolume, SignalFormat, TvFormat, VideoMenuPage};
+    // The TV format page is missing on this fake receiver.
+    static PAGES: [(&str, &[u8]); 5] = [
+        ("/ajax/video/get_config?type=7", fixture!("video-osd")),
+        ("/ajax/video/get_config?type=11", fixture!("video-hdcp")),
+        (
+            "/ajax/video/get_config?type=12",
+            fixture!("video-screen-saver"),
+        ),
+        (
+            "/ajax/video/get_config?type=13",
+            fixture!("video-hdmi-scaler"),
+        ),
+        (
+            "/ajax/video/get_config?type=14",
+            fixture!("video-4k8k-per-input"),
+        ),
+    ];
+    let (avr, _web) = avr_with_web_interface(&PAGES).await;
+    let result = avr.update_video_details().await.unwrap();
+    assert!(result.any_read());
+    assert_eq!(
+        result.status(VideoMenuPage::TvFormat),
+        Some(PageStatus::NotFound)
+    );
+    assert_eq!(result.status(VideoMenuPage::Hdcp), Some(PageStatus::Read));
+    let state = avr.snapshot();
+    let menu = &state.device().video_menu;
+    assert_eq!(menu.on_screen_display.unwrap().volume, Some(OsdVolume::Off));
+    assert_eq!(menu.tv_format, None::<TvFormat>);
+    assert_eq!(menu.screen_saver, Some(false));
+    assert_eq!(menu.hdmi_upscaler, Some(false));
+    assert_eq!(menu.hdcp[0].value, Some(HdcpMode::Auto));
+    assert_eq!(menu.signal_format[0].value, Some(SignalFormat::Enhanced8k));
+    // The same pages again change nothing.
+    let mut changes = avr.changes();
+    avr.update_video_details().await.unwrap();
+    assert!(changes.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn the_general_settings_are_read_from_their_pages() {
+    use denon_marantz_proto::{GeneralPage, Language, Trigger, TriggerItemKind};
+    static PAGES: [(&str, &[u8]); 6] = [
+        (
+            "/ajax/general/get_config?type=2",
+            fixture!("general-language"),
+        ),
+        (
+            "/ajax/general/get_config?type=11",
+            fixture!("general-firmware"),
+        ),
+        (
+            "/ajax/general/get_config?type=14",
+            fixture!("general-usage-data"),
+        ),
+        (
+            "/ajax/general/get_config?type=8",
+            fixture!("general-trigger-a"),
+        ),
+        (
+            "/ajax/general/get_config?type=9",
+            fixture!("general-trigger-b"),
+        ),
+        (
+            "/ajax/general/get_config?type=20",
+            fixture!("general-trigger-c"),
+        ),
+    ];
+    let (avr, _web) = avr_with_web_interface(&PAGES).await;
+    let result = avr.update_general_settings().await.unwrap();
+    assert_eq!(result.pages.len(), GeneralPage::ALL.len());
+    assert!(result.pages.iter().all(|(_, status)| status.is_read()));
+    let state = avr.snapshot();
+    let general = &state.device().general_settings;
+    assert_eq!(general.language, Some(Language::English));
+    assert_eq!(general.auto_update, Some(false));
+    assert_eq!(general.time_zone, Some(28));
+    assert_eq!(general.usage_data, Some(false));
+    assert_eq!(general.triggers.len(), 3);
+    let first = general.trigger(Trigger::One).unwrap();
+    let source = first
+        .enabled()
+        .find(|item| item.kind == TriggerItemKind::Source);
+    assert_eq!(source.unwrap().source, Some("BD"));
+}
+
+#[tokio::test]
+async fn speaker_details_and_source_details_have_the_new_pages() {
+    use denon_marantz_proto::XlrTarget;
+    static PAGES: [(&str, &[u8]); 3] = [
+        (
+            "/ajax/speakers/get_config?type=9",
+            fixture!("speakers-playback-2ch"),
+        ),
+        (
+            "/ajax/speakers/get_config?type=12",
+            fixture!("speakers-xlr-assign"),
+        ),
+        (
+            "/ajax/inputs/get_config?type=5",
+            fixture!("inputs-source-levels"),
+        ),
+    ];
+    let (avr, _web) = avr_with_web_interface(&PAGES).await;
+    let speakers = avr.update_speaker_details().await.unwrap();
+    assert_eq!(speakers.playback_2ch, PageStatus::Read);
+    assert_eq!(speakers.xlr_assign, PageStatus::Read);
+    assert!(speakers.any_read());
+    let sources = avr.update_source_details().await.unwrap();
+    assert_eq!(sources.levels, PageStatus::Read);
+    assert_eq!(sources.assignments, PageStatus::NotFound);
+    let state = avr.snapshot();
+    let device = state.device();
+    assert_eq!(device.playback_2ch.as_ref().unwrap().distances.len(), 2);
+    assert_eq!(
+        device.xlr_assign.as_ref().unwrap().outputs[0].choices[0],
+        XlrTarget::Subwoofer
+    );
+    assert_eq!(device.source_levels.analog_db, Some(0));
 }

@@ -1,6 +1,6 @@
 //! What happened to each page of a read from the web interface.
 
-use denon_marantz_proto::SettingsGroup;
+use denon_marantz_proto::{GeneralPage, SettingsGroup, VideoMenuPage};
 
 /// Why a page was not asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -55,6 +55,10 @@ pub struct SpeakerDetails {
     pub channel_levels: PageStatus,
     /// Subwoofer output, low pass filter and LFE distribution.
     pub bass: PageStatus,
+    /// How two-channel sources are played.
+    pub playback_2ch: PageStatus,
+    /// What the XLR outputs of the subwoofers carry.
+    pub xlr_assign: PageStatus,
 }
 
 impl SpeakerDetails {
@@ -65,6 +69,8 @@ impl SpeakerDetails {
             || self.crossovers.is_read()
             || self.channel_levels.is_read()
             || self.bass.is_read()
+            || self.playback_2ch.is_read()
+            || self.xlr_assign.is_read()
     }
 }
 
@@ -75,36 +81,48 @@ pub struct SourceDetails {
     pub assignments: PageStatus,
     /// The default and automatic names of the sources.
     pub names: PageStatus,
+    /// The levels of the analog and digital inputs.
+    pub levels: PageStatus,
 }
 
 impl SourceDetails {
     /// Returns true if at least one page was read.
     #[must_use]
     pub const fn any_read(&self) -> bool {
-        self.assignments.is_read() || self.names.is_read()
+        self.assignments.is_read() || self.names.is_read() || self.levels.is_read()
     }
 }
 
-/// The pages of [`Avr::update_settings_availability`](crate::Avr::update_settings_availability).
+/// What happened to each page of a read of several pages. `P` names a page,
+/// for example a [`SettingsGroup`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingsAvailabilityDetails {
-    /// The result for each group of settings, in the order that they were read.
-    pub pages: Vec<(SettingsGroup, PageStatus)>,
+pub struct PageResults<P> {
+    /// The result for each page, in the order that they were read.
+    pub pages: Vec<(P, PageStatus)>,
 }
 
-impl SettingsAvailabilityDetails {
-    /// The result for a group of settings.
+impl<P: PartialEq + Copy> PageResults<P> {
+    /// The result for a page.
     #[must_use]
-    pub fn status(&self, group: SettingsGroup) -> Option<PageStatus> {
+    pub fn status(&self, page: P) -> Option<PageStatus> {
         self.pages
             .iter()
-            .find(|(known, _)| *known == group)
+            .find(|(known, _)| *known == page)
             .map(|(_, status)| *status)
     }
 
-    /// Returns true if at least one group was read.
+    /// Returns true if at least one page was read.
     #[must_use]
     pub fn any_read(&self) -> bool {
         self.pages.iter().any(|(_, status)| status.is_read())
     }
 }
+
+/// The pages of [`Avr::update_settings_availability`](crate::Avr::update_settings_availability).
+pub type SettingsAvailabilityDetails = PageResults<SettingsGroup>;
+
+/// The pages of [`Avr::update_video_details`](crate::Avr::update_video_details).
+pub type VideoMenuDetails = PageResults<VideoMenuPage>;
+
+/// The pages of [`Avr::update_general_settings`](crate::Avr::update_general_settings).
+pub type GeneralDetails = PageResults<GeneralPage>;

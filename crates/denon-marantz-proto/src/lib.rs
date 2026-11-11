@@ -10,6 +10,7 @@ mod device_description;
 mod device_info;
 mod device_settings;
 mod error;
+mod general_menu;
 mod input_pages;
 mod now_playing;
 mod picture;
@@ -20,6 +21,7 @@ mod signal_pages;
 mod sleep;
 mod sound_mode;
 mod sound_settings;
+mod speaker_extras;
 mod speaker_setup;
 mod speaker_tables;
 mod state;
@@ -29,6 +31,7 @@ mod tone;
 mod tuner;
 mod values;
 mod video;
+mod video_menu;
 mod volume;
 mod xml;
 mod zone_settings;
@@ -48,9 +51,13 @@ pub use device_description::DeviceDescription;
 pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
 pub use device_settings::DeviceSettingValue;
 pub use error::Error;
+pub use general_menu::{
+    GeneralPage, GeneralPart, GeneralSettings, Language, TriggerAssignment, TriggerItem,
+    TriggerItemKind,
+};
 pub use input_pages::{
-    INPUT_ASSIGN_PATH, InputAssignment, SOURCE_NAMES_PATH, SourceNameEntry, SourceNames,
-    source_for_index,
+    INPUT_ASSIGN_PATH, InputAssignment, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SourceLevels,
+    SourceNameEntry, SourceNames, source_for_index,
 };
 pub use now_playing::{
     COVER_ARTWORK_PATH, HD_RADIO_STATUS_PATH, NET_AUDIO_STATUS_PATH, NowPlaying, PlayingKind,
@@ -70,6 +77,10 @@ pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
 pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, SoundStep};
 pub use source_list::{SourceInfo, SourceList};
+pub use speaker_extras::{
+    LfeDistribution, PLAYBACK_2CH_PATH, Playback2Ch, SubwooferOutput2Ch, XLR_ASSIGN_PATH,
+    XlrAssign, XlrOutput, XlrTarget,
+};
 pub use speaker_setup::{Crossover, SpeakerGroup, SpeakerSetup};
 pub use speaker_tables::{
     BASS_PATH, BassSettings, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, DISTANCES_PATH, DistanceUnit,
@@ -91,6 +102,10 @@ pub use values::{
     VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
+pub use video_menu::{
+    HdcpMode, NowPlayingDisplay, OnScreenDisplay, OsdVolume, SignalFormat, SourceSetting, TvFormat,
+    VideoMenu, VideoMenuPage, VideoMenuPart,
+};
 pub use volume::{PowerOnVolume, Volume, VolumeMode};
 pub use zone::{ReceiverType, Zone};
 pub use zone_settings::{MAX_QUICK_SELECT, ZoneSettingValue};

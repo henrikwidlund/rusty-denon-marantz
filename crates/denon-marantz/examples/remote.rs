@@ -50,7 +50,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels and bass from port 11080), source-details (reads the physical inputs and the source names from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
@@ -198,7 +198,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 43] = [
+const SOUND_COMMANDS: [&str; 45] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -233,6 +233,8 @@ const SOUND_COMMANDS: [&str; 43] = [
     "channel-reset",
     "speaker-details",
     "source-details",
+    "video-details",
+    "general-settings",
     "settings-availability",
     "setting-details",
     "system-settings",
@@ -500,7 +502,19 @@ async fn sound_extra_command(
         "source-details" => {
             let result = avr.update_source_details().await?;
             println!("pages: {result:?}");
-            println!("{:#?}", avr.snapshot().device().sources);
+            let state = avr.snapshot();
+            println!("{:#?}", state.device().sources);
+            println!("{:?}", state.device().source_levels);
+        }
+        "video-details" => {
+            let result = avr.update_video_details().await?;
+            println!("pages: {result:?}");
+            println!("{:#?}", avr.snapshot().device().video_menu);
+        }
+        "general-settings" => {
+            let result = avr.update_general_settings().await?;
+            println!("pages: {result:?}");
+            println!("{:#?}", avr.snapshot().device().general_settings);
         }
         "speaker-details" => {
             let result = avr.update_speaker_details().await?;
@@ -508,6 +522,8 @@ async fn sound_extra_command(
             let state = avr.snapshot();
             println!("{:#?}", state.device().speaker_setup);
             println!("{:#?}", state.device().channel_volumes);
+            println!("{:#?}", state.device().playback_2ch);
+            println!("{:#?}", state.device().xlr_assign);
         }
         "step" => {
             let (step, up) = parse_step(need()?)?;

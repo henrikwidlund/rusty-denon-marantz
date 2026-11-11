@@ -338,3 +338,74 @@ fn the_other_pages_allocate_little() {
         assert!(count < limit, "{what} used {count} allocations");
     }
 }
+
+/// The pages of the video, general and speaker menus. The limits are about
+/// one and a half times today's numbers, so a large rise is caught.
+#[test]
+fn menu_pages_allocate_little() {
+    use denon_marantz_proto::{
+        GeneralPage, Playback2Ch, SourceLevels, Trigger, VideoMenuPage, XlrAssign,
+    };
+    let count = |work: &mut dyn FnMut()| measure(work).count_total;
+    let hdcp = fixture("AVC-A10H-web-video-hdcp.xml");
+    let formats = fixture("AVC-A10H-web-video-4k8k-per-input.xml");
+    let osd = fixture("AVC-A10H-web-video-osd.xml");
+    let trigger = fixture("AVC-A10H-web-general-trigger-a.xml");
+    let playback = fixture("AVC-A10H-web-speakers-playback-2ch.xml");
+    let xlr = fixture("AVC-A10H-web-speakers-xlr-assign.xml");
+    let levels = fixture("AVC-A10H-web-inputs-source-levels.xml");
+    let cases = [
+        (
+            "HDCP page",
+            120,
+            count(&mut || {
+                black_box(VideoMenuPage::Hdcp.parse(&hdcp).unwrap());
+            }),
+        ),
+        (
+            "signal format page",
+            135,
+            count(&mut || {
+                black_box(VideoMenuPage::SignalFormat.parse(&formats).unwrap());
+            }),
+        ),
+        (
+            "on-screen display page",
+            32,
+            count(&mut || {
+                black_box(VideoMenuPage::OnScreenDisplay.parse(&osd).unwrap());
+            }),
+        ),
+        (
+            "trigger page",
+            70,
+            count(&mut || {
+                black_box(GeneralPage::Trigger(Trigger::One).parse(&trigger).unwrap());
+            }),
+        ),
+        (
+            "playback page",
+            65,
+            count(&mut || {
+                black_box(Playback2Ch::parse(&playback).unwrap());
+            }),
+        ),
+        (
+            "XLR page",
+            55,
+            count(&mut || {
+                black_box(XlrAssign::parse(&xlr).unwrap());
+            }),
+        ),
+        (
+            "source levels page",
+            20,
+            count(&mut || {
+                black_box(SourceLevels::parse(&levels).unwrap());
+            }),
+        ),
+    ];
+    for (what, limit, count) in cases {
+        assert!(count < limit, "{what} used {count} allocations");
+    }
+}

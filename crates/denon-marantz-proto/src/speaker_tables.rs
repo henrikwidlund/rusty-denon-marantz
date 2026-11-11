@@ -291,7 +291,10 @@ pub(crate) fn number<T: std::str::FromStr>(node: Node<'_>, name: &str) -> Option
 
 /// Reads the `Speaker` elements of a `List`. Entries that are not known or
 /// have no number are skipped.
-fn read_entries<K>(list: Node<'_>, key: impl Fn(usize) -> Option<K>) -> Vec<TableEntry<K>> {
+pub(crate) fn read_entries<K>(
+    list: Node<'_>,
+    key: impl Fn(usize) -> Option<K>,
+) -> Vec<TableEntry<K>> {
     let mut entries = Vec::new();
     for speaker in list.children().filter(|c| c.is("Speaker")) {
         let index = speaker

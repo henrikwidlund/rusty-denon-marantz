@@ -81,8 +81,9 @@ impl QueryGroup {
     ///
     /// 1. [`Core`](Self::Core): power, source, volume and mute of the zones,
     ///    and the sound mode.
-    /// 2. [`Names`](Self::Names): source names, sound mode list, friendly name
-    ///    and Dirac slots.
+    /// 2. [`Names`](Self::Names): source names, sound mode list, friendly name,
+    ///    Dirac slots and the selected Dirac filter. The state needs the
+    ///    filter to know which commands the receiver ignores.
     /// 3. [`Toggles`](Self::Toggles): on and off settings that clients toggle.
     ///    A toggle needs the current value.
     /// 4. [`Signal`](Self::Signal): video and audio signal information, which
@@ -188,7 +189,7 @@ pub fn after_appcommand_queries(brand: Brand) -> impl Iterator<Item = &'static s
     };
     only(&["MSSMART ?", "MSQUICK ?"])
         .chain(group_queries(brand, Toggles))
-        .chain(only(&["OPSMLALL ?", "OPDLS ?"]))
+        .chain(only(&["OPDLS ?", "PSDIRAC ?", "OPSMLALL ?"]))
 }
 
 /// Queries to send after connect with the default order of the groups.
@@ -256,8 +257,8 @@ static QUERIES: [Query; 125] = [
     both(Signal, "SSINFSIGFRL ?"),      // Video Max FRL
     both(Signal, "SSINFSIGCOS ?"),      // Signal Color Space
     both(Signal, "SSINFSIGECI ?"),      // Signal Extended Colorimetry
-    both(Sound, "PSDIRAC ?"),           // Dirac Live Filter
     both(Names, "OPDLS ?"),             // Dirac Live slots: name, filter and kind
+    both(Names, "PSDIRAC ?"),           // Dirac Live filter that is selected
     both(Names, "SSFUN ?"),             // Source names
     both(Names, "SSSOD ?"),             // Sources in use or hidden
     both(Names, "OPSMLALL ?"),          // Sound modes that the receiver offers
@@ -483,7 +484,7 @@ mod tests {
         let marantz: Vec<_> = after_appcommand_queries(Brand::Marantz).collect();
         assert_eq!(denon[0], "MSQUICK ?");
         assert_eq!(marantz[0], "MSSMART ?");
-        assert!(denon.ends_with(&["OPDLS ?", "OPSMLALL ?"]));
+        assert!(denon.ends_with(&["OPDLS ?", "PSDIRAC ?", "OPSMLALL ?"]));
         for list in [&denon, &marantz] {
             // AppCommand answers these.
             for answered in ["MV?", "MU?", "SI?", "MS?", "Z2?"] {
@@ -496,6 +497,29 @@ mod tests {
     #[test]
     fn the_start_groups_are_the_first_of_the_default_order() {
         assert!(QueryGroup::DEFAULT_ORDER.starts_with(QueryGroup::START_ORDER));
+    }
+
+    #[test]
+    fn the_start_groups_have_what_the_controls_check() {
+        // The controls of the client read these values before they send a
+        // command. If the state did not know them, a command that the receiver
+        // ignores would be sent: the selected Dirac filter blocks tone control
+        // and the Audyssey settings, and Dynamic EQ must be on for some
+        // Audyssey settings.
+        for brand in [Brand::Denon, Brand::Marantz] {
+            let start: Vec<_> = queries(brand, QueryGroup::START_ORDER).collect();
+            let first: Vec<_> = after_appcommand_queries(brand).collect();
+            for needed in ["PSDIRAC ?", "OPDLS ?", "PSDYNEQ ?", "PSTONE CTRL ?"] {
+                assert!(
+                    start.contains(&needed),
+                    "{needed} is not in the start groups"
+                );
+                assert!(
+                    first.contains(&needed),
+                    "{needed} is not in the first queries"
+                );
+            }
+        }
     }
 
     #[test]

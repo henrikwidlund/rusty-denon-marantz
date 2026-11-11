@@ -24,6 +24,11 @@ state with `Avr::snapshot` and watch it with `Avr::changes`.
 - HDMI control, menu lock, firmware update permission, when the network
   answers, and the streaming services (AirPlay, Spotify Connect, Roon Ready,
   TIDAL Connect, Qobuz Connect).
+- Menu settings that only the web interface has: the on-screen display, TV
+  format, screen saver, HDMI upscaler, HDCP and the 4K/8K format of each input,
+  the levels of the inputs, how two-channel sources are played, what the XLR
+  outputs carry (models with XLR outputs only), the language, the firmware update settings, usage data and what
+  switches each trigger output.
 - What plays: title, artist, album and station of network audio and HD radio,
   band and frequency of the tuner, and the address of the picture. A receiver
   that uses HEOS for network audio does not give this.
@@ -89,6 +94,8 @@ avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
 avr.update_detailed_availability().await?; // surround parameters, HDMI setup, video output
+avr.update_video_details().await?; // on-screen display, TV format, HDCP, 4K/8K per input
+avr.update_general_settings().await?; // language, firmware update, triggers
 avr.update_system_settings().await?;
 ```
 
@@ -150,6 +157,8 @@ have not run on a receiver:
 - The value `WhenOn` of the network control setting: the network answers only
   while the receiver is on. Only `Always` was seen. A receiver needs some time
   after power on before the network answers.
+- The XLR output assignment (`XlrAssign`) on a model that has XLR outputs. The
+  AVC-A10H has none and answers the page with zeros.
 - Receivers without the web interface on port 11080. The library gives an error
   after one second for each page call, see `AvrBuilder::web_interface_config`.
 
