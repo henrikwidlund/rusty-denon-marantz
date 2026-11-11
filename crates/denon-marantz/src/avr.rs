@@ -1,5 +1,6 @@
 //! A receiver: identification, state and updates over HTTP.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -170,6 +171,12 @@ pub struct Avr {
     /// The request body of [`HTTP_ONLY_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_body: Bytes,
+    /// The request body of the Audyssey query. Receivers of the 2016
+    /// generation and later have it.
+    audyssey_body: Bytes,
+    /// The receiver does not answer the Audyssey query, so it is not asked
+    /// again.
+    audyssey_missing: AtomicBool,
     channels: Channels,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
@@ -918,8 +925,41 @@ impl Avr {
     }
 
     async fn update_with_appcommand(&self) -> Result<(), Error> {
-        self.read_appcommand(&self.update_commands, self.update_body.clone())
-            .await
+        self.read_appcommand(
+            Endpoint::AppCommand,
+            &self.update_commands,
+            self.update_body.clone(),
+        )
+        .await?;
+        self.update_audyssey().await;
+        Ok(())
+    }
+
+    /// Reads the Audyssey settings from `AppCommand0300.xml`. Not every
+    /// receiver supports it, so a failure is only logged and is not asked for
+    /// again. A receiver that is not calibrated with Audyssey answers with
+    /// blank values, which count as unknown.
+    async fn update_audyssey(&self) {
+        if self.info.receiver_type != ReceiverType::AvrX2016
+            || self.audyssey_missing.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let result = self
+            .read_appcommand(
+                Endpoint::AppCommand0300,
+                &[appcommand::GET_AUDYSSEY],
+                self.audyssey_body.clone(),
+            )
+            .await;
+        if let Err(error) = result {
+            tracing::debug!(host = %self.info.host, %error, "Audyssey settings not read");
+            // A timeout or a network error can pass. An answer that is not the
+            // query means that the receiver does not have it.
+            if !error.is_unreachable() {
+                self.audyssey_missing.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
     /// Reads only what telnet does not report: the names of the zones. A
@@ -928,8 +968,12 @@ impl Avr {
     async fn update_http_only(&self) -> Result<(), Error> {
         match self.info.update_method {
             UpdateMethod::AppCommand => {
-                self.read_appcommand(&HTTP_ONLY_COMMANDS, self.http_only_body.clone())
-                    .await
+                self.read_appcommand(
+                    Endpoint::AppCommand,
+                    &HTTP_ONLY_COMMANDS,
+                    self.http_only_body.clone(),
+                )
+                .await
             }
             UpdateMethod::StatusPages => Ok(()),
         }
@@ -937,9 +981,14 @@ impl Avr {
 
     /// Sends `body`, the request for `commands`, and puts the answer into the
     /// state.
-    async fn read_appcommand(&self, commands: &[Definition], body: Bytes) -> Result<(), Error> {
+    async fn read_appcommand(
+        &self,
+        endpoint: Endpoint,
+        commands: &[Definition],
+        body: Bytes,
+    ) -> Result<(), Error> {
         self.http
-            .post_parsed(Endpoint::AppCommand.path(), body, |body| {
+            .post_parsed(endpoint.path(), body, |body| {
                 let response = Response::parse(body, commands.len())?;
                 self.channels.modify(|state, notify| {
                     for &zone in &self.info.zones {
@@ -1116,6 +1165,8 @@ impl AvrBuilder {
             update_body,
             #[cfg(feature = "telnet")]
             http_only_body: request_body(&HTTP_ONLY_COMMANDS.map(|definition| definition.cmd))?,
+            audyssey_body: request_body(&[appcommand::GET_AUDYSSEY.cmd])?,
+            audyssey_missing: AtomicBool::new(false),
             channels: Channels::new(State::new(single_zone)),
             #[cfg(feature = "telnet")]
             telnet: Telnet::new(self.telnet, brand, single_zone),
