@@ -299,15 +299,17 @@ pub(crate) fn appcommand0300_answer(audyssey: &str) -> String {
     )
 }
 
-/// A fake 2016 receiver. It answers the Audyssey query with `audyssey`, or
-/// with a 404 if that is `None`.
-pub(crate) async fn receiver_with_audyssey(audyssey: Option<&'static str>, tone: bool) -> Fake {
+/// A fake 2016 receiver. `answer` gives the reply to each request of
+/// `AppCommand0300.xml`, with the number of the request, from 0.
+pub(crate) async fn receiver_with_signal_answers(
+    tone: bool,
+    answer: impl Fn(usize) -> Reply + Send + Sync + 'static,
+) -> Fake {
+    let asked = AtomicUsize::new(0);
     Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-            ("POST", "/goform/AppCommand0300.xml") => audyssey.map_or(Reply::Status(404), |body| {
-                Reply::Body(body.as_bytes().to_vec())
-            }),
+            ("POST", "/goform/AppCommand0300.xml") => answer(asked.fetch_add(1, Ordering::Relaxed)),
             ("POST", _) if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("X"))
             }
@@ -316,6 +318,17 @@ pub(crate) async fn receiver_with_audyssey(audyssey: Option<&'static str>, tone:
             _ => Reply::Status(404),
         },
     )
+    .await
+}
+
+/// A fake 2016 receiver. It answers the Audyssey query with `audyssey`, or
+/// with a 404 if that is `None`.
+pub(crate) async fn receiver_with_audyssey(audyssey: Option<&'static str>, tone: bool) -> Fake {
+    receiver_with_signal_answers(tone, move |_| {
+        audyssey.map_or(Reply::Status(404), |body| {
+            Reply::Body(body.as_bytes().to_vec())
+        })
+    })
     .await
 }
 

@@ -43,6 +43,7 @@ a Dirac filter that blocks tone control or Audyssey settings.
 ```rust
 use std::sync::Arc;
 use denon_marantz::{Avr, Zone};
+use tokio::sync::broadcast::error::RecvError;
 
 let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
 let started = avr.start().await?; // the zones are in the state when this returns
@@ -51,8 +52,13 @@ avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
 let report = started.finished().await; // optional: wait for the rest
 
 let mut changes = avr.changes();
-while let Ok(change) = changes.recv().await {
-    println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main));
+loop {
+    match changes.recv().await {
+        Ok(change) => println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main)),
+        // Some changes were lost. The state is still right, so read it again.
+        Err(RecvError::Lagged(_)) => println!("{:?}", avr.snapshot().zone(Zone::Main)),
+        Err(RecvError::Closed) => break,
+    }
 }
 ```
 
@@ -60,8 +66,8 @@ while let Ok(change) = changes.recv().await {
 telnet, asks it first for what HTTP does not give (quick select, toggles, the
 sound modes and the Dirac Live slots), and reads the web interface pages that
 say which settings are available, the video signal and the channels. A page
-that fails is asked once more. Telnet is asked for the signal values only if a
-page could not be read. The report says what happened to each part. Use
+that fails is asked once more. Telnet is asked for the signal values that the
+other requests did not give. The report says what happened to each part. Use
 `StartOptions` to leave telnet closed or to skip the signal pages.
 
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
@@ -145,7 +151,7 @@ have not run on a receiver:
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.
 - What plays (`refresh_now_playing`, `update_now_playing`,
-  `telnet_request_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
+  `telnet_refresh_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
   from other receivers and with fake receivers. The `NSA` text is not used.
 - The signal pages of the web interface with an HDR signal or an FRL rate: the
   text of these values is only seen as no signal. The values of `ALLM` and

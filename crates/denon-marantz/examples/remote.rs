@@ -488,7 +488,7 @@ async fn sound_extra_command(
             println!("{:#?}", avr.snapshot().device().now_playing);
             println!("picture: {:?}", avr.artwork_url());
         }
-        "request-now-playing" => avr.telnet_request_now_playing().await?,
+        "request-now-playing" => avr.telnet_refresh_now_playing().await?,
         "refresh-now-playing" => avr.refresh_now_playing().await?,
         "signal" | "refresh-signal" => {
             avr.refresh_signal().await?;

@@ -126,10 +126,16 @@ impl SoundModeList {
             return Some(true);
         }
         if let Some(entry) = parse_entry(rest) {
-            match self.pending.iter_mut().find(|e| e.index == entry.index) {
-                Some(existing) => *existing = entry,
-                None => self.pending.push(entry),
+            // The same place again means that a new list has started, and the
+            // lines of a list that was cut short are not part of it.
+            if self
+                .pending
+                .iter()
+                .any(|e| e.category == entry.category && e.index == entry.index)
+            {
+                self.pending.clear();
             }
+            self.pending.push(entry);
         }
         Some(false)
     }
@@ -138,7 +144,11 @@ impl SoundModeList {
 /// Reads `MOV020Dolby Surround`: a group, three digits and the name.
 fn parse_entry(text: &str) -> Option<SoundModeEntry> {
     let category = SoundModeCategory::from_code(text.get(..3)?)?;
-    let index = text.get(3..6)?.parse().ok()?;
+    let digits = text.get(3..6)?;
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let index = digits.parse().ok()?;
     let name = text.get(6..)?.trim();
     (!name.is_empty()).then(|| SoundModeEntry {
         category,
@@ -174,6 +184,31 @@ mod tests {
         assert_eq!(list.as_slice()[1].category, SoundModeCategory::Music);
         assert_eq!(list.as_slice()[1].index, 80);
         assert_eq!(list.in_category(SoundModeCategory::Pure).count(), 1);
+    }
+
+    #[test]
+    fn a_list_that_was_cut_short_leaves_nothing_in_the_next_one() {
+        let mut list = SoundModeList::default();
+        feed(&mut list, &["SMLALL MOV001Stereo", "SMLALL MOV002Matrix"]);
+        feed(&mut list, &["SMLALL MOV001Stereo", "SMLALL END"]);
+        assert_eq!(list.as_slice().len(), 1);
+        assert_eq!(list.as_slice()[0].name, "Stereo");
+    }
+
+    #[test]
+    fn the_same_index_in_two_groups_is_two_modes_and_signs_are_not_digits() {
+        let mut list = SoundModeList::default();
+        feed(
+            &mut list,
+            &[
+                "SMLALL MOV011Stereo",
+                "SMLALL MUS011Jazz Club",
+                "SMLALL MOV+12Matrix",
+                "SMLALL END",
+            ],
+        );
+        let names: Vec<_> = list.as_slice().iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["Stereo", "Jazz Club"]);
     }
 
     #[test]

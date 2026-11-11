@@ -104,8 +104,9 @@ pub struct StartReport {
     pub telnet: TelnetStart,
     /// The signal, the channels and the Audyssey settings from
     /// `AppCommand0300.xml`, see [`Avr::update_signal`]. [`PageStatus::Read`]
-    /// means that the state has them. [`PageStatus::NoAnswer`] means that the
-    /// receiver did not answer in time.
+    /// means that the state has them. [`PageStatus::NotFound`] means that the
+    /// receiver does not have the file, and [`PageStatus::NoAnswer`] that it
+    /// did not answer in time.
     pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
@@ -193,10 +194,10 @@ impl Avr {
 
     /// Opens telnet. After an `AppCommand` read, the first queries are the
     /// ones that it does not answer. Another receiver gets the groups of the
-    /// settings. The receiver pushes changes of the signal by itself, so the
-    /// queries for the signal are only for the first value. A receiver with
-    /// `AppCommand0300.xml` gives the kind of the audio and the sampling rate
-    /// there, and is asked only if it does not answer.
+    /// settings. The queries for the signal give the first value. A receiver
+    /// with `AppCommand0300.xml` gives the kind of the audio and the sampling
+    /// rate there, and is asked only if it does not answer. Later changes come
+    /// as events if the receiver sends them, see [`Avr::refresh_signal`].
     #[cfg(feature = "telnet")]
     async fn start_telnet(&self) -> TelnetStart {
         let first = (self.info.update_method == UpdateMethod::AppCommand).then(|| {
@@ -316,9 +317,10 @@ impl Avr {
     /// channels too if their page could not be read. Your code does not
     /// choose. The values from telnet arrive as events after the call returns.
     ///
-    /// The signal does not send changes over HTTP, and telnet reports it only
-    /// when it is asked, so call this to see the signal now, for example when
-    /// the source changed.
+    /// The signal does not send changes over HTTP. Some receivers send changes
+    /// on telnet by themselves, and others do not. Call this to see the signal
+    /// now, for example when the source changed, or on a timer if the receiver
+    /// does not send changes. The library does not call it by itself.
     ///
     /// # Errors
     ///
@@ -361,7 +363,7 @@ impl Avr {
         // Nothing was read: say why.
         video?;
         channels?;
-        Err(Error::NothingRead("signal"))
+        Err(Error::NothingRead)
     }
 
     async fn read_start_pages(&self, options: StartOptions) -> Result<StartPages, Error> {

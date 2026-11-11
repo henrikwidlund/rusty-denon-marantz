@@ -33,6 +33,7 @@
 //! ```no_run
 //! use std::sync::Arc;
 //! use denon_marantz::{Avr, Zone};
+//! use tokio::sync::broadcast::error::RecvError;
 //!
 //! # async fn run() -> Result<(), denon_marantz::Error> {
 //! let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
@@ -40,8 +41,13 @@
 //! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
 //!
 //! let mut changes = avr.changes();
-//! while let Ok(change) = changes.recv().await {
-//!     println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main));
+//! loop {
+//!     match changes.recv().await {
+//!         Ok(change) => println!("{change:?}: {:?}", avr.snapshot().zone(Zone::Main)),
+//!         // Some changes were lost. The state is still right, so read it again.
+//!         Err(RecvError::Lagged(_)) => println!("{:?}", avr.snapshot().zone(Zone::Main)),
+//!         Err(RecvError::Closed) => break,
+//!     }
 //! }
 //! // Optional: wait until everything that the start reads has been read.
 //! let report = started.finished().await;

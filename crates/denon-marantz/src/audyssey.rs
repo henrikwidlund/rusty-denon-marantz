@@ -13,11 +13,10 @@ use crate::error::Error;
 ///
 /// Dirac Live and Audyssey are two ways to calibrate the speakers and do not
 /// work together. A receiver with a Dirac Live filter selected ignores the
-/// Audyssey settings (an AVC-A10H with Dirac ART ignored Dynamic Volume) and
-/// sends no answer and no error. So each method but
+/// Audyssey settings and sends no answer and no error. So each method but
 /// [`Audyssey::set_multi_eq`] returns [`Error::AudysseyBlockedByDirac`] and
 /// sends nothing while the state shows a Dirac filter. Selecting a MultEQ mode
-/// is the way to go back to Audyssey, so it is sent. To send an Audyssey
+/// switches back to Audyssey, so it is sent. To send an Audyssey
 /// command anyway, use [`Avr::telnet_send`].
 ///
 /// Each method returns when the command is written, as [`Avr::telnet_send`] does.

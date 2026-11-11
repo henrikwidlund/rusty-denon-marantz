@@ -109,9 +109,17 @@ impl InputAssignment {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the input assign page, or has no source. A page without content must
+    /// not replace what the state has.
     pub fn parse(body: &[u8]) -> Result<Vec<Self>, Error> {
-        let node = root(body)?.node();
+        let root = root(body)?;
+        if !root.is("InputAssign") {
+            return Err(Error::UnexpectedDocument {
+                expected: "InputAssign",
+            });
+        }
+        let node = root.node();
         let selection = node.child("SelectionList").map(|list| list.node());
         // The page gives the number of a list item, the text of the item is
         // the name of the input.
@@ -127,7 +135,7 @@ impl InputAssignment {
             let text = text.trim();
             (!text.is_empty() && text != "-").then(|| text.to_owned())
         };
-        let mut assignments = Vec::new();
+        let mut assignments: Vec<Self> = Vec::new();
         for source in node.children().filter(|c| c.is("Source")) {
             let Some(index) = source
                 .attribute("index")
@@ -135,6 +143,9 @@ impl InputAssignment {
             else {
                 continue;
             };
+            if assignments.iter().any(|known| known.index == index) {
+                continue;
+            }
             if assignments.len() == MAX_SOURCES {
                 break;
             }
@@ -148,6 +159,11 @@ impl InputAssignment {
                 digital: port("Digital"),
                 analog: port("Analog"),
                 video: port("Video"),
+            });
+        }
+        if assignments.is_empty() {
+            return Err(Error::UnexpectedDocument {
+                expected: "InputAssign",
             });
         }
         Ok(assignments)
@@ -185,9 +201,17 @@ impl SourceNames {
     ///
     /// # Errors
     ///
-    /// Returns an error if the body is not valid XML or is an HTML page.
+    /// Returns an error if the body is not valid XML, is an HTML page, is not
+    /// the source name page, or has no source. A page without content must
+    /// not replace what the state has.
     pub fn parse(body: &[u8]) -> Result<Self, Error> {
-        let node = root(body)?.node();
+        let root = root(body)?;
+        if !root.is("SourceRename") {
+            return Err(Error::UnexpectedDocument {
+                expected: "SourceRename",
+            });
+        }
+        let node = root.node();
         let mut names = Self {
             max_length: number(node, "CharacterMax"),
             entries: Vec::new(),
@@ -199,6 +223,9 @@ impl SourceNames {
             else {
                 continue;
             };
+            if names.entries.iter().any(|known| known.index == index) {
+                continue;
+            }
             if names.entries.len() == MAX_SOURCES {
                 break;
             }
@@ -209,6 +236,11 @@ impl SourceNames {
                 default_name: text_of(content, "Default"),
                 rename: text_of(content, "Rename"),
                 auto_name: text_of(content, "Auto"),
+            });
+        }
+        if names.entries.is_empty() {
+            return Err(Error::UnexpectedDocument {
+                expected: "SourceRename",
             });
         }
         Ok(names)
@@ -285,6 +317,27 @@ mod tests {
         // not have gives no input.
         assert_eq!(assignments[1].source, None);
         assert_eq!(assignments[1].hdmi, None);
+    }
+
+    #[test]
+    fn other_or_empty_pages_are_errors_and_repeated_sources_count_once() {
+        assert!(InputAssignment::parse(b"<Other/>").is_err());
+        assert!(InputAssignment::parse(b"<InputAssign/>").is_err());
+        assert!(SourceNames::parse(b"<Other/>").is_err());
+        assert!(
+            SourceNames::parse(b"<SourceRename><CharacterMax>16</CharacterMax></SourceRename>")
+                .is_err()
+        );
+        let xml = br#"<SourceRename><Source index="3"><Rename>First</Rename></Source>
+            <Source index="3"><Rename>Second</Rename></Source></SourceRename>"#;
+        let names = SourceNames::parse(xml).unwrap();
+        assert_eq!(names.entries.len(), 1);
+        assert_eq!(names.entries[0].rename.as_deref(), Some("First"));
+        let xml = br#"<InputAssign><Source index="5"><Name>A</Name></Source>
+            <Source index="5"><Name>B</Name></Source></InputAssign>"#;
+        let list = InputAssignment::parse(xml).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "A");
     }
 
     #[test]

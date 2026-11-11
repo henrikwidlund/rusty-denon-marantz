@@ -260,7 +260,24 @@ impl VideoMenu {
             }
         }
         match part {
-            VideoMenuPart::OnScreenDisplay(value) => put(&mut self.on_screen_display, Some(value)),
+            VideoMenuPart::OnScreenDisplay(new) => {
+                // A page that lacks one value keeps the value that is known.
+                let osd = self.on_screen_display.get_or_insert_default();
+                let mut changed = false;
+                if new.volume.is_some() {
+                    changed |= put(&mut osd.volume, new.volume);
+                }
+                if new.info.is_some() {
+                    changed |= put(&mut osd.info, new.info);
+                }
+                if new.now_playing.is_some() {
+                    changed |= put(&mut osd.now_playing, new.now_playing);
+                }
+                if new.wide_cinematic.is_some() {
+                    changed |= put(&mut osd.wide_cinematic, new.wide_cinematic);
+                }
+                changed
+            }
             VideoMenuPart::TvFormat(value) => put(&mut self.tv_format, value),
             VideoMenuPart::ScreenSaver(value) => put(&mut self.screen_saver, value),
             VideoMenuPart::HdmiUpscaler(value) => put(&mut self.hdmi_upscaler, value),
@@ -331,6 +348,27 @@ mod tests {
 
     fn page(page: VideoMenuPage, body: &[u8]) -> VideoMenuPart {
         page.parse(body).unwrap()
+    }
+
+    #[test]
+    fn an_osd_page_without_a_value_keeps_the_known_value() {
+        let mut menu = VideoMenu::default();
+        let osd = |volume, info| {
+            VideoMenuPart::OnScreenDisplay(OnScreenDisplay {
+                volume,
+                info,
+                ..OnScreenDisplay::default()
+            })
+        };
+        assert!(menu.apply(osd(Some(OsdVolume::Top), Some(true))));
+        assert!(!menu.apply(osd(Some(OsdVolume::Top), None)));
+        let known = menu.on_screen_display.unwrap();
+        assert_eq!(
+            (known.volume, known.info),
+            (Some(OsdVolume::Top), Some(true))
+        );
+        assert!(menu.apply(osd(Some(OsdVolume::Off), None)));
+        assert_eq!(menu.on_screen_display.unwrap().info, Some(true));
     }
 
     #[test]

@@ -50,6 +50,12 @@ impl VideoSignalPage {
             return Err(Error::UnexpectedDocument { expected: "Video" });
         }
         let node = root.node();
+        // A page without these elements is not a signal page, and must not
+        // clear the state.
+        let known = ["Resolution", "HDR", "FRLRate", "ColorSpace", "PixelDepth"];
+        if !known.iter().any(|name| node.child(name).is_some()) {
+            return Err(Error::UnexpectedDocument { expected: "Video" });
+        }
         let text = |name: &str| {
             let side = node.child(name).map(|child| child.node());
             let read = |side_name: &str| {
@@ -102,6 +108,12 @@ impl AudioChannelsPage {
             return Err(Error::UnexpectedDocument { expected: "Audio" });
         }
         let node = root.node();
+        if ["InputSignal", "ActiveSpeaker"]
+            .iter()
+            .all(|name| node.child(name).is_none())
+        {
+            return Err(Error::UnexpectedDocument { expected: "Audio" });
+        }
         let layout = |name: &str| {
             let list = node.child(name)?.node().child("List")?.node();
             let active = list
@@ -233,6 +245,16 @@ mod tests {
         );
         assert!(AudioChannelsPage::parse(VIDEO).is_err());
         assert!(VideoSignalPage::parse(AUDIO).is_err());
+    }
+
+    #[test]
+    fn a_page_without_content_is_an_error() {
+        assert!(VideoSignalPage::parse(b"<Video/>").is_err());
+        assert!(AudioChannelsPage::parse(b"<Audio/>").is_err());
+        // A page with no signal still has its elements.
+        let page = VideoSignalPage::parse(b"<Video><Resolution/></Video>").unwrap();
+        assert_eq!(page.resolution.input, None);
+        assert!(AudioChannelsPage::parse(b"<Audio><InputSignal/></Audio>").is_ok());
     }
 
     #[test]

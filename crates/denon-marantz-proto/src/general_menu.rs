@@ -243,7 +243,17 @@ impl GeneralSettings {
             GeneralPart::Firmware {
                 auto_update,
                 time_zone,
-            } => put(&mut self.auto_update, auto_update) | put(&mut self.time_zone, time_zone),
+            } => {
+                // A page that lacks one value keeps the value that is known.
+                let mut changed = false;
+                if auto_update.is_some() {
+                    changed |= put(&mut self.auto_update, auto_update);
+                }
+                if time_zone.is_some() {
+                    changed |= put(&mut self.time_zone, time_zone);
+                }
+                changed
+            }
             GeneralPart::UsageData(value) => put(&mut self.usage_data, value),
             GeneralPart::Trigger(new) => {
                 if let Some(current) = self.triggers.iter_mut().find(|k| k.trigger == new.trigger) {
@@ -448,6 +458,25 @@ mod tests {
             auto_update: Some(true),
             time_zone: Some(28),
         }));
+    }
+
+    #[test]
+    fn a_page_without_a_value_keeps_the_known_value() {
+        let mut settings = GeneralSettings::default();
+        assert!(settings.apply(GeneralPart::Firmware {
+            auto_update: Some(true),
+            time_zone: Some(29),
+        }));
+        assert!(!settings.apply(GeneralPart::Firmware {
+            auto_update: Some(true),
+            time_zone: None,
+        }));
+        assert_eq!(settings.time_zone, Some(29));
+        assert!(settings.apply(GeneralPart::Firmware {
+            auto_update: None,
+            time_zone: Some(28),
+        }));
+        assert_eq!(settings.auto_update, Some(true));
     }
 
     #[test]

@@ -422,7 +422,7 @@ async fn refresh_signal_says_when_nothing_was_read() {
     good.store(false, Ordering::SeqCst);
     let error = avr.refresh_signal().await.unwrap_err();
     assert!(
-        matches!(error, denon_marantz::Error::NothingRead(_)),
+        matches!(error, denon_marantz::Error::NothingRead),
         "{error:?}"
     );
     // The other page did not clear what was known.

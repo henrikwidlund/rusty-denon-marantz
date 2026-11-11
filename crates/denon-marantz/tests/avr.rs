@@ -7,7 +7,7 @@ mod common;
 use common::{
     AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer, avr_x_receiver, builder, config,
     friendly_name_answer, is_friendly_name_request, receiver_with_audyssey,
-    web_interface_with_pages,
+    receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
@@ -982,6 +982,43 @@ async fn a_receiver_without_the_audyssey_query_is_asked_once() {
     assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
     assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
     assert_eq!(audyssey_requests(&fake), 1);
+}
+
+#[tokio::test]
+async fn an_error_item_keeps_the_channels_that_the_state_has() {
+    let good = appcommand0300_answer("");
+    let start = good.find("<cmd><name>GetInputSignal</name>").unwrap();
+    let end = start + good[start..].find("</cmd>").unwrap() + "</cmd>".len();
+    let mut bad = good.clone();
+    bad.replace_range(start..end, "<error>2</error>");
+    let fake = receiver_with_signal_answers(true, move |asked| {
+        Reply::Body(if asked == 0 { &good } else { &bad }.clone().into_bytes())
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    let state = avr.snapshot();
+    let signal = &state.device().signal;
+    assert_eq!(signal.channels.input.unwrap().to_string(), "2.0");
+    assert_eq!(signal.channels.output.unwrap().to_string(), "2.1.1");
+}
+
+#[tokio::test]
+async fn a_refusal_that_is_not_a_404_does_not_stop_the_asking() {
+    let good = appcommand0300_answer("");
+    let fake = receiver_with_signal_answers(true, move |asked| {
+        if asked == 0 {
+            Reply::Status(503)
+        } else {
+            Reply::Body(good.clone().into_bytes())
+        }
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Refused(503));
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(audyssey_requests(&fake), 2);
 }
 
 #[tokio::test]

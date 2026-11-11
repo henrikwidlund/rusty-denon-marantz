@@ -407,7 +407,7 @@ impl DeviceState {
     /// for example Bass Control. `None` if the state does not know the filter
     /// or its kind.
     ///
-    /// A Dirac ART filter locks the channel levels, as seen on an AVC-A10H.
+    /// A Dirac ART filter locks the channel levels.
     /// Other filters, such as Bass Control, do not. Tone control is blocked by
     /// any Dirac filter, not only by this one.
     #[must_use]

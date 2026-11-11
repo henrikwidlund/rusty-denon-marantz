@@ -230,7 +230,8 @@ impl Avr {
 
     /// Follows each change of the state, with the zone and the value that
     /// changed. A subscriber that is too slow loses the oldest changes and gets
-    /// [`broadcast::error::RecvError::Lagged`]. The state is still correct.
+    /// [`broadcast::error::RecvError::Lagged`]. The state is still correct:
+    /// read it again with [`Avr::snapshot`] and go on listening.
     #[must_use]
     pub fn changes(&self) -> broadcast::Receiver<Change> {
         self.channels.subscribe_changes()
@@ -608,9 +609,9 @@ impl Avr {
             .modify(|state, notify| notify(state.apply_now_playing(NowPlaying::default())));
     }
 
-    /// Asks for what plays. Use this one: it picks the way for you. If the
+    /// Asks for what plays. It picks the way. If the
     /// telnet connection is open it asks on telnet, see
-    /// `Avr::telnet_request_now_playing`. If not, it reads the status page, see
+    /// `Avr::telnet_refresh_now_playing`. If not, it reads the status page, see
     /// [`Avr::update_now_playing`].
     ///
     /// Either way the values reach
@@ -626,7 +627,7 @@ impl Avr {
     pub async fn refresh_now_playing(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
-            return self.telnet_request_now_playing().await;
+            return self.telnet_refresh_now_playing().await;
         }
         self.update_now_playing().await.map(|_| ())
     }
@@ -809,7 +810,7 @@ impl Avr {
     ///
     /// The same as [`Avr::telnet_send`].
     #[cfg(feature = "telnet")]
-    pub async fn telnet_request_now_playing(&self) -> Result<(), Error> {
+    pub async fn telnet_refresh_now_playing(&self) -> Result<(), Error> {
         match self.playing_kind() {
             Some(PlayingKind::NetAudio) => self.telnet_send(Zone::Main, Command::Raw("NSE")).await,
             Some(PlayingKind::HdRadio) => self.telnet_send(Zone::Main, Command::Raw("HD?")).await,
@@ -932,6 +933,7 @@ impl Avr {
     /// Follows the events from the receiver, as they come on telnet. Repeated
     /// events that a query causes are left out. A subscriber that is too slow
     /// loses the oldest events and gets [`broadcast::error::RecvError::Lagged`].
+    /// Go on listening after it, and read the state with [`Avr::snapshot`].
     #[cfg(feature = "telnet")]
     #[must_use]
     pub fn telnet_events(&self) -> broadcast::Receiver<TelnetEvent> {
@@ -950,8 +952,8 @@ impl Avr {
     /// Reads the video and audio signal, the channels and the Audyssey
     /// settings from the receiver with one request to `AppCommand0300.xml`.
     ///
-    /// This is much faster than the pages of the web interface and the
-    /// telnet queries for the same values (about 0.2 s). It gives the
+    /// This is faster than the pages of the web interface and the telnet
+    /// queries for the same values. It gives the
     /// resolution that the receiver gets and sends, the kind of the audio
     /// signal and of the sound, the sampling rate, and the channels of the
     /// signal and of the speakers. HDR, the pixel depth, the color space and
@@ -962,9 +964,12 @@ impl Avr {
     ///
     /// Only receivers of the 2016 generation and later have it. The result is
     /// [`PageStatus::NotFound`] for another receiver and for a receiver that
-    /// does not answer the queries, and then it is not asked again. A receiver
-    /// that is not calibrated with Audyssey answers with blank Audyssey values,
-    /// which count as unknown.
+    /// answers 404, and then it is not asked again. Another refusal or an
+    /// answer that cannot be read gives [`PageStatus::Refused`] or
+    /// [`PageStatus::Unreadable`], and the next call asks again. An item of the
+    /// answer with an error leaves its values as they are. A receiver that is
+    /// not calibrated with Audyssey answers with blank Audyssey values, which
+    /// count as unknown.
     ///
     /// # Errors
     ///
@@ -983,10 +988,17 @@ impl Avr {
                 self.appcommand0300_body.clone(),
                 |body| {
                     let response = Response::parse(body, APPCOMMAND0300_COMMANDS.len())?;
+                    let mut complete = true;
                     self.channels.modify(|state, notify| {
                         for (definition, item) in
                             APPCOMMAND0300_COMMANDS.iter().zip(response.items())
                         {
+                            // An error item has no values, and must not clear
+                            // what the state has.
+                            if item.is_error() {
+                                complete = false;
+                                continue;
+                            }
                             definition.extract(&item, Zone::Main, &mut |field, value| {
                                 notify(state.apply_field(Zone::Main, field, value));
                             });
@@ -1003,22 +1015,32 @@ impl Avr {
                             }
                         }
                     });
-                    Ok(())
+                    Ok(complete)
                 },
             )
             .await;
-        let answered = result.is_ok();
-        self.signal_from_appcommand
-            .store(answered, Ordering::Relaxed);
         match result {
-            Ok(()) => Ok(PageStatus::Read),
+            Ok(complete) => {
+                // The start asks telnet again for what an error item left out.
+                self.signal_from_appcommand
+                    .store(complete, Ordering::Relaxed);
+                self.forget_telnet_values(&Ok(PageStatus::Read)).await;
+                Ok(PageStatus::Read)
+            }
             // A timeout or a network error can pass.
             Err(error) if error.is_unreachable() => Err(error),
             Err(error) => {
-                // An answer that is not the query: the receiver does not have it.
                 tracing::debug!(host = %self.info.host, %error, "AppCommand0300 not read");
-                self.appcommand0300_missing.store(true, Ordering::Relaxed);
-                Ok(PageStatus::NotFound)
+                Ok(match error {
+                    // Only a missing file means that the receiver does not have it.
+                    Error::Status { status: 404, .. } => {
+                        self.appcommand0300_missing.store(true, Ordering::Relaxed);
+                        PageStatus::NotFound
+                    }
+                    Error::Status { status, .. } => PageStatus::Refused(status),
+                    Error::Forbidden { .. } => PageStatus::Refused(403),
+                    _ => PageStatus::Unreadable,
+                })
             }
         }
     }

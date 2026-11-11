@@ -720,7 +720,7 @@ pub(crate) fn encode(brand: Brand, zone: Zone, command: &Command<'_>) -> Result<
     let mut line = String::new();
     command
         .write_line(brand, zone, &mut line)
-        .map_err(Error::InvalidCommand)?;
+        .map_err(Error::from_command)?;
     Ok(line)
 }
 

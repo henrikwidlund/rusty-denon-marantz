@@ -727,7 +727,7 @@ async fn zone_methods_refuse_what_cannot_work() {
     // The receiver of the test has two zones.
     let error = avr.zone(Zone::Zone3).unwrap_err();
     assert!(matches!(error, Error::NoSuchZone(Zone::Zone3)), "{error:?}");
-    assert!(error.is_invalid_input());
+    assert!(error.is_unsupported());
     let zone2 = avr.zone(Zone::Zone2).unwrap();
     let error = zone2.select_sound_mode("MOVIE").await.unwrap_err();
     assert!(
@@ -760,9 +760,9 @@ async fn remote_keys_use_the_category_of_the_zone() {
     zone2.press(RemoteKey::PageUp).await.unwrap();
     zone2.press_denon_code(5).await.unwrap();
     let error = zone2.press(RemoteKey::HdmiCecOn).await.unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     let error = main.press_marantz_code("6012").await.unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     wait_until("the keys", || commands_sent(&telnet).len() >= 3).await;
     assert_eq!(
         commands_sent(&telnet),
@@ -934,18 +934,18 @@ async fn zone_setting_methods_refuse_what_the_zone_does_not_have() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     let main = avr.zone(Zone::Main).unwrap();
     let error = main.bass_up().await.unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     let error = main
         .set_volume_mode(VolumeMode::Variable)
         .await
         .unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     let zone2 = avr.zone(Zone::Zone2).unwrap();
     let error = zone2
         .set_volume_display(VolumeDisplay::Absolute)
         .await
         .unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     let error = zone2.set_left_level(13).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     let half = Volume::from_db_rounded(-9.5);
@@ -1013,7 +1013,7 @@ async fn device_methods_send_their_commands() {
         .sound_mode_next()
         .await
         .unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
     assert_eq!(
         commands_sent(&telnet),
@@ -1048,7 +1048,7 @@ async fn bluetooth_and_quick_select_are_sent_and_read() {
         .set_illumination(Illumination::Dim)
         .await
         .unwrap_err();
-    assert!(error.is_invalid_input(), "{error:?}");
+    assert!(error.is_unsupported(), "{error:?}");
     let main = avr.zone(Zone::Main).unwrap();
     let zone2 = avr.zone(Zone::Zone2).unwrap();
     main.select_quick_select(3).await.unwrap();
@@ -1397,7 +1397,7 @@ async fn sound_methods_refuse_numbers_out_of_range() {
         sound.set_subwoofer_level(5, level).await.unwrap_err(),
     ];
     for error in errors {
-        assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
+        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
         assert!(error.is_invalid_input());
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1488,7 +1488,7 @@ async fn audyssey_methods_refuse_what_cannot_work() {
         .await
         .unwrap_err();
     assert!(matches!(error, Error::DynamicEqOff), "{error:?}");
-    assert!(error.is_invalid_input());
+    assert!(error.is_blocked());
     for level in [0, 8, u8::MAX] {
         let error = audyssey.set_containment_level(level).await.unwrap_err();
         assert!(
@@ -1521,7 +1521,7 @@ async fn tone_control_is_not_turned_on_when_the_receiver_would_ignore_it() {
             matches!(error, Error::ToneControlBlocked(ToneBlocker::DiracFilter)),
             "{error:?}"
         );
-        assert!(error.is_invalid_input());
+        assert!(error.is_blocked());
     }
     // Any Dirac filter blocks it, also one that is not Dirac ART.
     telnet.send(b"OPDLSSL1TYP BC\rPSDIRAC 1\r");
@@ -1587,7 +1587,7 @@ async fn audyssey_settings_are_not_sent_while_a_dirac_filter_is_selected() {
     for result in blocked {
         let error = result.unwrap_err();
         assert!(matches!(error, Error::AudysseyBlockedByDirac), "{error:?}");
-        assert!(error.is_invalid_input());
+        assert!(error.is_blocked());
     }
     assert_eq!(commands_sent(&telnet), ["PSDYNEQ ON"]);
     // Selecting a MultEQ mode is the way back to Audyssey: it is sent.
@@ -1671,7 +1671,7 @@ async fn dirac_needs_a_receiver_that_supports_it() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     let error = avr.dirac().unwrap_err();
     assert!(matches!(error, Error::DiracNotSupported), "{error:?}");
-    assert!(error.is_invalid_input());
+    assert!(error.is_unsupported());
 
     let http = avr_x_receiver_with_info(AVR_X_DIRAC_INFO).await;
     let avr = builder(&http, ReceiverType::AvrX)
@@ -1887,21 +1887,21 @@ async fn now_playing_is_requested_for_the_source_that_plays() {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("CD")
     })
     .await;
-    avr.telnet_request_now_playing().await.unwrap();
+    avr.telnet_refresh_now_playing().await.unwrap();
     assert_eq!(asked("NSE\r"), 0);
     telnet.send(b"SINET\r");
     wait_until("the source", || {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("NET")
     })
     .await;
-    avr.telnet_request_now_playing().await.unwrap();
+    avr.telnet_refresh_now_playing().await.unwrap();
     wait_until("the request", || telnet.received().contains("NSE\r")).await;
     telnet.send(b"SITUNER\r");
     wait_until("the source", || {
         avr.snapshot().zone(Zone::Main).source.as_deref() == Some("TUNER")
     })
     .await;
-    avr.telnet_request_now_playing().await.unwrap();
+    avr.telnet_refresh_now_playing().await.unwrap();
     wait_until("the tuner request", || {
         telnet.received().contains("TFANNAME?\r")
     })
