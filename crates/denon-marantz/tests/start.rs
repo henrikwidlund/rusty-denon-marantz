@@ -353,6 +353,16 @@ async fn refresh_signal_reads_the_pages_and_asks_telnet_for_the_audio() {
         lines(&telnet.received()).contains(&"SSINFSIGECI ?")
     })
     .await;
+    // The first queries must be over, or they count as the new ones.
+    let mut count = 0;
+    loop {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let now = telnet.received().len();
+        if now == count {
+            break;
+        }
+        count = now;
+    }
     let before = telnet.received().len();
     avr.refresh_signal().await.unwrap();
     wait_until("the audio queries", || {

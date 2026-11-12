@@ -2198,7 +2198,11 @@ async fn the_status_is_reset_when_the_task_stops_before_it_runs() {
 #[tokio::test]
 async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
     // A port that takes the connection and never reads, so a large write blocks.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    // Accepted sockets keep the small buffer.
+    socket.set_recv_buffer_size(4096).unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = socket.listen(1).unwrap();
     let port = listener.local_addr().unwrap().port();
     let (written, first_bytes) = tokio::sync::oneshot::channel();
     let holder = tokio::spawn(async move {
@@ -2233,7 +2237,10 @@ async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
         .expect("the write did not start")
         .unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(!sender.is_finished());
+    #[allow(clippy::manual_assert)] // The message needs the result of the task.
+    if sender.is_finished() {
+        panic!("the write ended early: {:?}", sender.await);
+    }
 
     let stopped = std::time::Instant::now();
     avr.telnet_disconnect().await;
