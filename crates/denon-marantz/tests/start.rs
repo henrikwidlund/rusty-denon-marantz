@@ -349,24 +349,23 @@ async fn refresh_signal_reads_the_pages_and_asks_telnet_for_the_audio() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     avr.start().await.unwrap().finished().await;
+    // The start asks for these too: wait for them, so that a second one
+    // comes from the refresh.
+    let count = |text: &str| {
+        lines(&telnet.received())
+            .iter()
+            .filter(|line| **line == text)
+            .count()
+    };
     wait_until("the first queries", || {
-        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
+        count("SSINFSIGECI ?") > 0 && count("SYSDA ?") > 0
     })
     .await;
-    // The first queries must be over, or they count as the new ones.
-    let mut count = 0;
-    loop {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let now = telnet.received().len();
-        if now == count {
-            break;
-        }
-        count = now;
-    }
     let before = telnet.received().len();
+    let (eci, audio) = (count("SSINFSIGECI ?"), count("SYSDA ?"));
     avr.refresh_signal().await.unwrap();
     wait_until("the audio queries", || {
-        telnet.received().len() > before + 40
+        count("SSINFSIGECI ?") > eci && count("SYSDA ?") > audio
     })
     .await;
     let received = telnet.received();
