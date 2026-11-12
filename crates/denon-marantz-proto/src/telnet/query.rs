@@ -96,7 +96,7 @@ impl QueryGroup {
     ///    adjustments. Only older receivers answer these.
     /// 9. [`Speakers`](Self::Speakers): the speaker configuration, the
     ///    crossovers and the graphic EQ. Only Denon receivers answer these.
-    pub const DEFAULT_ORDER: &'static [Self] = &[
+    pub const DEFAULT_ORDER: &[Self] = &[
         Self::Core,
         Self::Names,
         Self::Toggles,
@@ -111,8 +111,7 @@ impl QueryGroup {
     /// The groups that a connection fetches by default: the ones that most
     /// clients show or toggle at once. The others stay empty until the
     /// receiver reports a change, or until a client fetches them.
-    pub const START_ORDER: &'static [Self] =
-        &[Self::Core, Self::Names, Self::Toggles, Self::Signal];
+    pub const START_ORDER: &[Self] = &[Self::Core, Self::Names, Self::Toggles, Self::Signal];
 }
 
 /// Queries of the chosen groups, in the order of `groups`. A group that is

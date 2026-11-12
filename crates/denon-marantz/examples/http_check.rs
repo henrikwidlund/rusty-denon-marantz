@@ -290,23 +290,22 @@ async fn wait_for_within(
     None
 }
 
-/// Asks each query on a new telnet connection, so that an answer that repeats
+/// Asks the query on a new telnet connection, so that an answer that repeats
 /// an older value is still seen as a change of the empty state.
 async fn queries(host: &str) -> Result<(), Box<dyn std::error::Error>> {
-    for query in ["MNZST?"] {
-        let avr = Avr::builder(host).connect().await?;
-        avr.telnet_connect().await?;
-        let begin = Instant::now();
-        avr.telnet_send(Zone::Main, Command::Raw(query)).await?;
-        let answer = wait_for(&avr, |s| s.device().all_zone_stereo.is_some()).await;
-        let value = avr.snapshot().device().all_zone_stereo;
-        println!(
-            "RESULT query={query:?} answered={} value={value:?} after_ms={:.0}",
-            answer.is_some(),
-            begin.elapsed().as_secs_f64() * 1000.0
-        );
-        avr.telnet_disconnect().await;
-    }
+    let query = "MNZST?";
+    let avr = Avr::builder(host).connect().await?;
+    avr.telnet_connect().await?;
+    let begin = Instant::now();
+    avr.telnet_send(Zone::Main, Command::Raw(query)).await?;
+    let answer = wait_for(&avr, |s| s.device().all_zone_stereo.is_some()).await;
+    let value = avr.snapshot().device().all_zone_stereo;
+    println!(
+        "RESULT query={query:?} answered={} value={value:?} after_ms={:.0}",
+        answer.is_some(),
+        begin.elapsed().as_secs_f64() * 1000.0
+    );
+    avr.telnet_disconnect().await;
     Ok(())
 }
 
