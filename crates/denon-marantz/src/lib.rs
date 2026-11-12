@@ -44,8 +44,9 @@
 //! let started = avr.start().await?;
 //! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
 //!
-//! // Optional: wait until everything that the start reads has been read.
-//! let report = started.finished().await;
+//! // Optional: wait until the start has read everything and the receiver has
+//! // answered its telnet queries. `finished` does not wait for the answers.
+//! let report = started.synced().await;
 //!
 //! loop {
 //!     match changes.recv().await {
@@ -118,7 +119,7 @@ pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{
     Avr, AvrBuilder, FollowUpRead, Info, StartOptions, StartPages, StartReport, Started,
-    TelnetStart, UpdateMethod,
+    TelnetStart, TelnetSync, UpdateMethod,
 };
 #[cfg(feature = "http")]
 pub use denon_marantz_proto::RemoteKey;

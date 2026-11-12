@@ -166,6 +166,9 @@ enum Request {
     RefreshGroup(QueryGroup),
     /// Ask the receiver these queries.
     Queries(Vec<&'static str>),
+    /// Tell the caller when the receiver has answered a query that is sent
+    /// after the ones that wait now.
+    Synced(oneshot::Sender<Result<(), Error>>),
 }
 
 /// The telnet connection of one receiver.
@@ -327,6 +330,26 @@ impl Telnet {
         self.forget.store(true, Ordering::Relaxed);
     }
 
+    /// Waits until the receiver has answered a query that is sent after the
+    /// queries that wait now. The receiver handles lines in order, so the
+    /// answers to the earlier queries are in the state then, as far as the
+    /// receiver answers them. It is an error if the connection ends first, or
+    /// if there is no answer within the keep-alive time.
+    pub(crate) async fn sync(&self) -> Result<(), Error> {
+        let (done, answered) = oneshot::channel();
+        self.request(Request::Synced(done)).await?;
+        let limit = self.config.keep_alive;
+        tokio::time::timeout(limit, answered).await.map_or_else(
+            |_| {
+                Err(Error::Timeout {
+                    request: "telnet marker query".to_owned(),
+                    limit,
+                })
+            },
+            |answer| answer.unwrap_or(Err(Error::NotConnected)),
+        )
+    }
+
     /// Asks the task to send these queries after the ones that wait.
     pub(crate) async fn ask(&self, queries: Vec<&'static str>) -> Result<(), Error> {
         self.request(Request::Queries(queries)).await
@@ -424,7 +447,21 @@ struct Queue {
     last_user_write: Option<Instant>,
     /// When data came from the receiver.
     last_read: Option<Instant>,
+    /// Callers that wait for the answer to a marker query, oldest first.
+    markers: VecDeque<Marker>,
 }
+
+/// A caller that waits for the answer to a marker query.
+struct Marker {
+    done: oneshot::Sender<Result<(), Error>>,
+    /// When the query was written. `None` if it is not written yet.
+    written: Option<Instant>,
+}
+
+/// A marker whose caller left and whose answer did not come in this time is
+/// not answered. It is dropped, so that it does not take the answer of a later
+/// marker.
+const MARKER_STALE: Duration = Duration::from_secs(5);
 
 impl Queue {
     const fn new(background: VecDeque<&'static str>) -> Self {
@@ -434,6 +471,7 @@ impl Queue {
             last_write: None,
             last_user_write: None,
             last_read: None,
+            markers: VecDeque::new(),
         }
     }
 
@@ -450,7 +488,7 @@ impl Queue {
         };
         if !self.user.is_empty() {
             Some(after_last(config.command_interval))
-        } else if !self.background.is_empty() {
+        } else if !self.background.is_empty() || self.marker_due() {
             let mut spaced = after_last(config.query_interval);
             if let Some(read) = self.last_read {
                 let quiet = (read + config.query_quiet).min(after_last(MAX_QUERY_WAIT));
@@ -462,6 +500,46 @@ impl Queue {
             Some(after_command.map_or(spaced, |time| time.max(spaced)))
         } else {
             None
+        }
+    }
+
+    /// A caller waits for a marker query that is not written yet.
+    fn marker_due(&self) -> bool {
+        self.markers
+            .iter()
+            .any(|marker| marker.written.is_none() && !marker.done.is_closed())
+    }
+
+    /// Drops the markers of callers that left: those that are not written, and
+    /// those that are written and stale.
+    fn drop_dead_markers(&mut self, now: Instant) {
+        self.markers.retain(|marker| {
+            !marker.done.is_closed()
+                || marker
+                    .written
+                    .is_some_and(|written| now.duration_since(written) <= MARKER_STALE)
+        });
+    }
+
+    /// Takes the next marker that is not written. False if there is none.
+    fn write_marker(&mut self, now: Instant) -> bool {
+        self.drop_dead_markers(now);
+        self.markers
+            .iter_mut()
+            .find(|marker| marker.written.is_none())
+            .map(|marker| marker.written = Some(now))
+            .is_some()
+    }
+
+    /// The receiver answered the oldest marker that was written.
+    fn answer_marker(&mut self) {
+        if self
+            .markers
+            .front()
+            .is_some_and(|marker| marker.written.is_some())
+            && let Some(marker) = self.markers.pop_front()
+        {
+            let _ = marker.done.send(Ok(()));
         }
     }
 
@@ -480,6 +558,9 @@ impl Queue {
     fn fail_all(&mut self) {
         for outgoing in self.user.drain(..) {
             outgoing.fail();
+        }
+        for marker in self.markers.drain(..) {
+            let _ = marker.done.send(Err(Error::NotConnected));
         }
     }
 }
@@ -585,13 +666,19 @@ impl Worker {
                         queue.last_read = Some(idle_since);
                         asked = false;
                         let mut tuner = false;
+                        let mut power_lines = 0_usize;
                         decoder.decode(&buffer[..count], |text| {
                             // The source of the main zone changed to the tuner.
                             tuner |= text == "SITUNER";
+                            // The answer to a marker query, or an event that looks like it.
+                            power_lines += usize::from(text.starts_with("PW"));
                             self.handle_line(text, &mut filter);
                         });
                         if tuner {
                             queue.add(TUNER_QUERIES);
+                        }
+                        for _ in 0..power_lines {
+                            queue.answer_marker();
                         }
                     }
                     Err(error) => break End::Failed(error),
@@ -609,6 +696,13 @@ impl Worker {
                     Some(Request::Queries(queries)) => {
                         filter.clear();
                         queue.add(queries);
+                    }
+                    Some(Request::Synced(done)) => {
+                        queue.drop_dead_markers(Instant::now());
+                        queue.markers.push_back(Marker {
+                            done,
+                            written: None,
+                        });
                     }
                     None => break End::Shutdown,
                 },
@@ -650,6 +744,8 @@ impl Worker {
             line.push_str(query);
             line.push('\r');
             (std::mem::take(line), None, false)
+        } else if queue.write_marker(Instant::now()) {
+            (format!("{DEVICE_POWER_QUERY}\r"), None, false)
         } else {
             return Ok(());
         };
@@ -870,6 +966,30 @@ mod tests {
         assert_eq!(output, 7);
         assert!(matches!(refused.await, Ok(Err(Error::NotConnected))));
         assert!(requests.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_marker_of_a_caller_that_left_is_dropped_when_it_is_stale() {
+        let mut queue = Queue::new(VecDeque::new());
+        let (stale, _) = oneshot::channel();
+        let (fresh, _) = oneshot::channel();
+        let (unwritten, _) = oneshot::channel();
+        let (waiting, _waiting) = oneshot::channel();
+        let start = Instant::now();
+        let marker = |done, written| Marker { done, written };
+        queue.markers.push_back(marker(stale, Some(start)));
+        queue
+            .markers
+            .push_back(marker(fresh, Some(start + MARKER_STALE)));
+        queue.markers.push_back(marker(unwritten, None));
+        queue.markers.push_back(marker(waiting, None));
+        // The receivers are gone, except the last one.
+        queue.drop_dead_markers(start + MARKER_STALE + Duration::from_millis(1));
+        // The stale and the unwritten marker of the callers that left are dropped.
+        assert_eq!(queue.markers.len(), 2);
+        assert!(queue.markers[0].written.is_some());
+        assert!(queue.markers[1].written.is_none());
+        assert!(queue.marker_due());
     }
 
     #[tokio::test(start_paused = true)]

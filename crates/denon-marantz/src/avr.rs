@@ -50,7 +50,7 @@ mod start;
 use follow_up::FollowUp;
 
 pub use follow_up::FollowUpRead;
-pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart};
+pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync};
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
@@ -973,6 +973,29 @@ impl Avr {
         } else {
             Err(Error::DiracNotSupported)
         }
+    }
+
+    /// Waits until the receiver has answered a last query that is sent after
+    /// the telnet queries that wait now. The receiver handles lines in order,
+    /// so the answers to the earlier queries are in the state when this
+    /// returns. A value that is still empty is probably one that this receiver
+    /// does not answer. The library cannot check this: an event that looks like
+    /// the answer, or a query that the receiver drops, can leave a value for
+    /// later. Queries that are added later are not covered. See also
+    /// [`Started::synced`].
+    ///
+    /// Dropping the future is safe. Several calls at once each wait for their
+    /// own query, except that a power event or the answer to the keep-alive
+    /// query can end one wait early.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NotConnected`] if the telnet connection is not open or
+    /// ends before the answer, and an error for which [`Error::is_timeout`] is
+    /// true if there is no answer within the keep-alive time.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_sync(&self) -> Result<(), Error> {
+        self.telnet.sync().await
     }
 
     /// Asks the receiver for its state again on telnet. The answers are

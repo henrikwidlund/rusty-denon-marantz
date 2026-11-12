@@ -62,7 +62,7 @@ let mut changes = avr.changes(); // subscribe before the start, so no change is 
 let started = avr.start().await?; // the zones are in the state when this returns
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
-let report = started.finished().await; // optional: wait for the rest
+let report = started.synced().await; // optional: wait until the receiver has answered the start queries
 
 loop {
     match changes.recv().await {
