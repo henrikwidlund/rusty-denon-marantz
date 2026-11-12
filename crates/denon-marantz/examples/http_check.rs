@@ -17,7 +17,10 @@
 //! - `queries`: asks `MNZST?` on telnet, on its own connection. Sends nothing
 //!   else.
 //!
-//! The phases that change the receiver for a moment and put it back:
+//! The phases that change the receiver for a moment and put it back. The ones
+//! that switch the source need `--source CODE`, the telnet name of the source
+//! to switch to (for example `AUX2`). There is no default: nothing that is
+//! connected to the receiver is switched on by chance.
 //!
 //! - `effects`: mute, the volume by one step, the source, the sound mode, bass,
 //!   Dynamic EQ and all zone stereo, one after the other. Telnet shows what
@@ -76,7 +79,8 @@ use tracing_subscriber::EnvFilter;
 const USAGE: &str = "usage: http_check <host> queries | effects | http-effects | power | \
                      http-power | main-power | http-main-power | switch | http-switch | \
                      switch-telnet | rate INTERVAL_MS COUNT | \
-                     load SECONDS INTERVAL_MS [--no-follow-up]";
+                     load SECONDS INTERVAL_MS [--no-follow-up] ; effects, http-effects and the \
+                     switch phases take --source CODE, the source to switch to";
 
 const PHASES: [&str; 12] = [
     "queries",
@@ -143,6 +147,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let rest: Vec<String> = args.collect();
     let follow_up = (!rest.iter().any(|a| a == "--no-follow-up")).then(FollowUpRead::default);
+    // The second source for the phases that switch the source. There is no
+    // default, so that no source is switched to by chance.
+    let source = rest
+        .iter()
+        .position(|a| a == "--source")
+        .map(|at| rest.get(at + 1).cloned().ok_or(USAGE))
+        .transpose()?;
     let number = |index: usize| -> Result<u64, Box<dyn std::error::Error>> {
         Ok(rest.get(index).ok_or(USAGE)?.parse()?)
     };
@@ -196,12 +207,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let run = async {
         match phase.as_str() {
-            "effects" => effects(&avr, &original, true).await,
-            "http-effects" => effects(&avr, &original, false).await,
+            "effects" => effects(&avr, &original, true, source.as_deref()).await,
+            "http-effects" => effects(&avr, &original, false, source.as_deref()).await,
             "power" | "http-power" => power(&avr).await,
             "main-power" | "http-main-power" => main_power(&avr, telnet).await,
-            "switch" | "http-switch" => switch(&avr, &original, false).await,
-            "switch-telnet" => switch(&avr, &original, true).await,
+            "switch" | "http-switch" => switch(&avr, &original, false, source.as_deref()).await,
+            "switch-telnet" => switch(&avr, &original, true, source.as_deref()).await,
             "rate" => rate(&avr, Duration::from_millis(numbers.0), numbers.1, None).await,
             "load" => {
                 let seconds = Duration::from_secs(numbers.0);
@@ -370,6 +381,7 @@ async fn effects(
     avr: &Avr,
     original: &Original,
     telnet: bool,
+    source: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let volume = |s: &State| s.zone(Zone::Main).volume.map(Volume::db);
     let up = volume(&avr.snapshot()).unwrap_or_default() + 0.5;
@@ -403,19 +415,14 @@ async fn effects(
         )
         .await;
     }
-    let sources = avr.snapshot();
     // The state can hold the display name or the telnet name of the source.
     let current = original
         .source
         .as_deref()
         .map(|name| display_to_select_code(name).unwrap_or(name));
-    let other = sources
-        .device()
-        .sources
-        .as_slice()
-        .iter()
-        .find(|info| info.in_use == Some(true) && Some(info.code.as_str()) != current)
-        .map(|info| info.code.clone());
+    let other = source
+        .filter(|code| Some(*code) != current)
+        .map(str::to_owned);
     if let (Some(other), Some(current)) = (other, current) {
         let home = original.source.clone();
         // The receiver can ignore a source command about 3 s after another one,
@@ -432,7 +439,7 @@ async fn effects(
         )
         .await;
     } else {
-        println!("RESULT effect source: skipped, no second source in use");
+        println!("RESULT effect source: skipped, give --source CODE (not the current source)");
     }
     if let Some(mode) = original.sound_mode.as_deref() {
         // Next and previous put the mode back exactly. The name that the
@@ -704,21 +711,17 @@ async fn switch(
     avr: &Avr,
     original: &Original,
     telnet: bool,
+    source: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let home = original
         .source
         .as_deref()
         .ok_or("the source is not known")?;
     let home = display_to_select_code(home).unwrap_or(home);
-    let other = avr
-        .snapshot()
-        .device()
-        .sources
-        .as_slice()
-        .iter()
-        .find(|info| info.in_use == Some(true) && info.code != home)
-        .map(|info| info.code.clone())
-        .ok_or("no second source in use")?;
+    let other = source
+        .filter(|code| *code != home)
+        .ok_or("give --source CODE, a source other than the current one")?
+        .to_owned();
     let way = if telnet { "telnet" } else { "http" };
     for delay in [100_u64, 300, 600, 1000, 1500, 3000, 5000] {
         for command in [Command::SelectSource(&other), Command::SelectSource(home)] {
