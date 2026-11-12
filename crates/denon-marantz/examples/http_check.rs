@@ -47,8 +47,9 @@
 //! Each result is a line that starts with `RESULT`. A phase that changes
 //! something records the command that puts it back before it sends the change.
 //! If the example stops with an error or with Ctrl-C, it sends the recorded
-//! commands. The volume, mute and the source are checked and put back at the
-//! end. The output can have personal data, for example the name of the receiver.
+//! commands. The phases that change the volume, the mute or the source check
+//! them at the end and put them back. The output can have personal data, for
+//! example the name of the receiver.
 
 // A tool for hand tests: long functions and rounded numbers are fine here.
 #![allow(
@@ -350,13 +351,18 @@ async fn effect_in(
             |d| format!("{:.0}", d.as_secs_f64() * 1000.0)
         ),
     );
+    let mut put_back = false;
     if answer.is_ok() {
         let _ = avr.http_send(zone, back).await;
         let back_seen = wait_for_within(avr, limit, check_back).await;
-        println!("RESULT effect {name}: put back={}", back_seen.is_some());
+        put_back = back_seen.is_some();
+        println!("RESULT effect {name}: put back={put_back}");
     }
-    // The undo command is not needed: it was sent, or the change was not.
-    forget();
+    // The undo command stays when the value is not known to be back. It is
+    // sent at the end. A command that sets the value again does no harm.
+    if put_back {
+        forget();
+    }
     sleep(Duration::from_millis(300)).await;
 }
 
