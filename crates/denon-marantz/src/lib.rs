@@ -92,6 +92,8 @@ mod http;
 mod identify;
 #[cfg(feature = "http")]
 mod sound_control;
+#[cfg(feature = "http")]
+mod status;
 #[cfg(feature = "telnet")]
 mod telnet;
 #[cfg(feature = "http")]
@@ -143,6 +145,8 @@ pub use http::{HttpClient, HttpConfig};
 pub use identify::{Identified, identify, identify_on};
 #[cfg(feature = "http")]
 pub use sound_control::SoundControl;
+#[cfg(feature = "http")]
+pub use status::{Blocker, Feature, SettingStatus};
 #[cfg(feature = "telnet")]
 pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "http")]

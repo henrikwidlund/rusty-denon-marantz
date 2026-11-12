@@ -11,8 +11,8 @@ use common::{
     avr_x_receiver_with_pages, builder, wait_until,
 };
 use denon_marantz::{
-    Avr, Command, Error, PageStatus, QueryGroup, SkipReason, TelnetConfig, TelnetEvent,
-    TelnetStatus, ToneBlocker,
+    Avr, Blocker, Command, Error, Feature, PageStatus, QueryGroup, SettingStatus, SkipReason,
+    TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
@@ -1639,6 +1639,123 @@ async fn audyssey_settings_are_not_sent_while_a_dirac_filter_is_selected() {
     audyssey.set_lfc(true).await.unwrap();
     wait_until("the command", || commands_sent(&telnet).len() >= 3).await;
     assert_eq!(commands_sent(&telnet)[2], "PSLFC ON");
+}
+
+#[tokio::test]
+async fn setting_status_agrees_with_the_setters() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver_with_info(AVR_X_DIRAC_INFO).await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    let features = [
+        Feature::ToneControl,
+        Feature::Audyssey,
+        Feature::ReferenceLevelOffset,
+    ];
+    // Nothing is known yet.
+    for feature in features {
+        assert_eq!(avr.setting_status(feature), SettingStatus::Unknown);
+    }
+    assert_eq!(avr.setting_status(Feature::Dirac), SettingStatus::Available);
+
+    // Dirac off, Dynamic EQ off: only the reference level offset is blocked.
+    telnet.send(b"PSDIRAC OFF\rPSDYNEQ OFF\r");
+    wait_until("the state", || {
+        avr.snapshot().device().dynamic_eq == Some(false)
+            && avr.snapshot().device().dirac_filter == Some(DiracFilter::Off)
+    })
+    .await;
+    assert_eq!(
+        avr.setting_status(Feature::ToneControl),
+        SettingStatus::Available
+    );
+    assert_eq!(
+        avr.setting_status(Feature::Audyssey),
+        SettingStatus::Available
+    );
+    assert_eq!(
+        avr.setting_status(Feature::ReferenceLevelOffset),
+        SettingStatus::Blocked(Blocker::DynamicEqOff)
+    );
+    avr.tone().set_enabled(true).await.unwrap();
+    avr.audyssey().set_dynamic_eq(true).await.unwrap();
+    let error = avr
+        .audyssey()
+        .set_reference_level_offset(ReferenceLevelOffset::Db0)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::DynamicEqOff), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
+
+    // Dynamic EQ on: the reference level offset is not blocked.
+    telnet.send(b"PSDYNEQ ON\r");
+    wait_until("dynamic eq", || {
+        avr.snapshot().device().dynamic_eq == Some(true)
+    })
+    .await;
+    assert_eq!(
+        avr.setting_status(Feature::ReferenceLevelOffset),
+        SettingStatus::Available
+    );
+    avr.audyssey()
+        .set_reference_level_offset(ReferenceLevelOffset::Db0)
+        .await
+        .unwrap();
+    wait_until("the command", || commands_sent(&telnet).len() >= 3).await;
+
+    // A Dirac filter blocks all three, and the setters refuse.
+    telnet.send(b"PSDIRAC 1\r");
+    wait_until("the filter", || {
+        avr.snapshot().device().dirac_filter == Some(DiracFilter::Slot1)
+    })
+    .await;
+    for feature in features {
+        let status = avr.setting_status(feature);
+        assert_eq!(status, SettingStatus::Blocked(Blocker::DiracFilter));
+        assert!(!status.can_send());
+    }
+    let error = avr.tone().set_enabled(true).await.unwrap_err();
+    assert!(
+        matches!(error, Error::ToneControlBlocked(ToneBlocker::DiracFilter)),
+        "{error:?}"
+    );
+    let error = avr.audyssey().set_dynamic_eq(true).await.unwrap_err();
+    assert!(matches!(error, Error::AudysseyBlockedByDirac), "{error:?}");
+    let error = avr
+        .audyssey()
+        .set_reference_level_offset(ReferenceLevelOffset::Db0)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::AudysseyBlockedByDirac), "{error:?}");
+    assert_eq!(commands_sent(&telnet).len(), 3);
+}
+
+#[tokio::test]
+async fn setting_status_without_dirac_needs_no_filter_value() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    assert_eq!(
+        avr.setting_status(Feature::Dirac),
+        SettingStatus::Unsupported
+    );
+    // The receiver never reports a filter, so these are not left unknown.
+    assert_eq!(
+        avr.setting_status(Feature::ToneControl),
+        SettingStatus::Available
+    );
+    assert_eq!(
+        avr.setting_status(Feature::Audyssey),
+        SettingStatus::Available
+    );
+    // The offset still depends on Dynamic EQ.
+    assert_eq!(
+        avr.setting_status(Feature::ReferenceLevelOffset),
+        SettingStatus::Unknown
+    );
 }
 
 const DISTANCES_PAGE: &[u8] =

@@ -1,10 +1,11 @@
 //! Typed control of bass, treble and tone control.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{DiracFilter, ToneLevel, Zone};
+use denon_marantz_proto::{ToneLevel, Zone};
 
 use crate::avr::Avr;
 use crate::error::{Error, ToneBlocker};
+use crate::status::{Blocker, Feature, SettingStatus};
 
 /// Controls bass, treble and tone control of a receiver. Get it from
 /// [`Avr::tone`].
@@ -153,16 +154,11 @@ impl<'a> ToneControl<'a> {
 
     /// Fails if the state shows what stops tone control from turning on.
     fn check_not_blocked(self) -> Result<(), Error> {
-        let state = self.avr.state();
-        let state = state.borrow();
-        if state
-            .device()
-            .dirac_filter
-            .is_some_and(|filter| filter != DiracFilter::Off)
-        {
-            Err(Error::ToneControlBlocked(ToneBlocker::DiracFilter))
-        } else {
-            Ok(())
+        match self.avr.setting_status(Feature::ToneControl) {
+            SettingStatus::Blocked(Blocker::DiracFilter) => {
+                Err(Error::ToneControlBlocked(ToneBlocker::DiracFilter))
+            }
+            _ => Ok(()),
         }
     }
 

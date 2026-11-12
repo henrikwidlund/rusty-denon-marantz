@@ -1,12 +1,11 @@
 //! Typed control of the Audyssey settings.
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{
-    ContainmentAmount, DiracFilter, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone,
-};
+use denon_marantz_proto::{ContainmentAmount, DynamicVolume, MultiEq, ReferenceLevelOffset, Zone};
 
 use crate::avr::Avr;
 use crate::error::Error;
+use crate::status::{Blocker, Feature, SettingStatus};
 
 /// Controls the Audyssey settings of a receiver. Get it from
 /// [`Avr::audyssey`].
@@ -62,9 +61,12 @@ impl<'a> Audyssey<'a> {
         &self,
         offset: ReferenceLevelOffset,
     ) -> Result<(), Error> {
-        self.check_no_dirac()?;
-        if self.avr.state().borrow().device().dynamic_eq == Some(false) {
-            return Err(Error::DynamicEqOff);
+        match self.avr.setting_status(Feature::ReferenceLevelOffset) {
+            SettingStatus::Blocked(Blocker::DiracFilter) => {
+                return Err(Error::AudysseyBlockedByDirac);
+            }
+            SettingStatus::Blocked(Blocker::DynamicEqOff) => return Err(Error::DynamicEqOff),
+            _ => {}
         }
         self.send(Command::SetReferenceLevelOffset(offset)).await
     }
@@ -140,16 +142,9 @@ impl<'a> Audyssey<'a> {
 
     /// Fails if the state shows that a Dirac filter is selected.
     fn check_no_dirac(self) -> Result<(), Error> {
-        let state = self.avr.state();
-        let dirac = state
-            .borrow()
-            .device()
-            .dirac_filter
-            .is_some_and(|filter| filter != DiracFilter::Off);
-        if dirac {
-            Err(Error::AudysseyBlockedByDirac)
-        } else {
-            Ok(())
+        match self.avr.setting_status(Feature::Audyssey) {
+            SettingStatus::Blocked(Blocker::DiracFilter) => Err(Error::AudysseyBlockedByDirac),
+            _ => Ok(()),
         }
     }
 
