@@ -230,7 +230,11 @@ async fn a_closed_telnet_port_is_in_the_report() {
             .unwrap(),
     );
     let report = avr.start().await.unwrap().finished().await;
-    assert!(matches!(report.telnet, TelnetStart::Failed(_)));
+    assert!(
+        matches!(report.telnet, TelnetStart::Failed(_)),
+        "{:?}",
+        report.telnet
+    );
     // The pages were read anyway.
     assert!(report.web_interface.unwrap().video_signal.is_read());
 }
