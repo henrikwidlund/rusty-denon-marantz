@@ -90,7 +90,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run tests
-        run: cargo test --locked --workspace --all-features
+        run: cargo test --locked --workspace --all-features --no-fail-fast
 
   msrv:
     name: Minimum Rust version

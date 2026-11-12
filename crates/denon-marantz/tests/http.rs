@@ -158,7 +158,12 @@ async fn refused_connection_is_a_network_error() {
     assert_ne!(port, free_port);
     let client = HttpClient::new("127.0.0.1", free_port, config()).unwrap();
     let error = client.get("/x").await.unwrap_err();
-    assert!(error.is_network(), "{error:?}");
+    // Windows reports a refused connection after about two seconds, so the
+    // short timeout of the test can come first.
+    assert!(
+        error.is_network() || (cfg!(windows) && error.is_timeout()),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

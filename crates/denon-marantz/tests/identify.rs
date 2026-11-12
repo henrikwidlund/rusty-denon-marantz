@@ -102,7 +102,12 @@ async fn nothing_answering_is_an_error() {
     let error = identify_on("127.0.0.1", &candidates, config())
         .await
         .unwrap_err();
-    assert!(error.is_network(), "{error:?}");
+    // Windows reports a refused connection after about two seconds, so the
+    // short timeout of the test can come first.
+    assert!(
+        error.is_network() || (cfg!(windows) && error.is_timeout()),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
