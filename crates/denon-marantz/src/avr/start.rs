@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+#[cfg(feature = "telnet")]
+use std::time::Duration;
 
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::ReceiverType;
@@ -101,7 +103,7 @@ pub struct StartPages {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TelnetSync {
-    /// [`Started::finished`] does not wait for the answers.
+    /// [`Started::http_synced`] does not wait for the answers.
     NotWaited,
     /// The receiver answered a last query that was sent after the queries of
     /// the start. It handles lines in order, so the state has the values that
@@ -111,7 +113,8 @@ pub enum TelnetSync {
     NotOpen,
     /// The connection ended before the receiver answered.
     Lost,
-    /// The receiver did not answer the last query within the keep-alive time.
+    /// The receiver did not answer the last query in time. [`Started::finished`]
+    /// waits up to 10 seconds.
     NoAnswer,
 }
 
@@ -120,7 +123,7 @@ pub enum TelnetSync {
 pub struct StartReport {
     /// The telnet connection.
     pub telnet: TelnetStart,
-    /// If the receiver answered the telnet queries. Only [`Started::synced`]
+    /// If the receiver answered the telnet queries. Only [`Started::finished`]
     /// waits for this.
     pub telnet_sync: TelnetSync,
     /// The signal, the channels and the Audyssey settings from
@@ -161,16 +164,21 @@ pub struct Started {
     avr: Arc<Avr>,
 }
 
+/// How long [`Started::finished`] waits for the answers to the telnet queries.
+#[cfg(feature = "telnet")]
+const TELNET_SYNC_WAIT: Duration = Duration::from_secs(10);
+
 impl Started {
-    /// Waits until everything that the start reads has been read, and says
-    /// what happened. The values are in the state before this returns, and
-    /// the answers of telnet queries can still be on their way: see
-    /// [`Started::synced`].
+    /// Waits until everything that the start reads over HTTP has been read,
+    /// and says what happened. The values are in the state before this
+    /// returns. It does not wait for the answers to the telnet queries, which
+    /// can still be on their way: [`Started::finished`] does. The report has
+    /// [`TelnetSync::NotWaited`].
     ///
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn finished(self) -> StartReport {
+    pub async fn http_synced(self) -> StartReport {
         match self.handle.await {
             Ok(report) => report,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
@@ -182,40 +190,41 @@ impl Started {
             },
         }
     }
-}
 
-impl Started {
-    /// Waits as [`Started::finished`] does, and then until the receiver has
+    /// Waits as [`Started::http_synced`] does, and then until the receiver has
     /// answered a last query that is sent after the telnet queries of the
     /// start. The receiver handles lines in order, so the answers to the
     /// earlier queries are in the state then. A value that is still empty is
     /// probably one that this receiver does not answer. The library cannot
     /// check this: an event that looks like the answer, or a query that the
     /// receiver drops, can leave a value for later. It takes as long as the
-    /// paced queries do, a few seconds. The wait ends with
-    /// [`TelnetSync::NoAnswer`] after the keep-alive time, see
-    /// [`TelnetConfig::keep_alive`](crate::TelnetConfig::keep_alive).
+    /// paced queries do, a few seconds, and ends with
+    /// [`TelnetSync::NoAnswer`] after 10 seconds.
     ///
-    /// A value that changes later arrives as an event, as always.
+    /// A value that changes later arrives as an event, as always. A caller
+    /// that does not need to wait does not have to call this: dropping
+    /// [`Started`] does not stop the start.
     ///
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn synced(self) -> StartReport {
+    pub async fn finished(self) -> StartReport {
         #[cfg(feature = "telnet")]
         let avr = Arc::clone(&self.avr);
         #[cfg_attr(not(feature = "telnet"), allow(unused_mut))]
-        let mut report = self.finished().await;
+        let mut report = self.http_synced().await;
         #[cfg(feature = "telnet")]
         if matches!(
             report.telnet,
             TelnetStart::Open | TelnetStart::AlreadyRunning
         ) {
-            report.telnet_sync = match avr.telnet_sync().await {
-                Ok(()) => TelnetSync::Answered,
-                Err(error) if error.is_timeout() => TelnetSync::NoAnswer,
-                Err(_) => TelnetSync::Lost,
-            };
+            report.telnet_sync =
+                match tokio::time::timeout(TELNET_SYNC_WAIT, avr.telnet_sync()).await {
+                    Ok(Ok(())) => TelnetSync::Answered,
+                    Err(_) => TelnetSync::NoAnswer,
+                    Ok(Err(error)) if error.is_timeout() => TelnetSync::NoAnswer,
+                    Ok(Err(_)) => TelnetSync::Lost,
+                };
             return report;
         }
         report.telnet_sync = TelnetSync::NotOpen;

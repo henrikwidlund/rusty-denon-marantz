@@ -100,7 +100,7 @@ pub enum Error {
     #[error("the start was stopped before it finished")]
     Stopped,
     /// Another start of this receiver is still running, so nothing was read.
-    /// A start is running until `Started::finished` would return.
+    /// A start is running until the task of the start has ended.
     #[error("another start of this receiver is still running")]
     StartRunning,
     /// The command asks for a value, and the receiver answers that on telnet
