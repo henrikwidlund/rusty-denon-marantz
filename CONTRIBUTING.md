@@ -55,6 +55,9 @@ Describe breaking changes in the PR and explain why they are needed.
     cargo test --locked --workspace --all-features
     RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
     cargo deny check
+    for f in "" telnet http discovery mdns telnet,http; do
+      cargo check --locked -p denon-marantz --no-default-features --features "$f"
+    done
     ```
     - All checks must pass.
 7. Create a PR against the **main** branch.

@@ -6,7 +6,10 @@ Async Rust library to monitor and control Denon and Marantz AV receivers.
 
 The client keeps one state of the receiver. Telnet events change it at once.
 The web interface fills the parts that telnet does not report. You read the
-state with `Avr::snapshot` and watch it with `Avr::changes`.
+state with `Avr::snapshot` and watch it with `Avr::changes`. You control the
+receiver with typed setters (`avr.zone(..)` and others), on telnet or, without
+telnet, over HTTP. Telnet connects again by itself after a drop and reads the
+state again.
 
 - Zones: main, zone 2 and zone 3. Power, volume, mute, source, quick select.
 - Sound: sound mode, tone control, Audyssey, Dirac Live, tactile transducer,
@@ -38,6 +41,15 @@ A command that the receiver would ignore without an answer is not sent when the
 state shows why. The call returns an error that names the reason, for example
 a Dirac filter that blocks tone control or Audyssey settings.
 
+## Install
+
+The crates are not on crates.io yet. Use the repository:
+
+```toml
+[dependencies]
+denon-marantz = { git = "https://github.com/henrikwidlund/rusty-denon-marantz" }
+```
+
 ## Usage
 
 ```rust
@@ -62,13 +74,15 @@ loop {
 }
 ```
 
-`start` reads the zones over HTTP and returns. In the background it opens
-telnet, asks it first for what HTTP does not give (quick select, toggles, the
-sound modes and the Dirac Live slots), and reads the web interface pages that
-say which settings are available, the video signal and the channels. A page
-that fails is asked once more. Telnet is asked for the signal values that the
-other requests did not give. The report says what happened to each part. Use
-`StartOptions` to leave telnet closed or to skip the signal pages.
+`start` reads the zones over HTTP, opens telnet and returns. If the telnet port
+does not answer, it waits for the connect timeout first. In the background it
+asks telnet first for what HTTP does not give (quick select, toggles, the sound
+modes and the Dirac Live slots), and reads the web interface pages that say
+which settings are available, the video signal and the channels. A page that
+fails is asked once more. Telnet is asked for the signal values that the other
+requests did not give. The report says what happened to each part. Use
+`StartOptions` to leave telnet closed or to skip the signal pages. A second
+`start` while one still runs gives `Error::StartRunning` and reads nothing.
 
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in
@@ -83,7 +97,7 @@ a Marantz receiver.
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|
 | `Core` | yes | Power, source, volume and mute of the zones, sound mode, quick select | 9 | 9 |
-| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots | 6 | 5 |
+| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots | 7 | 6 |
 | `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 22 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
 | `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 19 | 19 |
@@ -125,6 +139,10 @@ telnet, and `refresh*` picks the way for you. The setters are in the controls
 (`avr.zone(..)`, `sound()`, `device()` and others). The values that the setters
 take are in `denon_marantz::proto`.
 
+Each call says what happened to each page. A page that the receiver does not
+have or refuses is not an error. A receiver that cannot be reached is an error,
+see `Error::is_unreachable`.
+
 ## Without telnet
 
 The setters work over HTTP too. `avr.send(..)` and the controls use telnet while
@@ -141,17 +159,13 @@ A program that does not want telnet never opens it: use
 - After a command, the values that it changed are read, for example the volume
   and mute after a volume command. The read waits until no command came for
   500 ms, and not longer than 2 s, so a held key causes few reads. The
-  receiver shows a new source or sound mode late, so these are read again
-  after 1.5 s.
-  Change this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
+  receiver shows a new power state, source or sound mode late, so these are
+  read again every 1.5 s until a read shows a change, at most 3 times. Change
+  this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
 - Settings that `update()` does not read, such as tone or Audyssey, change in
   the state when you read them.
 - The list of sound modes of the receiver needs telnet. Without it, select a
   mode by its name, for example `select_sound_mode("MOVIE")`.
-
-Each call says what happened to each page. A page that the receiver does not
-have or refuses is not an error. A receiver that cannot be reached is an error,
-see `Error::is_unreachable`.
 
 ## Features of the `denon-marantz` crate
 
@@ -172,6 +186,10 @@ Tested on a Denon AVC-A10H.
 These parts follow the protocol specifications and the other tested parts, but
 have not run on a receiver:
 
+- Marantz receivers. The commands and queries follow the Marantz protocol
+  sheets and the Denon ones, but no Marantz receiver was available.
+- Receivers without `AppCommand`, which are read over the status pages. They
+  are tested with captured pages and fake receivers.
 - Receivers that are older than the AVC-A10H. The effect speaker, center image
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.
@@ -207,9 +225,12 @@ have not run on a receiver:
 - The receiver can ignore a source command that comes a few seconds after
   another source command, on telnet and over HTTP. This was seen with an input
   that switches a trigger output (to power on a device), and not with an input
-  that does nothing else. It also shows a new power
-  state, source or sound mode in its `AppCommand` answers up to a few seconds
-  late.
+  that does nothing else.
+- The receiver shows a new power state, source or sound mode in its `AppCommand`
+  answers up to a few seconds late.
+- A network restart of the receiver drops telnet after about 50 seconds, and
+  the receiver then accepts and resets the connection for a few seconds. The
+  library tries again every 0.5 seconds until it stays connected.
 - A Dirac ART filter locks the channel levels, the dial page (HTTP status 500)
   and the crossovers.
 - The library only reads from the web interface. It never writes to it.
@@ -240,6 +261,9 @@ cargo run -p denon-marantz --example start -- 192.168.1.20
 cargo run -p denon-marantz --example remote -- 192.168.1.20 volume -35
 ```
 
+`http_check` tests commands over HTTP on a real receiver. It changes settings and
+can switch power, so read the header of the file before you run it.
+
 `status` prints the serial number of the receiver. Remove it before you share
 the output. `start` shows how long `Avr::start` takes and what it read. `remote`
 runs one command, the header of the file lists them.
@@ -258,6 +282,9 @@ RUSTFLAGS="-D warnings" cargo clippy --locked --workspace --all-targets --all-fe
 cargo test --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
 cargo deny check
+for f in "" telnet http discovery mdns telnet,http; do
+  cargo check --locked -p denon-marantz --no-default-features --features "$f"
+done
 ```
 
 Fuzz targets for the parsers are in `fuzz/`. Benchmarks use `criterion`.
