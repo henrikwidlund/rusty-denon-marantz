@@ -7,7 +7,7 @@ mod common;
 use std::time::Duration;
 
 use common::{AVR_X_INFO, Fake, avr_x_receiver_with_pages, builder, wait_until};
-use denon_marantz::{Avr, Command, Error, FollowUpRead, ReceiverType, Zone};
+use denon_marantz::{Avr, Command, Error, FollowUpRead, ReceiverType, Volume, Zone};
 
 const COMMAND: &str = "/goform/formiPhoneAppDirect.xml?";
 
@@ -146,16 +146,23 @@ async fn a_key_that_is_held_down_causes_few_reads() {
     let avr = connect(&fake, Some(quick())).await;
     let known = fake.requests().len();
     let main = avr.zone(Zone::Main).unwrap();
-    // About 600 ms of commands, one every 5 ms.
+    // At least 600 ms of commands, one every 5 ms.
+    let begin = std::time::Instant::now();
     for _ in 0..120 {
         main.volume_up().await.unwrap();
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+    let elapsed = begin.elapsed();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let reads = reads_after(&fake, known).len();
     assert_eq!(commands(&fake).len(), 120);
-    // Not one for each command: about one for each 200 ms, and one at the end.
-    assert!((2..=6).contains(&reads), "{reads}");
+    // Not one for each command: about one for each 200 ms, and one at the end,
+    // whatever the speed of the machine.
+    let most = elapsed.as_millis() / 200 + 3;
+    assert!(
+        reads >= 2 && reads as u128 <= most && reads < 30,
+        "{reads} {elapsed:?}"
+    );
 }
 
 #[tokio::test]
@@ -163,7 +170,13 @@ async fn late_values_are_read_again_until_one_changes() {
     // The receiver shows a new source, sound mode or power state late, so one
     // read is not enough. The fake receiver always answers the same.
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    // The two commands must come within `quiet`, also on a slow machine.
+    let config = FollowUpRead {
+        quiet: Duration::from_millis(400),
+        longest_wait: Duration::from_secs(2),
+        ..quick()
+    };
+    let avr = connect(&fake, Some(config)).await;
     avr.update().await.unwrap();
     let known = fake.requests().len();
     let main = avr.zone(Zone::Main).unwrap();
@@ -171,7 +184,7 @@ async fn late_values_are_read_again_until_one_changes() {
     main.select_source("GAME").await.unwrap();
     // The first read has both, and the one retry has both again.
     wait_until("the reads", || reads_after(&fake, known).len() >= 4).await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let reads = reads_after(&fake, known);
     assert_eq!(reads.len(), 4, "{reads:?}");
     let source = reads
@@ -224,12 +237,26 @@ async fn a_volume_command_is_not_read_a_second_time() {
     let avr = connect(&fake, Some(quick())).await;
     let known = fake.requests().len();
     avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+    wait_until("the read", || !reads_after(&fake, known).is_empty()).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(reads_after(&fake, known).len(), 1);
 }
 
 #[tokio::test]
-async fn different_commands_are_read_with_one_wait() {
+async fn a_read_after_a_command_puts_the_values_into_the_state() {
+    // The state is empty. If a read failed, the values would stay empty.
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick())).await;
+    avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+    wait_until("the volume", || {
+        avr.snapshot().zone(Zone::Main).volume.map(Volume::db) == Some(-36.5)
+    })
+    .await;
+    assert_eq!(avr.snapshot().zone(Zone::Main).muted, Some(false));
+}
+
+#[tokio::test]
+async fn commands_of_different_kinds_are_each_read() {
     let fake = receiver().await;
     let avr = connect(&fake, Some(quick())).await;
     let known = fake.requests().len();

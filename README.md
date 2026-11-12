@@ -136,7 +136,8 @@ A program that does not want telnet never opens it: use
   gives no answer either. At a high rate, for example a held key, a command can
   be lost without an error.
 - The receiver does not answer a command, as on telnet, and it sends no events.
-  Queries (`PW?`) need telnet.
+  Queries (`PW?`) need telnet, and give `Error::QueryNeedsTelnet` whenever
+  telnet is not connected, also while it connects again.
 - After a command, the values that it changed are read, for example the volume
   and mute after a volume command. The read waits until no command came for
   500 ms, and not longer than 2 s, so a held key causes few reads. The

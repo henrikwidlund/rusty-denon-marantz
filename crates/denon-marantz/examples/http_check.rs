@@ -1,34 +1,54 @@
 //! Checks commands over HTTP against a receiver: which commands work, how fast
-//! they can follow each other, and what the reads after them cost. `queries`
-//! and `effects` open telnet to see what the receiver did, and the other
-//! phases do not open it. Every command goes over HTTP.
+//! they can follow each other, and what the reads after them cost. Every command
+//! goes over HTTP. The phases `queries`, `effects`, `power`, `main-power`,
+//! `switch` and `switch-telnet` open telnet to see what the receiver did. The
+//! phases with `http-` in the name, `rate` and `load` do not open it.
 //!
 //! ```sh
 //! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 queries
 //! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 effects
 //! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 http-effects
 //! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 rate 50 40
-//! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 load 10 50
 //! cargo run --release -p denon-marantz --example http_check -- 192.168.1.20 load 10 50 --no-follow-up
 //! ```
 //!
-//! - `queries`: asks `MNZST?` and `MNZST ?` on telnet. Sends nothing else.
-//! - `effects`: runs each command over HTTP and checks on telnet that it did
-//!   something, then puts the value back. It changes mute, the volume by one
-//!   step, the source, the sound mode, bass, Dynamic EQ and all zone stereo.
-//! - `http-effects`: the same for mute, volume, source and sound mode, without
-//!   telnet. The state changes by the read after the command, so the time is
-//!   the time of that read.
-//! - `rate INTERVAL_MS COUNT`: sends `COUNT` commands over HTTP, one each
-//!   `INTERVAL_MS`, as volume up and down in turns, so the volume is never
-//!   more than one step off.
-//! - `load SECONDS INTERVAL_MS`: the same for `SECONDS`, while the state is
-//!   read once every 500 ms to see how slow the receiver is. `--no-follow-up`
-//!   turns off the reads after the commands.
+//! The phases that only read:
 //!
-//! Each result is a line that starts with `RESULT`. Except `queries`, the example
-//! puts back the values that it changed, also if you stop it with Ctrl-C. The output can
-//! have personal data, for example the name of the receiver.
+//! - `queries`: asks `MNZST?` on telnet, on its own connection. Sends nothing
+//!   else.
+//!
+//! The phases that change the receiver for a moment and put it back:
+//!
+//! - `effects`: mute, the volume by one step, the source, the sound mode, bass,
+//!   Dynamic EQ and all zone stereo, one after the other. Telnet shows what
+//!   happened.
+//! - `http-effects`: mute, volume, source and sound mode, without telnet. The
+//!   state changes by the read after the command, so the time is the time of
+//!   that read.
+//! - `rate INTERVAL_MS COUNT`: `COUNT` commands, one each `INTERVAL_MS`, as
+//!   volume up and down in turns, so the volume is never more than one step off.
+//!   `INTERVAL_MS` is above 0, and `COUNT` up to 100000.
+//! - `load SECONDS INTERVAL_MS`: the same for `SECONDS` (up to 3600), while the
+//!   state is read once every 500 ms to see how slow the receiver is.
+//!   `--no-follow-up` turns off the reads after the commands.
+//! - `switch` and `http-switch`: sends a second source command a short time
+//!   after the first, and says which source the receiver ends on. With
+//!   `switch-telnet` the commands go over telnet, as a control.
+//!
+//! The phases that switch power. Use them only when you can switch the receiver
+//! on again by hand:
+//!
+//! - `power` and `http-power`: zone 2 and zone 3 on or off, and back.
+//! - `main-power` and `http-main-power`: the main zone, and then the whole
+//!   receiver, in standby and on again. The power on sets the volume to the
+//!   power-on level of the receiver, and `PWON` also switches on zone 2 and
+//!   zone 3.
+//!
+//! Each result is a line that starts with `RESULT`. A phase that changes
+//! something records the command that puts it back before it sends the change.
+//! If the example stops with an error or with Ctrl-C, it sends the recorded
+//! commands. The volume, mute and the source are checked and put back at the
+//! end. The output can have personal data, for example the name of the receiver.
 
 // A tool for hand tests: long functions and rounded numbers are fine here.
 #![allow(
@@ -39,7 +59,7 @@
     clippy::future_not_send
 )]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use denon_marantz::proto::MultiEq;
@@ -52,8 +72,51 @@ use denon_marantz::{
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tracing_subscriber::EnvFilter;
 
-const USAGE: &str = "usage: http_check <host> queries | effects | rate INTERVAL_MS COUNT | \
+const USAGE: &str = "usage: http_check <host> queries | effects | http-effects | power | \
+                     http-power | main-power | http-main-power | switch | http-switch | \
+                     switch-telnet | rate INTERVAL_MS COUNT | \
                      load SECONDS INTERVAL_MS [--no-follow-up]";
+
+const PHASES: [&str; 12] = [
+    "queries",
+    "effects",
+    "http-effects",
+    "power",
+    "http-power",
+    "main-power",
+    "http-main-power",
+    "switch",
+    "http-switch",
+    "switch-telnet",
+    "rate",
+    "load",
+];
+
+/// The commands that put back what a phase changed, as telnet lines. A phase
+/// adds one before it changes something, and takes it away when the value is
+/// back. Ctrl-C or an error leaves the rest, and they are sent at the end.
+static UNDO: Mutex<Vec<(Zone, String)>> = Mutex::new(Vec::new());
+
+fn remember(avr: &Avr, zone: Zone, back: &Command<'_>) {
+    let mut line = String::new();
+    if back.write_line(avr.info().brand, zone, &mut line).is_ok() {
+        UNDO.lock().unwrap().push((zone, line));
+    }
+}
+
+fn forget() {
+    UNDO.lock().unwrap().pop();
+}
+
+async fn undo_pending(avr: &Avr) {
+    let pending = std::mem::take(&mut *UNDO.lock().unwrap());
+    for (zone, line) in pending.into_iter().rev() {
+        let text = line.trim_end();
+        println!("RESULT undo {zone:?} {text:?}");
+        let _ = avr.http_send(zone, Command::Raw(text)).await;
+        sleep(Duration::from_secs(1)).await;
+    }
+}
 
 /// What the example puts back.
 struct Original {
@@ -74,11 +137,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let host = args.next().ok_or(USAGE)?;
     let phase = args.next().ok_or(USAGE)?;
+    if !PHASES.contains(&phase.as_str()) {
+        return Err(USAGE.into());
+    }
     let rest: Vec<String> = args.collect();
     let follow_up = (!rest.iter().any(|a| a == "--no-follow-up")).then(FollowUpRead::default);
     let number = |index: usize| -> Result<u64, Box<dyn std::error::Error>> {
         Ok(rest.get(index).ok_or(USAGE)?.parse()?)
     };
+    // The numbers are checked before anything is sent.
+    let numbers = match phase.as_str() {
+        "rate" => {
+            let (every, count) = (number(0)?, number(1)?);
+            (every > 0 && (1..=100_000).contains(&count))
+                .then_some((every, count))
+                .ok_or("rate: INTERVAL_MS is above 0 and COUNT is from 1 to 100000")?
+        }
+        "load" => {
+            let (seconds, every) = (number(0)?, number(1)?);
+            ((1..=3600).contains(&seconds) && every > 0)
+                .then_some((seconds, every))
+                .ok_or("load: SECONDS is from 1 to 3600 and INTERVAL_MS is above 0")?
+        }
+        _ => (0, 0),
+    };
+    if phase == "queries" {
+        // On its own connections, with no start.
+        return queries(&host).await;
+    }
 
     let avr = Arc::new(
         Avr::builder(host.clone())
@@ -88,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let telnet = matches!(
         phase.as_str(),
-        "queries" | "effects" | "power" | "main-power" | "switch" | "switch-telnet"
+        "effects" | "power" | "main-power" | "switch" | "switch-telnet"
     );
     let started = avr
         .start_with(StartOptions::new().signal_pages(false).telnet(telnet))
@@ -109,17 +195,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let run = async {
         match phase.as_str() {
-            "queries" => queries(&host).await,
             "effects" => effects(&avr, &original, true).await,
             "http-effects" => effects(&avr, &original, false).await,
             "power" | "http-power" => power(&avr).await,
             "main-power" | "http-main-power" => main_power(&avr, telnet).await,
             "switch" | "http-switch" => switch(&avr, &original, false).await,
             "switch-telnet" => switch(&avr, &original, true).await,
-            "rate" => rate(&avr, Duration::from_millis(number(0)?), number(1)?, None).await,
+            "rate" => rate(&avr, Duration::from_millis(numbers.0), numbers.1, None).await,
             "load" => {
-                let seconds = Duration::from_secs(number(0)?);
-                let every = Duration::from_millis(number(1)?);
+                let seconds = Duration::from_secs(numbers.0);
+                let every = Duration::from_millis(numbers.1);
                 load(&avr, seconds, every).await
             }
             _ => Err(USAGE.into()),
@@ -129,6 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         result = run => result,
         _ = tokio::signal::ctrl_c() => Err("stopped".into()),
     };
+    undo_pending(&avr).await;
     if matches!(phase.as_str(), "rate" | "load") {
         // The receiver needs a moment to do the last command.
         sleep(Duration::from_millis(700)).await;
@@ -195,7 +281,7 @@ async fn wait_for_within(
 /// Asks each query on a new telnet connection, so that an answer that repeats
 /// an older value is still seen as a change of the empty state.
 async fn queries(host: &str) -> Result<(), Box<dyn std::error::Error>> {
-    for query in ["MNZST?", "MNZST ?"] {
+    for query in ["MNZST?"] {
         let avr = Avr::builder(host).connect().await?;
         avr.telnet_connect().await?;
         let begin = Instant::now();
@@ -246,6 +332,7 @@ async fn effect_in(
     check: impl Fn(&State) -> bool,
     check_back: impl Fn(&State) -> bool,
 ) {
+    remember(avr, zone, &back);
     let sent = Instant::now();
     let answer = avr.http_send(zone, command).await;
     let http_ms = sent.elapsed().as_secs_f64() * 1000.0;
@@ -268,6 +355,8 @@ async fn effect_in(
         let back_seen = wait_for_within(avr, limit, check_back).await;
         println!("RESULT effect {name}: put back={}", back_seen.is_some());
     }
+    // The undo command is not needed: it was sent, or the change was not.
+    forget();
     sleep(Duration::from_millis(300)).await;
 }
 
@@ -671,6 +760,7 @@ async fn main_power(avr: &Avr, telnet: bool) -> Result<(), Box<dyn std::error::E
         ),
     ] {
         let begin = Instant::now();
+        remember(avr, Zone::Main, &wake);
         let sent = avr.http_send(Zone::Main, standby).await;
         let seen = wait_for_within(avr, Duration::from_secs(15), off).await;
         println!(
@@ -707,6 +797,7 @@ async fn main_power(avr: &Avr, telnet: bool) -> Result<(), Box<dyn std::error::E
             }
             return Err("the receiver did not come on over HTTP".into());
         }
+        forget();
         sleep(pause).await;
     }
     Ok(())

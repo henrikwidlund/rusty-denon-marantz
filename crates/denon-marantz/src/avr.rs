@@ -859,7 +859,10 @@ impl Avr {
     /// # Errors
     ///
     /// The errors of `Avr::telnet_send` if telnet is used, and of
-    /// [`Avr::http_send`] otherwise.
+    /// [`Avr::http_send`] otherwise. A query (a command that asks for a value)
+    /// gives [`Error::QueryNeedsTelnet`] whenever telnet is not connected, also
+    /// while it connects again. Ask again when `Avr::telnet_status` is
+    /// connected.
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {

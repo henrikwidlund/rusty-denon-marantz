@@ -203,15 +203,22 @@ async fn run(
             }
         }
         tracing::debug!(wanted, "read after commands over HTTP");
-        let unseen = read_until_seen(&reader, &requests, wanted).await & Reads::SLOW;
-        // Values that are still looked for stay in the list.
-        let pending = retry.as_ref().map_or(0, |next| next.wanted) | unseen;
+        let unseen = read_until_seen(&reader, &requests, wanted).await;
+        let pending = pending_after(retry.as_ref().map_or(0, |next| next.wanted), wanted, unseen);
         retry = (pending != 0 && config.retries > 0).then(|| Retry {
             at: Instant::now() + config.retry_every,
             wanted: pending,
             left: config.retries,
         });
     }
+}
+
+/// The values that a later read still looks for. `old` was looked for before.
+/// `wanted` was read now, and `unseen` is the part of it that did not change.
+/// A value that this read showed is not looked for again.
+const fn pending_after(old: u8, wanted: u8, unseen: u8) -> u8 {
+    let seen = wanted & !unseen;
+    (old & !seen) | (unseen & Reads::SLOW)
 }
 
 /// Reads, and returns the part of `wanted` that the read did not change. A
@@ -251,4 +258,25 @@ async fn read(reader: &Reader, requests: &[Request], wanted: u8) -> Result<(), E
         result = result.and(read);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_value_that_a_read_showed_is_not_looked_for_again() {
+        let (power, source, volume) =
+            (Reads::Power.bit(), Reads::Source.bit(), Reads::Volume.bit());
+        // The source was looked for. A new read of the source shows a change.
+        assert_eq!(pending_after(source, source, 0), 0);
+        // The new read shows nothing: it is still looked for.
+        assert_eq!(pending_after(source, source, source), source);
+        // The old retry is for the source, and the new read is for power.
+        assert_eq!(pending_after(source, power, power), source | power);
+        assert_eq!(pending_after(source, power, 0), source);
+        // A value that is not late is never looked for again.
+        assert_eq!(pending_after(0, volume, volume), 0);
+        assert_eq!(pending_after(0, volume | source, volume | source), source);
+    }
 }
