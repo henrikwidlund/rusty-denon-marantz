@@ -98,7 +98,8 @@ impl<'a> ZoneControl<'a> {
         self.send(Command::Mute(mute)).await
     }
 
-    /// Sets the volume.
+    /// Sets the volume. Zone 2 and zone 3 take whole dB only: a half step is
+    /// raised to the next whole dB.
     ///
     /// # Errors
     ///
@@ -107,7 +108,8 @@ impl<'a> ZoneControl<'a> {
         self.send(Command::SetVolume(volume)).await
     }
 
-    /// Sets the volume in dB. It is rounded to a step of 0.5 dB.
+    /// Sets the volume in dB. It is rounded to a step of 0.5 dB, and to a whole
+    /// dB for zone 2 and zone 3.
     ///
     /// # Errors
     ///

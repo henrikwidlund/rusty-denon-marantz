@@ -99,6 +99,12 @@ impl Volume {
         self.0
     }
 
+    /// The volume in whole dB: a half step is raised to the next whole dB.
+    #[must_use]
+    pub const fn rounded_up_to_whole_db(self) -> Self {
+        Self(self.0.next_multiple_of(2))
+    }
+
     /// Parses a volume that is written as whole dB above -80 dB, with any
     /// number of digits: `35` and `035` are -45.0 dB. Zone volume settings
     /// use it. Returns `None` for text that is not a number, and for a number

@@ -41,7 +41,8 @@ pub enum Command<'a> {
     VolumeUp,
     /// Lowers the volume by one step.
     VolumeDown,
-    /// Sets the volume.
+    /// Sets the volume. Zone 2 and zone 3 take whole dB only: a half step is
+    /// raised to the next whole dB.
     SetVolume(Volume),
     /// Mutes (`true`) or unmutes (`false`).
     Mute(bool),
@@ -178,7 +179,7 @@ impl Command<'_> {
             Self::SetVolume(volume) => {
                 out.push_str(zone_prefix(zone, "MV"));
                 // Writing to a `String` cannot fail.
-                let _ = write!(out, "{volume}");
+                let _ = write!(out, "{}", zone_volume(volume, zone));
             }
             Self::Mute(true) => push_zone(out, zone, "", "MUON"),
             Self::Mute(false) => push_zone(out, zone, "", "MUOFF"),
@@ -267,6 +268,14 @@ impl Command<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Zone 2 and zone 3 take whole dB only.
+const fn zone_volume(volume: Volume, zone: Zone) -> Volume {
+    match zone {
+        Zone::Main => volume,
+        Zone::Zone2 | Zone::Zone3 => volume.rounded_up_to_whole_db(),
     }
 }
 
@@ -467,6 +476,28 @@ mod tests {
             line(Command::SetVolume(volume(18.0)), Zone::Zone2),
             "Z298\r"
         );
+    }
+
+    #[test]
+    fn zone_2_and_3_volume_is_whole_db() {
+        for (zone, prefix) in [(Zone::Zone2, "Z2"), (Zone::Zone3, "Z3")] {
+            assert_eq!(
+                line(Command::SetVolume(volume(-54.5)), zone),
+                format!("{prefix}26\r")
+            );
+            assert_eq!(
+                line(Command::SetVolume(volume(-55.0)), zone),
+                format!("{prefix}25\r")
+            );
+            assert_eq!(
+                line(Command::SetVolume(volume(-80.0)), zone),
+                format!("{prefix}00\r")
+            );
+            assert_eq!(
+                line(Command::SetVolume(volume(18.0)), zone),
+                format!("{prefix}98\r")
+            );
+        }
     }
 
     #[test]
