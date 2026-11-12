@@ -205,7 +205,9 @@ have not run on a receiver:
   the main zone. When the receiver comes on, it sets the volume to its power-on
   level, so the volume after a power on is not the one before.
 - The receiver can ignore a source command that comes a few seconds after
-  another source command, on telnet and over HTTP. It also shows a new power
+  another source command, on telnet and over HTTP. This was seen with an input
+  that switches a trigger output (to power on a device), and not with an input
+  that does nothing else. It also shows a new power
   state, source or sound mode in its `AppCommand` answers up to a few seconds
   late.
 - A Dirac ART filter locks the channel levels, the dial page (HTTP status 500)
