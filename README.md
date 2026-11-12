@@ -264,7 +264,7 @@ Fuzz targets for the parsers are in `fuzz/`. Benchmarks use `criterion`.
 
 ## Credits
 
-This is a Rust port of [denonavr](https://github.com/henrikwidlund/denonavr)
+This is a Rust port of [denonavr](https://github.com/ol-iver/denonavr)
 (MIT), a Python library by Oliver Götz and contributors. The protocol
 knowledge and command tables come from that project.
 
