@@ -15,8 +15,13 @@ fuzz_target!(|data: &[u8]| {
     }
     let mut state = State::new(false);
     for zone in [Zone::Main, Zone::Zone2, Zone::Zone3] {
-        extract(status.as_ref(), zone_page.as_ref(), zone, &mut |field, value| {
-            state.apply_field(zone, field, value);
-        });
+        extract(
+            status.as_ref(),
+            zone_page.as_ref(),
+            zone,
+            &mut |field, value| {
+                state.apply_field(zone, field, value);
+            },
+        );
     }
 });

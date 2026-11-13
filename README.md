@@ -262,7 +262,7 @@ have not run on a receiver:
 The `denon-marantz` crate re-exports the types that most programs need, for
 example `Zone` and `Volume`. All others are in `denon_marantz::proto`.
 
-Minimum supported Rust version: 1.88.
+Minimum supported Rust version: 1.100.
 
 ## Examples
 

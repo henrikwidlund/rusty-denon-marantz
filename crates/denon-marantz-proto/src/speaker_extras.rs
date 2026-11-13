@@ -98,8 +98,7 @@ impl Playback2Ch {
         let entries = |name: &str| {
             let mut entries = node
                 .child(name)
-                .map(|list| read_entries(list.node(), front))
-                .unwrap_or_default();
+                .map_or_default(|list| read_entries(list.node(), front));
             // A speaker is listed once, and the first entry counts.
             let mut seen = HashSet::new();
             entries.retain(|entry| seen.insert(entry.key));

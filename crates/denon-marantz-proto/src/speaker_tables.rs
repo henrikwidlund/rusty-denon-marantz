@@ -363,13 +363,11 @@ fn parse<K>(
     let table = SpeakerTable {
         entries: node
             .child("List")
-            .map(|list| read_entries(list.node(), key))
-            .unwrap_or_default(),
+            .map_or_default(|list| read_entries(list.node(), key)),
         choices: node
             .child("SelectableValue")
             .and_then(|selectable| selectable.node().child("List"))
-            .map(|list| read_choices(list.node()))
-            .unwrap_or_default(),
+            .map_or_default(|list| read_choices(list.node())),
         unit: number::<i32>(node, "Unit").and_then(|unit| u8::try_from(unit).ok()),
         subwoofer_count: node
             .child("SubwooferType")
@@ -476,20 +474,18 @@ impl BassSettings {
                 .child("SelectableValue")
                 .and_then(|selectable| selectable.node().child("LPFforLFE"))
                 .and_then(|lpf| lpf.node().child("List"))
-                .map(|list| read_choices(list.node()))
-                .unwrap_or_default()
+                .map_or_default(|list| read_choices(list.node()))
                 .into_iter()
                 .filter_map(|hz| u16::try_from(hz).ok())
                 .collect(),
             lfe_distribution: distribution
                 .as_ref()
                 .and_then(|d| d.node().child("List"))
-                .map(|list| {
+                .map_or_default(|list| {
                     read_entries(list.node(), |index| {
                         LFE_DISTRIBUTION_ORDER.get(index).copied().flatten()
                     })
-                })
-                .unwrap_or_default(),
+                }),
             lfe_distribution_display: distribution.as_ref().and_then(display),
         };
         if page.subwoofer_output.is_none()

@@ -16,10 +16,10 @@ fuzz_target!(|data: &[u8]| {
     let mut state = State::new(first & 0x80 != 0);
     for part in rest.chunks(chunk) {
         decoder.decode(part, |line| {
-            if let Some(message) = Message::parse(line) {
-                if filter.accept(message.parameter) {
-                    state.apply_message(&message);
-                }
+            if let Some(message) = Message::parse(line)
+                && filter.accept(message.parameter)
+            {
+                state.apply_message(&message);
             }
         });
     }
