@@ -1,4 +1,5 @@
-//! Lines of the sound mode list through the telnet parser and the state, then the codes.
+//! Lines of the sound mode list through the telnet parser and the state, then the codes
+//! and the entry for each line as a reported mode.
 #![no_main]
 
 use denon_marantz_proto::telnet::Message;
@@ -23,4 +24,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = (entry.group(), entry.code());
     }
     let _ = list.in_category(SoundModeCategory::Movie).count();
+    for line in text.split(['\r', '\n']) {
+        let _ = list.entry_for(line);
+    }
 });

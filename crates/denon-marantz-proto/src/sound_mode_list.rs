@@ -2,7 +2,7 @@
 
 use std::mem;
 
-use crate::sound_mode::SoundModeGroup;
+use crate::sound_mode::{SoundModeGroup, words_eq_ignore_case};
 
 code_enum! {
     /// Group of a sound mode in the list of the receiver.
@@ -29,7 +29,7 @@ pub struct SoundModeEntry {
 /// The names of the list and the group whose code selects the mode. The names
 /// are the ones that receivers write in the list. Some receivers write the
 /// same mode in another way, so a name that is not here has no code.
-const LIST_NAMES: [(&str, SoundModeGroup); 22] = [
+const LIST_NAMES: [(&str, SoundModeGroup); 23] = [
     ("Stereo", SoundModeGroup::Stereo),
     ("Dolby Surround", SoundModeGroup::DolbyDigital),
     ("Dolby Digital", SoundModeGroup::DolbyDigital),
@@ -39,6 +39,7 @@ const LIST_NAMES: [(&str, SoundModeGroup); 22] = [
     ("AURO Surround", SoundModeGroup::Auro2dSurround),
     ("Multi Ch Stereo", SoundModeGroup::McHStereo),
     ("Multi Channel Stereo", SoundModeGroup::McHStereo),
+    ("Multi Ch In", SoundModeGroup::MultiChIn),
     ("Mono Movie", SoundModeGroup::MonoMovie),
     ("Rock Arena", SoundModeGroup::RockArena),
     ("Jazz Club", SoundModeGroup::JazzClub),
@@ -60,12 +61,8 @@ impl SoundModeEntry {
     pub fn group(&self) -> Option<SoundModeGroup> {
         LIST_NAMES
             .iter()
-            .find(|(name, _)| {
-                // Case and extra spaces do not matter.
-                name.split_whitespace()
-                    .map(str::to_ascii_lowercase)
-                    .eq(self.name.split_whitespace().map(str::to_ascii_lowercase))
-            })
+            // Case and extra spaces do not matter.
+            .find(|(name, _)| words_eq_ignore_case(name, &self.name))
             .map(|(_, group)| *group)
     }
 
@@ -108,6 +105,27 @@ impl SoundModeList {
         self.modes
             .iter()
             .filter(move |mode| mode.category == category)
+    }
+
+    /// The entry for a sound mode as the receiver reports it in
+    /// [`ZoneState::sound_mode`](crate::ZoneState::sound_mode), for example
+    /// `MCH STEREO` gives `Multi Ch Stereo`.
+    ///
+    /// An entry with the same name comes first, without case. Otherwise the
+    /// first entry of the same [`SoundModeGroup`]. The report does not say the
+    /// category, so a name that is in more than one category gives the first
+    /// one in the list. `None` if no entry fits.
+    #[must_use]
+    pub fn entry_for(&self, raw: &str) -> Option<&SoundModeEntry> {
+        if let Some(entry) = self
+            .modes
+            .iter()
+            .find(|entry| words_eq_ignore_case(raw, &entry.name))
+        {
+            return Some(entry);
+        }
+        let group = SoundModeGroup::from_raw(raw)?;
+        self.modes.iter().find(|entry| entry.group() == Some(group))
     }
 
     /// Applies the text of an `OP` event, for example
@@ -287,6 +305,7 @@ mod tests {
             (Movie, "DTS Neural:X", "DTS SURROUND"),
             (Movie, "AURO-3D", "AURO3D"),
             (Movie, "AURO Surround", "AURO2DSURR"),
+            (Movie, "Multi Ch In", "MULTI CH IN"),
             (Movie, "Multi Ch Stereo", "MCH STEREO"),
             (Movie, "Mono Movie", "MONO MOVIE"),
             (Music, "Dolby Surround", "DOLBY DIGITAL"),
@@ -312,5 +331,75 @@ mod tests {
         assert_eq!(entry(movie, "Something New").code(), None);
         assert_eq!(entry(movie, "").code(), None);
         assert_eq!(entry(movie, "Stereo").group(), Some(SoundModeGroup::Stereo));
+    }
+
+    /// The list of the AVC-A10H with a multichannel input.
+    fn a10h_list() -> SoundModeList {
+        let mut list = SoundModeList::default();
+        feed(
+            &mut list,
+            &[
+                "SMLALL MOV011Stereo",
+                "SMLALL MOV020Multi Ch In",
+                "SMLALL MOV030Multi Ch Stereo",
+                "SMLALL MUS040Stereo",
+                "SMLALL MUS050Multi Ch In",
+                "SMLALL MUS060Multi Ch Stereo",
+                "SMLALL GAM070Stereo",
+                "SMLALL GAM080Multi Ch In",
+                "SMLALL GAM090Multi Ch Stereo",
+                "SMLALL PUR100Direct",
+                "SMLALL PUR110Pure Direct",
+                "SMLALL END",
+            ],
+        );
+        list
+    }
+
+    #[test]
+    fn the_reported_modes_of_the_a10h_find_their_entry() {
+        let list = a10h_list();
+        for (raw, index, name) in [
+            ("STEREO", 11, "Stereo"),
+            ("MULTI CH IN", 20, "Multi Ch In"),
+            ("MULTI CH IN 7.1", 20, "Multi Ch In"),
+            ("MCH STEREO", 30, "Multi Ch Stereo"),
+            ("DIRECT", 100, "Direct"),
+            ("PURE DIRECT", 110, "Pure Direct"),
+        ] {
+            let entry = list.entry_for(raw).unwrap_or_else(|| panic!("{raw}"));
+            assert_eq!((entry.index, entry.name.as_str()), (index, name), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_mode_that_is_not_in_the_list_has_no_entry() {
+        let list = a10h_list();
+        assert_eq!(list.entry_for("DOLBY ATMOS"), None);
+        assert_eq!(list.entry_for("SOMETHING NEW"), None);
+        assert_eq!(list.entry_for(""), None);
+        assert_eq!(SoundModeList::default().entry_for("STEREO"), None);
+    }
+
+    #[test]
+    fn a_mode_finds_an_entry_of_its_group() {
+        let mut list = SoundModeList::default();
+        feed(
+            &mut list,
+            &[
+                "SMLALL MOV011Stereo",
+                "SMLALL MOV020Dolby Surround",
+                "SMLALL END",
+            ],
+        );
+        let entry = list.entry_for("DOLBY AUDIO - DOLBY SURROUND").unwrap();
+        assert_eq!(entry.name, "Dolby Surround");
+    }
+
+    #[test]
+    fn spaces_in_a_name_of_the_list_do_not_matter() {
+        let mut list = SoundModeList::default();
+        feed(&mut list, &["SMLALL MOV011Something  New", "SMLALL END"]);
+        assert_eq!(list.entry_for("SOMETHING NEW").unwrap().index, 11);
     }
 }

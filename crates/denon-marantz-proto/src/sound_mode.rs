@@ -24,13 +24,15 @@ code_enum! {
         Auro3d = "AURO3D", "AURO3D";
         Auro2dSurround = "AURO2DSURR", "AURO2DSURR";
         McHStereo = "MCH STEREO", "MCH STEREO";
+        MultiChIn = "MULTI CH IN", "MULTI CH IN";
         Stereo = "STEREO", "STEREO";
         AllZoneStereo = "ALL ZONE STEREO", "ALL ZONE STEREO";
     }
 }
 
 /// Raw sound modes in upper case with single spaces.
-static RAW_MODES: [(&str, SoundModeGroup); 209] = [
+static RAW_MODES: [(&str, SoundModeGroup); 214] = [
+    ("MUSIC", SoundModeGroup::Music),
     ("AAC+NEO:X M", SoundModeGroup::Music),
     ("AAC+PL2X M", SoundModeGroup::Music),
     ("DOLBY D +NEO:X M", SoundModeGroup::Music),
@@ -57,6 +59,7 @@ static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("M CH IN+PL2X M", SoundModeGroup::Music),
     ("PLII MUSIC", SoundModeGroup::Music),
     ("PLIIX MUSIC", SoundModeGroup::Music),
+    ("MOVIE", SoundModeGroup::Movie),
     ("AAC+NEO:X C", SoundModeGroup::Movie),
     ("AAC+PL2X C", SoundModeGroup::Movie),
     ("DOLBY D +NEO:X C", SoundModeGroup::Movie),
@@ -88,6 +91,7 @@ static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("PLII CINEMA", SoundModeGroup::Movie),
     ("PLII MOVIE", SoundModeGroup::Movie),
     ("PLIIX CINEMA", SoundModeGroup::Movie),
+    ("GAME", SoundModeGroup::Game),
     ("AAC+NEO:X G", SoundModeGroup::Game),
     ("DOLBY D +NEO:X G", SoundModeGroup::Game),
     ("DOLBY D+ +NEO:X G", SoundModeGroup::Game),
@@ -104,6 +108,10 @@ static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("DTS+NEO:X G", SoundModeGroup::Game),
     ("M CH IN+NEO:X G", SoundModeGroup::Game),
     ("PLII GAME", SoundModeGroup::Game),
+    ("AUTO", SoundModeGroup::Auto),
+    ("STANDARD", SoundModeGroup::Standard),
+    // Older tables had these names in place of AUTO and STANDARD. No receiver
+    // is known to send them. They are kept in case one does.
     ("NONE", SoundModeGroup::Auto),
     ("NONE2", SoundModeGroup::Standard),
     ("VIRTUAL", SoundModeGroup::Virtual),
@@ -231,9 +239,6 @@ static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("M CH IN+NEURAL:X", SoundModeGroup::DtsSurround),
     ("M CH IN+VIRTUAL:X", SoundModeGroup::DtsSurround),
     ("MAX DTS+VIRTUAL:X", SoundModeGroup::DtsSurround),
-    ("MULTI CH IN", SoundModeGroup::DtsSurround),
-    ("MULTI CH IN 7.1", SoundModeGroup::DtsSurround),
-    ("7.1IN", SoundModeGroup::DtsSurround),
     ("NEURAL:X", SoundModeGroup::DtsSurround),
     ("STANDARD(DTS)", SoundModeGroup::DtsSurround),
     ("VIRTUAL:X", SoundModeGroup::DtsSurround),
@@ -244,6 +249,9 @@ static RAW_MODES: [(&str, SoundModeGroup); 209] = [
     ("MCH STEREO", SoundModeGroup::McHStereo),
     ("MULTI CH STEREO", SoundModeGroup::McHStereo),
     ("MULTI_CH_STEREO", SoundModeGroup::McHStereo),
+    ("MULTI CH IN", SoundModeGroup::MultiChIn),
+    ("MULTI CH IN 7.1", SoundModeGroup::MultiChIn),
+    ("7.1IN", SoundModeGroup::MultiChIn),
     ("STEREO", SoundModeGroup::Stereo),
     ("ALL ZONE STEREO", SoundModeGroup::AllZoneStereo),
 ];
@@ -291,7 +299,7 @@ impl SoundModeGroup {
 }
 
 /// Compares ignoring ASCII case and treating runs of white space as one space.
-fn words_eq_ignore_case(expected: &str, actual: &str) -> bool {
+pub(crate) fn words_eq_ignore_case(expected: &str, actual: &str) -> bool {
     let mut expected = expected.split(' ');
     let mut actual = actual.split_ascii_whitespace();
     loop {
@@ -312,7 +320,7 @@ mod tests {
         for &group in SoundModeGroup::ALL {
             assert_eq!(SoundModeGroup::from_code(group.code()), Some(group));
         }
-        assert_eq!(SoundModeGroup::ALL.len(), 23);
+        assert_eq!(SoundModeGroup::ALL.len(), 24);
     }
 
     #[test]
@@ -333,10 +341,14 @@ mod tests {
         assert_eq!(G::from_raw("PL2 C DSX"), Some(G::Movie));
         assert_eq!(G::from_raw("STEREO"), Some(G::Stereo));
         assert_eq!(G::from_raw("AAC+NEURAL:X"), Some(G::DtsSurround));
-        assert_eq!(G::from_raw("MULTI CH IN"), Some(G::DtsSurround));
+        assert_eq!(G::from_raw("MULTI CH IN"), Some(G::MultiChIn));
+        assert_eq!(G::from_raw("MULTI CH IN 7.1"), Some(G::MultiChIn));
         assert_eq!(G::from_raw("DSD DIRECT"), Some(G::Direct));
         assert_eq!(G::from_raw("DSD PURE DIRECT"), Some(G::PureDirect));
-        assert_eq!(G::from_raw("7.1IN"), Some(G::DtsSurround));
+        assert_eq!(G::from_raw("7.1IN"), Some(G::MultiChIn));
+        for group in [G::Movie, G::Music, G::Game, G::Auto, G::Standard] {
+            assert_eq!(G::from_raw(group.code()), Some(group));
+        }
     }
 
     #[test]

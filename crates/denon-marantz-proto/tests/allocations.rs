@@ -409,3 +409,23 @@ fn menu_pages_allocate_little() {
         assert!(count < limit, "{what} used {count} allocations");
     }
 }
+
+#[test]
+fn finding_the_entry_of_a_sound_mode_does_not_allocate() {
+    let mut state = State::new(false);
+    for line in [
+        "OPSMLALL MOV011Stereo",
+        "OPSMLALL MOV020Multi Ch In",
+        "OPSMLALL MOV030Multi Ch Stereo",
+        "OPSMLALL END",
+    ] {
+        state.apply_message(&Message::parse(line).unwrap());
+    }
+    let list = &state.device().sound_modes;
+    assert_eq!(list.as_slice().len(), 3);
+    assert_no_allocation("sound mode entries", || {
+        black_box(list.entry_for(black_box("MULTI CH IN")));
+        black_box(list.entry_for(black_box("MCH STEREO")));
+        black_box(list.as_slice()[1].code());
+    });
+}
