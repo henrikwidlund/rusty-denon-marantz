@@ -10,6 +10,8 @@
 //!
 //! - `--no-signal-pages`: do not read the signal pages of the web interface.
 //! - `--no-telnet`: do not open telnet.
+//! - `--all-synced`: wait with `all_synced` (the answers to the telnet
+//!   queries too) instead of `basic_synced`.
 //! - `--listen SECONDS`: show the changes of the state for this long after
 //!   the start is finished, default 3. Use a whole number.
 //!
@@ -22,7 +24,8 @@ use std::time::{Duration, Instant};
 use denon_marantz::{Avr, StartOptions, TelnetStart, Zone};
 use tokio::time::timeout;
 
-const USAGE: &str = "usage: start <host> [--no-signal-pages] [--no-telnet] [--listen SECONDS]";
+const USAGE: &str =
+    "usage: start <host> [--no-signal-pages] [--no-telnet] [--all-synced] [--listen SECONDS]";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,10 +33,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = args.next().ok_or(USAGE)?;
     let mut options = StartOptions::new();
     let mut listen = 3;
+    let mut all_synced = false;
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--no-signal-pages" => options = options.signal_pages(false),
             "--no-telnet" => options = options.telnet(false),
+            "--all-synced" => all_synced = true,
             "--listen" => listen = args.next().ok_or(USAGE)?.parse()?,
             _ => return Err(USAGE.into()),
         }
@@ -64,8 +69,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("RESULT signal_first_s={first:?} signal_ready_s={ready:?}");
     let mut changes = avr.changes();
-    let report = started.basic_synced().await;
-    println!("RESULT finished_s={:.2}", secs());
+    let report = if all_synced {
+        let report = started.all_synced().await;
+        println!("RESULT all_synced_s={:.2}", secs());
+        println!("RESULT telnet_sync={:?}", report.telnet_sync);
+        report
+    } else {
+        let report = started.basic_synced().await;
+        println!("RESULT basic_synced_s={:.2}", secs());
+        report
+    };
 
     let telnet = match &report.telnet {
         TelnetStart::Open => "Open".to_owned(),

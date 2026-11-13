@@ -1023,6 +1023,10 @@ impl Avr {
     /// at connect (see [`TelnetConfig::query_groups`]) stays empty until this
     /// is called.
     ///
+    /// The receiver does not send the values that depend on a changed value,
+    /// for example the Dirac Live filters of another speaker preset. A caller
+    /// that shows such values asks for the group again when the event arrives.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::NotConnected`] if the telnet connection is not open.

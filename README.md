@@ -98,6 +98,12 @@ opens telnet. The connection then fetches the groups in
 are fetched with `telnet_refresh_group`, or all of them by setting
 `TelnetConfig::query_groups` to `QueryGroup::DEFAULT_ORDER`.
 
+The receiver does not send the values that depend on a changed value, for
+example the Dirac Live filters when the speaker preset changes. The library does
+not ask for them: a client that shows such values listens for the event and
+asks for the group again with `telnet_refresh_group`. A client that does not
+show them does not need to.
+
 The query groups, in the order of `QueryGroup::DEFAULT_ORDER`. Ask for one group
 again with `telnet_refresh_group`. The counts are the queries for a Denon and for
 a Marantz receiver.
