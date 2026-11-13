@@ -77,7 +77,9 @@ pub struct TelnetConfig {
     /// receiver reports a change, or until it is fetched with
     /// [`Avr::telnet_refresh_group`](crate::Avr::telnet_refresh_group). The
     /// default is [`QueryGroup::START_ORDER`]. [`QueryGroup::DEFAULT_ORDER`]
-    /// has all groups.
+    /// has all groups. A start of a receiver that was read with `AppCommand`
+    /// asks its own list first, and then the groups here that are not in
+    /// [`QueryGroup::START_ORDER`].
     pub query_groups: &'static [QueryGroup],
 }
 
@@ -250,8 +252,9 @@ impl Telnet {
     /// runs, also while it tries to connect again.
     ///
     /// `first` replaces the queries of the first session: the groups of the
-    /// settings are not asked then. A session after a lost connection asks for
-    /// the groups of the settings again.
+    /// settings are not asked then, unless the caller put them in `first`. A
+    /// session after a lost connection asks for the groups of the settings
+    /// again.
     ///
     /// Returns true if this call opened the connection, and false if a task
     /// already runs. A running task keeps its queries.
@@ -330,15 +333,33 @@ impl Telnet {
         self.forget.store(true, Ordering::Relaxed);
     }
 
+    /// The queries of the configured groups that are not in the start order.
+    /// The start asks these after its own list.
+    pub(crate) fn extra_start_queries(&self) -> Vec<&'static str> {
+        let groups = self.queries.groups;
+        groups
+            .iter()
+            .enumerate()
+            .filter(|(index, group)| {
+                !QueryGroup::START_ORDER.contains(group) && !groups[..*index].contains(group)
+            })
+            .flat_map(|(_, group)| group_queries(self.queries.brand, *group))
+            .collect()
+    }
+
     /// Waits until the receiver has answered a query that is sent after the
     /// queries that wait now. The receiver handles lines in order, so the
     /// answers to the earlier queries are in the state then, as far as the
     /// receiver answers them. It is an error if the connection ends first, or
     /// if there is no answer within the keep-alive time.
     pub(crate) async fn sync(&self) -> Result<(), Error> {
+        self.sync_within(self.config.keep_alive).await
+    }
+
+    /// As `sync`, with another limit for the answer.
+    pub(crate) async fn sync_within(&self, limit: Duration) -> Result<(), Error> {
         let (done, answered) = oneshot::channel();
         self.request(Request::Synced(done)).await?;
-        let limit = self.config.keep_alive;
         tokio::time::timeout(limit, answered).await.map_or_else(
             |_| {
                 Err(Error::Timeout {

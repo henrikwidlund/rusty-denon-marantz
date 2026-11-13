@@ -18,7 +18,7 @@ use common::{
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
     Avr, Error, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig,
-    TelnetStart, TelnetSync, Zone,
+    TelnetStart, TelnetSync, UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -27,6 +27,22 @@ const VIDEO_PAGE: &[u8] =
     include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-video-signal.xml");
 const AUDIO_PAGE: &[u8] =
     include_bytes!("../../denon-marantz-proto/tests/data/xml/AVC-A10H-web-audio-channels.xml");
+
+const OLD_STATUS: &[u8] = include_bytes!(
+    "../../denon-marantz-proto/tests/data/xml/AVR-3313-formMainZone_MainZoneXmlStatus.xml"
+);
+const OLD_ZONE_PAGE: &[u8] = include_bytes!(
+    "../../denon-marantz-proto/tests/data/xml/AVR-3313-formMainZone_MainZoneXml.xml"
+);
+
+/// The groups of the start and the Device group, which the start does not ask for.
+const WITH_DEVICE: &[QueryGroup] = &[
+    QueryGroup::Core,
+    QueryGroup::Names,
+    QueryGroup::Toggles,
+    QueryGroup::Signal,
+    QueryGroup::Device,
+];
 
 const fn telnet_config(port: u16) -> TelnetConfig {
     TelnetConfig {
@@ -40,7 +56,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
         background_pause: Duration::ZERO,
-        query_groups: QueryGroup::DEFAULT_ORDER,
+        query_groups: QueryGroup::START_ORDER,
     }
 }
 
@@ -56,11 +72,31 @@ async fn web_interface() -> Fake {
 
 async fn started(web: &Fake, telnet: &FakeTelnet) -> Arc<Avr> {
     let http = avr_x_receiver().await;
+    connected(
+        &http,
+        ReceiverType::AvrX,
+        web,
+        telnet,
+        QueryGroup::START_ORDER,
+    )
+    .await
+}
+
+async fn connected(
+    http: &Fake,
+    receiver_type: ReceiverType,
+    web: &Fake,
+    telnet: &FakeTelnet,
+    query_groups: &'static [QueryGroup],
+) -> Arc<Avr> {
     Arc::new(
-        builder(&http, ReceiverType::AvrX)
+        builder(http, receiver_type)
             .web_interface_port(web.port)
             .web_interface_config(config())
-            .telnet_config(telnet_config(telnet.port))
+            .telnet_config(TelnetConfig {
+                query_groups,
+                ..telnet_config(telnet.port)
+            })
             .connect()
             .await
             .unwrap(),
@@ -88,11 +124,11 @@ fn lines(received: &str) -> Vec<&str> {
 }
 
 #[tokio::test]
-async fn finished_waits_for_the_answers_to_the_telnet_queries() {
+async fn all_synced_waits_for_the_answers_to_the_telnet_queries() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     let started = avr.start().await.unwrap();
-    let waiting = tokio::spawn(started.finished());
+    let waiting = tokio::spawn(started.all_synced());
     // The receiver does not answer yet: the last line is the marker query,
     // after all queries of the start.
     wait_until("the marker", || {
@@ -107,7 +143,7 @@ async fn finished_waits_for_the_answers_to_the_telnet_queries() {
     telnet.send(b"MV12\rPWON\r");
     let report = timeout(Duration::from_secs(5), waiting)
         .await
-        .expect("finished did not end")
+        .expect("all_synced did not end")
         .unwrap();
     assert_eq!(report.telnet_sync, TelnetSync::Answered);
     assert!(matches!(report.telnet, TelnetStart::Open));
@@ -119,7 +155,7 @@ async fn finished_waits_for_the_answers_to_the_telnet_queries() {
 async fn a_telnet_sync_that_is_dropped_does_not_stop_the_next_one() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     // The first call is dropped at once, before or after its marker is written.
     let _ = timeout(Duration::from_millis(1), avr.telnet_sync()).await;
     let second = {
@@ -145,7 +181,7 @@ async fn a_telnet_sync_that_is_dropped_does_not_stop_the_next_one() {
 async fn each_telnet_sync_waits_for_its_own_answer() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     let (first, second) = (avr.clone(), avr.clone());
     let first = tokio::spawn(async move { first.telnet_sync().await });
     let second = tokio::spawn(async move { second.telnet_sync().await });
@@ -173,11 +209,11 @@ async fn each_telnet_sync_waits_for_its_own_answer() {
 }
 
 #[tokio::test]
-async fn finished_reports_a_connection_that_ends_before_the_answers() {
+async fn all_synced_reports_a_connection_that_ends_before_the_answers() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     let started = avr.start().await.unwrap();
-    let waiting = tokio::spawn(started.finished());
+    let waiting = tokio::spawn(started.all_synced());
     wait_until("the marker", || {
         lines(&telnet.received()).last() == Some(&"PW?")
     })
@@ -185,13 +221,160 @@ async fn finished_reports_a_connection_that_ends_before_the_answers() {
     telnet.close();
     let report = timeout(Duration::from_secs(5), waiting)
         .await
-        .expect("finished did not end")
+        .expect("all_synced did not end")
         .unwrap();
     assert_eq!(report.telnet_sync, TelnetSync::Lost);
 }
 
 #[tokio::test]
-async fn finished_without_telnet_does_not_wait() {
+async fn all_synced_ends_with_no_answer_after_the_wait() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = started(&web, &telnet).await;
+    let started = avr
+        .start_with(StartOptions::new().telnet_wait(Duration::from_millis(300)))
+        .await
+        .unwrap();
+    // The fake telnet port never answers the last query.
+    let report = timeout(Duration::from_secs(5), started.all_synced())
+        .await
+        .expect("all_synced did not end");
+    assert_eq!(report.telnet_sync, TelnetSync::NoAnswer);
+    assert!(matches!(report.telnet, TelnetStart::Open));
+}
+
+#[tokio::test]
+async fn the_groups_of_the_config_are_asked_at_the_start_after_the_first_queries() {
+    const GROUPS: &[QueryGroup] = &[
+        QueryGroup::Core,
+        QueryGroup::Names,
+        QueryGroup::Toggles,
+        QueryGroup::Signal,
+        QueryGroup::Device,
+        QueryGroup::Device,
+    ];
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver().await;
+    let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, GROUPS).await;
+    avr.start().await.unwrap().basic_synced().await;
+    wait_for_the_queue(&avr, &telnet).await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    let device: Vec<_> = group_queries(Brand::Denon, QueryGroup::Device).collect();
+    // The last query of the first list: the signal queries that only telnet answers.
+    let last_first = signal_queries(Brand::Denon, SignalPart::TelnetOnly)
+        .last()
+        .unwrap();
+    let after = sent.iter().position(|line| *line == last_first).unwrap();
+    for query in &device {
+        // A group that is in the config twice is asked once.
+        let count = sent.iter().filter(|line| *line == query).count();
+        assert_eq!(count, 1, "{query}");
+        assert!(sent.iter().position(|line| line == query).unwrap() > after);
+    }
+    // The groups that are not in the config stay out.
+    let picture = group_queries(Brand::Denon, QueryGroup::Picture)
+        .next()
+        .unwrap();
+    assert!(!sent.contains(&picture));
+}
+
+/// How often the client sent each query of the group.
+fn asked(sent: &[&str], group: QueryGroup) -> Vec<usize> {
+    group_queries(Brand::Denon, group)
+        .map(|query| sent.iter().filter(|line| **line == query).count())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_receiver_without_appcommand_asks_the_groups_of_the_config_once() {
+    let http = Fake::start(|seen| {
+        let path = seen.path.split('?').next().unwrap_or_default();
+        match path {
+            "/goform/Deviceinfo.xml" => Reply::Body(AVR_X_INFO.to_vec()),
+            "/goform/formMainZone_MainZoneXmlStatus.xml" => Reply::Body(OLD_STATUS.to_vec()),
+            "/goform/formMainZone_MainZoneXml.xml" => Reply::Body(OLD_ZONE_PAGE.to_vec()),
+            _ => Reply::Status(404),
+        }
+    })
+    .await;
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, WITH_DEVICE).await;
+    assert_eq!(avr.info().update_method, UpdateMethod::StatusPages);
+    let report = avr.start().await.unwrap().basic_synced().await;
+    assert!(matches!(report.telnet, TelnetStart::Open));
+    wait_for_the_queue(&avr, &telnet).await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    assert!(
+        asked(&sent, QueryGroup::Device)
+            .iter()
+            .all(|count| *count == 1)
+    );
+    assert!(
+        asked(&sent, QueryGroup::Picture)
+            .iter()
+            .all(|count| *count == 0)
+    );
+}
+
+#[tokio::test]
+async fn a_reconnect_asks_the_groups_of_the_config_again_once() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver().await;
+    let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, WITH_DEVICE).await;
+    avr.start().await.unwrap().basic_synced().await;
+    wait_for_the_queue(&avr, &telnet).await;
+    let last = group_queries(Brand::Denon, QueryGroup::Device)
+        .last()
+        .unwrap();
+    let count = |received: &str| lines(received).iter().filter(|line| **line == last).count();
+    assert_eq!(count(&telnet.received()), 1);
+
+    telnet.close();
+    // The last query of the group is the end of the second list.
+    wait_until("the queries after the reconnect", || {
+        count(&telnet.received()) == 2
+    })
+    .await;
+    assert_eq!(telnet.connections(), 2);
+    let received = telnet.received();
+    let sent = lines(&received);
+    assert!(
+        asked(&sent, QueryGroup::Device)
+            .iter()
+            .all(|count| *count == 2)
+    );
+}
+
+#[tokio::test]
+async fn a_start_with_a_running_connection_does_not_ask_the_groups_again() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver().await;
+    let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, WITH_DEVICE).await;
+    avr.telnet_connect().await.unwrap();
+    wait_for_the_queue(&avr, &telnet).await;
+    let received = telnet.received();
+    assert!(
+        asked(&lines(&received), QueryGroup::Device)
+            .iter()
+            .all(|count| *count == 1)
+    );
+
+    let report = avr.start().await.unwrap().basic_synced().await;
+    assert!(matches!(report.telnet, TelnetStart::AlreadyRunning));
+    // A query that is sent after the start ends the wait for the queue.
+    wait_for_the_queue(&avr, &telnet).await;
+    let received = telnet.received();
+    assert!(
+        asked(&lines(&received), QueryGroup::Device)
+            .iter()
+            .all(|count| *count == 1)
+    );
+    assert_eq!(telnet.connections(), 1);
+}
+
+#[tokio::test]
+async fn all_synced_without_telnet_does_not_wait() {
     let web = web_interface().await;
     let http = avr_x_receiver().await;
     let avr = Arc::new(
@@ -206,7 +389,7 @@ async fn finished_without_telnet_does_not_wait() {
         .start_with(StartOptions::new().telnet(false))
         .await
         .unwrap()
-        .finished()
+        .all_synced()
         .await;
     assert_eq!(report.telnet_sync, TelnetSync::NotOpen);
 }
@@ -215,7 +398,7 @@ async fn finished_without_telnet_does_not_wait() {
 async fn the_start_asks_for_each_query_once() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
@@ -240,7 +423,7 @@ async fn the_state_is_ready_when_start_returns() {
     assert!(avr.snapshot().zone(Zone::Main).power.is_some());
     assert!(avr.snapshot().zone(Zone::Main).volume.is_some());
 
-    let report = started.http_synced().await;
+    let report = started.basic_synced().await;
     assert!(matches!(report.telnet, TelnetStart::Open));
     let pages = report.web_interface.unwrap();
     assert_eq!(pages.video_signal, PageStatus::Read);
@@ -254,7 +437,7 @@ async fn the_state_is_ready_when_start_returns() {
 async fn telnet_is_asked_first_for_what_http_does_not_answer() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
@@ -281,7 +464,7 @@ async fn a_signal_page_that_fails_is_asked_on_telnet() {
     .await;
     let telnet = FakeTelnet::start().await;
     let avr = started(&web, &telnet).await;
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     let pages = report.web_interface.unwrap();
     assert_eq!(pages.video_signal, PageStatus::NotFound);
     assert_eq!(pages.audio_channels, PageStatus::Read);
@@ -308,7 +491,7 @@ async fn a_page_with_a_server_error_is_asked_once_more() {
     };
     let telnet = FakeTelnet::start().await;
     let avr = started(&web, &telnet).await;
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     assert_eq!(report.web_interface.unwrap().video_signal, PageStatus::Read);
     assert_eq!(asked.load(Ordering::SeqCst), 2);
 }
@@ -328,7 +511,7 @@ async fn a_missing_page_is_not_asked_again() {
     };
     let telnet = FakeTelnet::start().await;
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     assert_eq!(asked.load(Ordering::SeqCst), 1);
 }
 
@@ -340,7 +523,7 @@ async fn the_signal_pages_can_be_turned_off() {
         .start_with(StartOptions::new().signal_pages(false))
         .await
         .unwrap()
-        .http_synced()
+        .basic_synced()
         .await;
     let pages = report.web_interface.unwrap();
     assert_eq!(
@@ -375,7 +558,7 @@ async fn a_closed_telnet_port_is_in_the_report() {
             .await
             .unwrap(),
     );
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     assert!(
         matches!(report.telnet, TelnetStart::Failed(_)),
         "{:?}",
@@ -408,7 +591,7 @@ async fn a_start_that_is_dropped_leaves_telnet_closed() {
 
     // Another start works, and its queries are the ones of a first start.
     hang.store(false, Ordering::SeqCst);
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     assert!(matches!(report.telnet, TelnetStart::Open));
     wait_until("the first query", || {
         lines(&telnet.received()).first() == Some(&"MSQUICK ?")
@@ -449,8 +632,8 @@ async fn a_second_start_is_refused_while_the_first_runs() {
     first.abort();
     let _ = first.await;
     hang.store(false, Ordering::SeqCst);
-    avr.start().await.unwrap().http_synced().await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
 }
 
 #[tokio::test]
@@ -461,7 +644,7 @@ async fn telnet_can_be_left_closed() {
         .start_with(StartOptions::new().telnet(false))
         .await
         .unwrap()
-        .http_synced()
+        .basic_synced()
         .await;
     assert!(matches!(report.telnet, TelnetStart::Disabled));
     assert_eq!(telnet.connections(), 0);
@@ -483,7 +666,7 @@ async fn a_web_interface_that_does_not_answer_is_in_the_report() {
             .await
             .unwrap(),
     );
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     assert!(report.web_interface.unwrap_err().is_unreachable());
     // Telnet gives the signal then.
     wait_until("the signal queries", || {
@@ -498,7 +681,7 @@ async fn a_web_interface_that_does_not_answer_is_in_the_report() {
 async fn refresh_signal_reads_the_pages_and_asks_telnet_for_the_audio() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     // The start asks for these too: wait for them, so that a second one
     // comes from the refresh.
     let count = |text: &str| {
@@ -589,7 +772,7 @@ async fn a_page_that_does_not_answer_is_only_that_page() {
     .await;
     let telnet = FakeTelnet::start().await;
     let avr = started(&web, &telnet).await;
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     // The web interface answered, so the report has the pages that were read.
     let pages = report.web_interface.unwrap();
     assert_eq!(pages.availability.pages.len(), 7);
@@ -691,7 +874,7 @@ async fn the_channels_page_is_not_read_when_appcommand_gave_the_channels() {
             .await
             .unwrap(),
     );
-    let report = avr.start().await.unwrap().http_synced().await;
+    let report = avr.start().await.unwrap().basic_synced().await;
     let pages = report.web_interface.unwrap();
     assert_eq!(
         pages.audio_channels,
@@ -757,7 +940,7 @@ async fn start_2016_receiver(answer: Option<&'static str>) -> FakeTelnet {
             .await
             .unwrap(),
     );
-    avr.start().await.unwrap().http_synced().await;
+    avr.start().await.unwrap().basic_synced().await;
     // The queries of the fallback come after the first ones.
     wait_for_the_queue(&avr, &telnet).await;
     telnet

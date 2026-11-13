@@ -45,9 +45,8 @@
 //! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
 //!
 //! // Optional: wait until the start has read everything and the receiver has
-//! // answered a last telnet query, up to 10 seconds. `http_synced` does not
-//! // wait for telnet.
-//! let report = started.finished().await;
+//! // answered a last telnet query (`basic_synced` does not wait for telnet).
+//! let report = started.all_synced().await;
 //!
 //! loop {
 //!     match changes.recv().await {

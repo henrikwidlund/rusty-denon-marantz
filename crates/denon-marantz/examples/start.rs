@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     println!("RESULT signal_first_s={first:?} signal_ready_s={ready:?}");
     let mut changes = avr.changes();
-    let report = started.http_synced().await;
+    let report = started.basic_synced().await;
     println!("RESULT finished_s={:.2}", secs());
 
     let telnet = match &report.telnet {

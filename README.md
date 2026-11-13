@@ -62,7 +62,7 @@ let mut changes = avr.changes(); // subscribe before the start, so no change is 
 let started = avr.start().await?; // the zones are in the state when this returns
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
-let report = started.finished().await; // optional: wait for the start queries, up to 10 s
+let report = started.all_synced().await; // optional: wait for the telnet answers too
 
 loop {
     match changes.recv().await {
@@ -81,8 +81,16 @@ modes and the Dirac Live slots), and reads the web interface pages that say
 which settings are available, the video signal and the channels. A page that
 fails is asked once more. Telnet is asked for the signal values that the other
 requests did not give. The report says what happened to each part. Use
-`StartOptions` to leave telnet closed or to skip the signal pages. A second
-`start` while one still runs gives `Error::StartRunning` and reads nothing.
+`StartOptions` to leave telnet closed, to skip the signal pages, or to change how
+long `all_synced` waits. A second `start` while one still runs gives
+`Error::StartRunning` and reads nothing.
+
+`start` returns when the zones are read. `basic_synced()` waits until the HTTP
+reads and the pages are done. `all_synced()` also waits until the receiver has
+answered the telnet queries of the start, so the values that only telnet gives
+are in the state. Both are optional: values that arrive later come as events.
+More groups in `TelnetConfig::query_groups` are asked after the first queries,
+and `all_synced()` then takes longer.
 
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in

@@ -982,7 +982,7 @@ impl Avr {
     /// does not answer. The library cannot check this: an event that looks like
     /// the answer, or a query that the receiver drops, can leave a value for
     /// later. Queries that are added later are not covered. See also
-    /// [`Started::finished`].
+    /// [`Started::all_synced`].
     ///
     /// Dropping the future is safe. Several calls at once each wait for their
     /// own query, except that a power event or the answer to the keep-alive
@@ -996,6 +996,12 @@ impl Avr {
     #[cfg(feature = "telnet")]
     pub async fn telnet_sync(&self) -> Result<(), Error> {
         self.telnet.sync().await
+    }
+
+    /// As [`Avr::telnet_sync`], with this limit for the answer.
+    #[cfg(feature = "telnet")]
+    pub(crate) async fn telnet_sync_within(&self, limit: Duration) -> Result<(), Error> {
+        self.telnet.sync_within(limit).await
     }
 
     /// Asks the receiver for its state again on telnet. The answers are

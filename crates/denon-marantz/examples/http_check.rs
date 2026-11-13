@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started = avr
         .start_with(StartOptions::new().signal_pages(false).telnet(telnet))
         .await?;
-    let report = started.http_synced().await;
+    let report = started.basic_synced().await;
     println!("RESULT telnet={:?}", report.telnet);
     if telnet && !matches!(report.telnet, TelnetStart::Open) {
         return Err("telnet is needed to see what the commands did".into());

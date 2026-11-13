@@ -30,6 +30,8 @@ pub struct StartOptions {
     signal_pages: bool,
     #[cfg(feature = "telnet")]
     telnet: bool,
+    #[cfg(feature = "telnet")]
+    telnet_wait: Duration,
 }
 
 impl Default for StartOptions {
@@ -46,6 +48,8 @@ impl StartOptions {
             signal_pages: true,
             #[cfg(feature = "telnet")]
             telnet: true,
+            #[cfg(feature = "telnet")]
+            telnet_wait: DEFAULT_TELNET_WAIT,
         }
     }
 
@@ -67,7 +71,22 @@ impl StartOptions {
         self.telnet = on;
         self
     }
+
+    /// How long [`Started::all_synced`] waits for the answers to the telnet
+    /// queries. The default is 10 seconds. A start that asks more groups
+    /// (see [`TelnetConfig::query_groups`](crate::TelnetConfig::query_groups))
+    /// needs more time.
+    #[cfg(feature = "telnet")]
+    #[must_use]
+    pub const fn telnet_wait(mut self, wait: Duration) -> Self {
+        self.telnet_wait = wait;
+        self
+    }
 }
+
+/// The default for [`StartOptions::telnet_wait`].
+#[cfg(feature = "telnet")]
+const DEFAULT_TELNET_WAIT: Duration = Duration::from_secs(10);
 
 /// What happened to the telnet connection at the start.
 #[derive(Debug)]
@@ -103,7 +122,7 @@ pub struct StartPages {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum TelnetSync {
-    /// [`Started::http_synced`] does not wait for the answers.
+    /// [`Started::basic_synced`] does not wait for the answers.
     NotWaited,
     /// The receiver answered a last query that was sent after the queries of
     /// the start. It handles lines in order, so the state has the values that
@@ -113,8 +132,8 @@ pub enum TelnetSync {
     NotOpen,
     /// The connection ended before the receiver answered.
     Lost,
-    /// The receiver did not answer the last query in time. [`Started::finished`]
-    /// waits up to 10 seconds.
+    /// The receiver did not answer the last query in time, see
+    /// [`StartOptions::telnet_wait`].
     NoAnswer,
 }
 
@@ -123,7 +142,7 @@ pub enum TelnetSync {
 pub struct StartReport {
     /// The telnet connection.
     pub telnet: TelnetStart,
-    /// If the receiver answered the telnet queries. Only [`Started::finished`]
+    /// If the receiver answered the telnet queries. Only [`Started::all_synced`]
     /// waits for this.
     pub telnet_sync: TelnetSync,
     /// The signal, the channels and the Audyssey settings from
@@ -162,23 +181,20 @@ pub struct Started {
     handle: JoinHandle<StartReport>,
     #[cfg(feature = "telnet")]
     avr: Arc<Avr>,
+    #[cfg(feature = "telnet")]
+    telnet_wait: Duration,
 }
 
-/// How long [`Started::finished`] waits for the answers to the telnet queries.
-#[cfg(feature = "telnet")]
-const TELNET_SYNC_WAIT: Duration = Duration::from_secs(10);
-
 impl Started {
-    /// Waits until everything that the start reads over HTTP has been read,
-    /// and says what happened. The values are in the state before this
-    /// returns. It does not wait for the answers to the telnet queries, which
-    /// can still be on their way: [`Started::finished`] does. The report has
-    /// [`TelnetSync::NotWaited`].
+    /// Waits until the basic information is in the state: everything that the
+    /// start reads over HTTP, the zones and the pages. It does not wait for the
+    /// answers to the telnet queries, which can still be on their way:
+    /// [`Started::all_synced`] does. The report has [`TelnetSync::NotWaited`].
     ///
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn http_synced(self) -> StartReport {
+    pub async fn basic_synced(self) -> StartReport {
         match self.handle.await {
             Ok(report) => report,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
@@ -191,7 +207,7 @@ impl Started {
         }
     }
 
-    /// Waits as [`Started::http_synced`] does, and then until the receiver has
+    /// Waits as [`Started::basic_synced`] does, and then until the receiver has
     /// answered a last query that is sent after the telnet queries of the
     /// start. The receiver handles lines in order, so the answers to the
     /// earlier queries are in the state then. A value that is still empty is
@@ -199,7 +215,7 @@ impl Started {
     /// check this: an event that looks like the answer, or a query that the
     /// receiver drops, can leave a value for later. It takes as long as the
     /// paced queries do, a few seconds, and ends with
-    /// [`TelnetSync::NoAnswer`] after 10 seconds.
+    /// [`TelnetSync::NoAnswer`] after [`StartOptions::telnet_wait`].
     ///
     /// A value that changes later arrives as an event, as always. A caller
     /// that does not need to wait does not have to call this: dropping
@@ -208,23 +224,21 @@ impl Started {
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn finished(self) -> StartReport {
+    pub async fn all_synced(self) -> StartReport {
         #[cfg(feature = "telnet")]
-        let avr = Arc::clone(&self.avr);
+        let (avr, wait) = (Arc::clone(&self.avr), self.telnet_wait);
         #[cfg_attr(not(feature = "telnet"), allow(unused_mut))]
-        let mut report = self.http_synced().await;
+        let mut report = self.basic_synced().await;
         #[cfg(feature = "telnet")]
         if matches!(
             report.telnet,
             TelnetStart::Open | TelnetStart::AlreadyRunning
         ) {
-            report.telnet_sync =
-                match tokio::time::timeout(TELNET_SYNC_WAIT, avr.telnet_sync()).await {
-                    Ok(Ok(())) => TelnetSync::Answered,
-                    Err(_) => TelnetSync::NoAnswer,
-                    Ok(Err(error)) if error.is_timeout() => TelnetSync::NoAnswer,
-                    Ok(Err(_)) => TelnetSync::Lost,
-                };
+            report.telnet_sync = match avr.telnet_sync_within(wait).await {
+                Ok(()) => TelnetSync::Answered,
+                Err(error) if error.is_timeout() => TelnetSync::NoAnswer,
+                Err(_) => TelnetSync::Lost,
+            };
             return report;
         }
         report.telnet_sync = TelnetSync::NotOpen;
@@ -256,8 +270,9 @@ impl Avr {
     /// sent, unless a page could not be read. A page that does not answer after
     /// another page did is reported as [`PageStatus::NoAnswer`].
     ///
-    /// Use [`Started::finished`] to wait for the rest. The values from
-    /// telnet arrive as events later. Calls that follow, for example commands,
+    /// Use [`Started::basic_synced`] to wait for the HTTP reads and
+    /// [`Started::all_synced`] to wait for the telnet answers too. The values
+    /// from telnet arrive as events later. Calls that follow, for example commands,
     /// need not wait.
     ///
     /// # Errors
@@ -284,6 +299,8 @@ impl Avr {
         let telnet = TelnetStart::Disabled;
         let avr = Arc::clone(self);
         let task = Arc::clone(&avr);
+        #[cfg(feature = "telnet")]
+        let telnet_wait = options.telnet_wait;
         Ok(Started {
             handle: tokio::spawn(async move {
                 let report = task.finish_start(options, telnet).await;
@@ -292,12 +309,15 @@ impl Avr {
             }),
             #[cfg(feature = "telnet")]
             avr,
+            #[cfg(feature = "telnet")]
+            telnet_wait,
         })
     }
 
     /// Opens telnet. After an `AppCommand` read, the first queries are the
-    /// ones that it does not answer. Another receiver gets the groups of the
-    /// settings. The queries for the signal give the first value. A receiver
+    /// ones that it does not answer, and the groups of the settings that are
+    /// not in [`QueryGroup::START_ORDER`](crate::QueryGroup::START_ORDER)
+    /// follow. Another receiver gets the groups of the settings. The queries for the signal give the first value. A receiver
     /// with `AppCommand0300.xml` gives the kind of the audio and the sampling
     /// rate there, and is asked only if it does not answer. Later changes come
     /// as events if the receiver sends them, see [`Avr::refresh_signal`].
@@ -310,6 +330,12 @@ impl Avr {
                 queries.extend(signal_queries(brand, SignalPart::AudioInfo));
             }
             queries.extend(signal_queries(brand, SignalPart::TelnetOnly));
+            // The groups that were asked for, after the ones that are needed first.
+            for query in self.telnet.extra_start_queries() {
+                if !queries.contains(&query) {
+                    queries.push(query);
+                }
+            }
             queries
         });
         match self
