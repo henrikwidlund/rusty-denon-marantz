@@ -7,8 +7,9 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    AVR_X_DIRAC_INFO, AVR_X_INFO, FakeTelnet, avr_x_receiver, avr_x_receiver_with_info,
-    avr_x_receiver_with_pages, builder, wait_until,
+    AVR_X_DIRAC_INFO, AVR_X_INFO, FakeTelnet, appcommand0300_answer, avr_x_receiver,
+    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, receiver_with_audyssey,
+    wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
@@ -256,6 +257,43 @@ async fn telnet_and_http_agree_on_values() {
         seen.contains(&(Some(Zone::Main), Setting::Power)),
         "{seen:?}"
     );
+}
+
+#[tokio::test]
+async fn blank_audyssey_values_over_http_keep_the_telnet_values() {
+    let telnet = FakeTelnet::start().await;
+    // A receiver that is calibrated with Dirac answers with blank values.
+    let answer = appcommand0300_answer(
+        "<param name=\"dynamiceq\" control=\"0\"></param>\
+        <param name=\"reflevoffset\" control=\"0\"></param>\
+        <param name=\"dynamicvol\" control=\"0\"></param>\
+        <param name=\"multeq\" control=\"0\"></param>",
+    );
+    let answer: &'static str = Box::leak(answer.into_boxed_str());
+    let http = receiver_with_audyssey(Some(answer), true).await;
+    let avr = builder(&http, ReceiverType::AvrX2016)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    telnet.send(b"PSDYNEQ OFF\rPSMULTEQ:OFF\rPSREFLEV 0\rPSDYNVOL OFF\r");
+    wait_until("the events", || {
+        avr.snapshot().device().dynamic_volume.is_some()
+    })
+    .await;
+
+    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    let state = avr.snapshot();
+    let device = state.device();
+    assert_eq!(device.dynamic_eq, Some(false));
+    assert_eq!(device.multi_eq, Some(MultiEq::Off));
+    assert_eq!(
+        device.reference_level_offset,
+        Some(ReferenceLevelOffset::Db0)
+    );
+    assert_eq!(device.dynamic_volume, Some(DynamicVolume::Off));
 }
 
 #[tokio::test]

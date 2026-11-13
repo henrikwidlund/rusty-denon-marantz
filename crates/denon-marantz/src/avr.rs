@@ -1118,7 +1118,8 @@ impl Avr {
     /// [`PageStatus::Unreadable`], and the next call asks again. An item of the
     /// answer with an error leaves its values as they are. A receiver that is
     /// not calibrated with Audyssey answers with blank Audyssey values, which
-    /// count as unknown.
+    /// count as unknown. While telnet is open, a blank value does not clear
+    /// a value that telnet reported.
     ///
     /// # Errors
     ///
@@ -1130,6 +1131,11 @@ impl Avr {
         {
             return Ok(PageStatus::NotFound);
         }
+        // Telnet reports the Audyssey values, so a blank one must not clear them.
+        #[cfg(feature = "telnet")]
+        let keep_audyssey = *self.telnet.watch_status().borrow() == TelnetStatus::Connected;
+        #[cfg(not(feature = "telnet"))]
+        let keep_audyssey = false;
         let result = self
             .http
             .post_parsed(
@@ -1148,8 +1154,12 @@ impl Avr {
                                 complete = false;
                                 continue;
                             }
+                            let keep_known =
+                                keep_audyssey && *definition == appcommand::GET_AUDYSSEY;
                             definition.extract(&item, Zone::Main, &mut |field, value| {
-                                notify(state.apply_field(Zone::Main, field, value));
+                                if value.is_some() || !keep_known {
+                                    notify(state.apply_field(Zone::Main, field, value));
+                                }
                             });
                             if *definition == appcommand::GET_INPUT_SIGNAL {
                                 notify(state.apply_channel_item(true, &item));
