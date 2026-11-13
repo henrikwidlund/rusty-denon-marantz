@@ -9,6 +9,7 @@
 //! connect are background work: they wait for the commands and for a short
 //! pause after the last one. Writes keep a minimum time between them.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
     DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, MAIN_ZONE_POWER_QUERY,
-    Message, QueryGroup, group_queries, queries,
+    Message, Query, QueryGroup, group_queries, queries,
 };
 use denon_marantz_proto::{Brand, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -144,6 +145,24 @@ pub struct TelnetEvent {
     pub parameter: Box<str>,
 }
 
+/// What to ask a receiver for on telnet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Ask<'a> {
+    /// A value that the library knows. The query depends on the brand.
+    Query(Query),
+    /// A query as text, for example `PSDYNEQ ?`, for a query that the library
+    /// does not know, such as one of an older or a newer model. It must end
+    /// with `?` and have no control character.
+    Raw(&'a str),
+}
+
+impl From<Query> for Ask<'_> {
+    fn from(query: Query) -> Self {
+        Self::Query(query)
+    }
+}
+
 /// A line to send. The caller waits for `done`.
 struct Outgoing {
     line: String,
@@ -167,7 +186,7 @@ enum Request {
     /// Ask the receiver for one group of values.
     RefreshGroup(QueryGroup),
     /// Ask the receiver these queries.
-    Queries(Vec<&'static str>),
+    Queries(Vec<Cow<'static, str>>),
     /// Tell the caller when the receiver has answered a query that is sent
     /// after the ones that wait now.
     Synced(oneshot::Sender<Result<(), Error>>),
@@ -207,7 +226,7 @@ struct Queries {
 }
 
 impl Queries {
-    fn all(self) -> VecDeque<&'static str> {
+    fn all(self) -> VecDeque<Cow<'static, str>> {
         let power = if self.single_zone {
             DEVICE_POWER_QUERY
         } else {
@@ -215,6 +234,7 @@ impl Queries {
         };
         std::iter::once(power)
             .chain(queries(self.brand, self.groups))
+            .map(Cow::Borrowed)
             .collect()
     }
 }
@@ -275,7 +295,7 @@ impl Telnet {
             host: host.to_owned(),
             config: self.config,
             queries: self.queries,
-            first: first.map(VecDeque::from),
+            first: first.map(|queries| queries.into_iter().map(Cow::Borrowed).collect()),
             channels: channels.clone(),
             events: self.events.clone(),
             status: self.status.clone(),
@@ -372,7 +392,11 @@ impl Telnet {
     }
 
     /// Asks the task to send these queries after the ones that wait.
-    pub(crate) async fn ask(&self, queries: Vec<&'static str>) -> Result<(), Error> {
+    pub(crate) async fn ask<Q: Into<Cow<'static, str>>>(
+        &self,
+        queries: impl IntoIterator<Item = Q>,
+    ) -> Result<(), Error> {
+        let queries = queries.into_iter().map(Into::into).collect();
         self.request(Request::Queries(queries)).await
     }
 
@@ -446,7 +470,7 @@ struct Worker {
     config: TelnetConfig,
     queries: Queries,
     /// The queries of the first session, if they are not the ones of `queries`.
-    first: Option<VecDeque<&'static str>>,
+    first: Option<VecDeque<Cow<'static, str>>>,
     channels: Channels,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
@@ -461,7 +485,7 @@ struct Queue {
     /// Lines from the caller, and the keep-alive query.
     user: VecDeque<Outgoing>,
     /// Queries that fill the state.
-    background: VecDeque<&'static str>,
+    background: VecDeque<Cow<'static, str>>,
     /// When the last line was written.
     last_write: Option<Instant>,
     /// When the last line from the caller was written.
@@ -485,7 +509,7 @@ struct Marker {
 const MARKER_STALE: Duration = Duration::from_secs(5);
 
 impl Queue {
-    const fn new(background: VecDeque<&'static str>) -> Self {
+    const fn new(background: VecDeque<Cow<'static, str>>) -> Self {
         Self {
             user: VecDeque::new(),
             background,
@@ -567,8 +591,9 @@ impl Queue {
     /// Adds queries that wait for a write. A query that already waits is not
     /// added again, so repeated requests cannot make the queue grow without
     /// limit.
-    fn add(&mut self, queries: impl IntoIterator<Item = &'static str>) {
+    fn add<Q: Into<Cow<'static, str>>>(&mut self, queries: impl IntoIterator<Item = Q>) {
         for query in queries {
+            let query = query.into();
             if !self.background.contains(&query) {
                 self.background.push_back(query);
             }
@@ -657,7 +682,7 @@ impl Worker {
     async fn session(
         &self,
         mut stream: TcpStream,
-        background: VecDeque<&'static str>,
+        background: VecDeque<Cow<'static, str>>,
         requests: &mut mpsc::Receiver<Request>,
         shutdown: &mut watch::Receiver<bool>,
     ) -> End {
@@ -762,7 +787,7 @@ impl Worker {
             (outgoing.line, outgoing.done, true)
         } else if let Some(query) = queue.background.pop_front() {
             line.clear();
-            line.push_str(query);
+            line.push_str(&query);
             line.push('\r');
             (std::mem::take(line), None, false)
         } else if queue.write_marker(Instant::now()) {
@@ -951,14 +976,14 @@ mod tests {
             groups: QueryGroup::DEFAULT_ORDER,
         }
         .all();
-        assert_eq!(multi.front(), Some(&"ZM?"));
+        assert_eq!(multi.front().map(Cow::as_ref), Some("ZM?"));
         let single = Queries {
             brand: Brand::Marantz,
             single_zone: true,
             groups: QueryGroup::DEFAULT_ORDER,
         }
         .all();
-        assert_eq!(single.front(), Some(&"PW?"));
+        assert_eq!(single.front().map(Cow::as_ref), Some("PW?"));
         assert_eq!(
             multi.len(),
             1 + queries(Brand::Denon, QueryGroup::DEFAULT_ORDER).count()
@@ -1023,7 +1048,7 @@ mod tests {
             ..TelnetConfig::default()
         };
         let ms = Duration::from_millis;
-        let mut queue = Queue::new(VecDeque::from(["SI?"]));
+        let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]));
         let start = Instant::now();
         // The first write is due at once.
         assert_eq!(queue.write_time(&config), Some(start));

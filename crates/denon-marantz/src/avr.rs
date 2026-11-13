@@ -38,7 +38,7 @@ use crate::identify::{Identified, identify, identify_on};
 use crate::pacer::Pacing;
 use crate::sound_control::SoundControl;
 #[cfg(feature = "telnet")]
-use crate::telnet::{Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
+use crate::telnet::{Ask, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
 use crate::tone_control::ToneControl;
 use crate::tuner_control::TunerControl;
 use crate::video_control::VideoControl;
@@ -1017,6 +1017,49 @@ impl Avr {
         self.telnet.refresh().await
     }
 
+    /// Asks the receiver on telnet for exactly these values, for example the
+    /// values that depend on one that changed. The queries wait in the same
+    /// queue as the others, with the same spacing, and a query that already
+    /// waits is not added again. The answers are events, and events that
+    /// repeat the last value are shown again.
+    ///
+    /// A [`Query`](crate::Query) gives the query of the brand of the receiver. [`Ask::Raw`]
+    /// asks a query as text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidRequest`] if a value has no query for the brand
+    /// of the receiver, or if a raw query does not end with `?`. Returns
+    /// [`Error::InvalidCommand`] if the text of a raw query is empty or has a
+    /// control character. Returns [`Error::NotConnected`] if the telnet
+    /// connection is not open. Nothing is asked if there is an error.
+    #[cfg(feature = "telnet")]
+    pub async fn telnet_ask(&self, what: &[Ask<'_>]) -> Result<(), Error> {
+        let brand = self.info.brand;
+        let mut queries: Vec<std::borrow::Cow<'static, str>> = Vec::with_capacity(what.len());
+        for ask in what {
+            queries.push(match *ask {
+                Ask::Query(query) => {
+                    std::borrow::Cow::Borrowed(query.text(brand).ok_or_else(|| {
+                        Error::InvalidRequest(format!("{query:?} has no query for {brand:?}"))
+                    })?)
+                }
+                Ask::Raw(text) => {
+                    let mut line = command::encode(brand, Zone::Main, &Command::Raw(text))?;
+                    if !text.ends_with('?') {
+                        return Err(Error::InvalidRequest(format!(
+                            "query {text:?} does not end with ?"
+                        )));
+                    }
+                    // The line ends with the carriage return that the queue adds.
+                    line.pop();
+                    std::borrow::Cow::Owned(line)
+                }
+            });
+        }
+        self.telnet.ask(queries).await
+    }
+
     /// Asks the receiver on telnet for one group of values, for example the
     /// signal information. The answers are events, and events that repeat the
     /// last value are shown again. A group that the connection does not fetch
@@ -1025,7 +1068,8 @@ impl Avr {
     ///
     /// The receiver does not send the values that depend on a changed value,
     /// for example the Dirac Live filters of another speaker preset. A caller
-    /// that shows such values asks for the group again when the event arrives.
+    /// that shows such values asks for them when the event arrives, with
+    /// [`Avr::telnet_ask`], which asks for exactly these values.
     ///
     /// # Errors
     ///

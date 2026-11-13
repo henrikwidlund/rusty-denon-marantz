@@ -12,7 +12,7 @@
 //! - `update_*` reads over HTTP: `update` reads the zones, the others read
 //!   pages of the web interface on port 11080 or the status pages.
 //! - `telnet_*` uses the telnet connection: `telnet_connect`, `telnet_send`,
-//!   `telnet_refresh`, `telnet_events`.
+//!   `telnet_refresh`, `telnet_ask`, `telnet_events`.
 //! - `refresh*` picks the way for you: `refresh`, `refresh_signal` and
 //!   `refresh_now_playing`.
 //! - `send` and `http_send` send a command: `send` uses telnet while it is open
@@ -126,7 +126,7 @@ pub use denon_marantz_proto::RemoteKey;
 #[cfg(feature = "http")]
 pub use denon_marantz_proto::telnet::Command;
 #[cfg(feature = "telnet")]
-pub use denon_marantz_proto::telnet::QueryGroup;
+pub use denon_marantz_proto::telnet::{Query, QueryGroup};
 #[cfg(feature = "http")]
 pub use details::{
     GeneralDetails, PageResults, PageStatus, SettingsAvailabilityDetails, SkipReason,
@@ -149,7 +149,7 @@ pub use sound_control::SoundControl;
 #[cfg(feature = "http")]
 pub use status::{Blocker, Feature, SettingStatus};
 #[cfg(feature = "telnet")]
-pub use telnet::{TelnetConfig, TelnetEvent, TelnetStatus};
+pub use telnet::{Ask, TelnetConfig, TelnetEvent, TelnetStatus};
 #[cfg(feature = "http")]
 pub use tone_control::ToneControl;
 #[cfg(feature = "http")]

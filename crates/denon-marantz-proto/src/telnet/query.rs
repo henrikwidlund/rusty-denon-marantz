@@ -10,6 +10,286 @@ pub const MAIN_ZONE_POWER_QUERY: &str = "ZM?";
 /// Asks for the power state of the whole device.
 pub const DEVICE_POWER_QUERY: &str = "PW?";
 
+/// Defines [`Query`] and the list of all its values.
+macro_rules! query_values {
+    ($($(#[$doc:meta])* $name:ident,)*) => {
+        /// A value that a receiver can be asked for. Each value has one query,
+        /// or one for each brand. The answer comes as the events that a change
+        /// of the value sends.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
+        pub enum Query {
+            $($(#[$doc])* $name,)*
+        }
+
+        impl Query {
+            /// All values.
+            pub const ALL: &'static [Self] = &[$(Self::$name,)*];
+        }
+    };
+}
+
+query_values! {
+        /// Selected input source.
+        Source,
+        /// Master volume.
+        Volume,
+        /// Mute of the main zone.
+        Mute,
+        /// Power of zone 2.
+        Zone2Power,
+        /// Mute of zone 2.
+        Zone2Mute,
+        /// Power of zone 3.
+        Zone3Power,
+        /// Mute of zone 3.
+        Zone3Mute,
+        /// Surround mode.
+        SoundMode,
+        /// On-screen menu.
+        Menu,
+        /// Quick select, or SMART select on a Marantz receiver.
+        QuickSelect,
+        /// Trigger outputs.
+        Trigger,
+        /// MDAX (Marantz).
+        Mdax,
+        /// DAC filter (Marantz).
+        DacFilter,
+        /// Illumination (Marantz).
+        Illumination,
+        /// Auto lip sync.
+        AutoLipSync,
+        /// Tone control on or off.
+        ToneControl,
+        /// Dynamic EQ.
+        DynamicEq,
+        /// Audyssey LFC.
+        Lfc,
+        /// Neural:X.
+        NeuralX,
+        /// IMAX audio settings, auto or manual.
+        ImaxAudio,
+        /// IMAX subwoofer mode.
+        ImaxSubwooferMode,
+        /// Subwoofer on or off.
+        Subwoofer,
+        /// Tactile transducer.
+        TactileTransducer,
+        /// HDMI audio decode.
+        HdmiAudioDecode,
+        /// Center spread.
+        CenterSpread,
+        /// Loudness management.
+        LoudnessManagement,
+        /// Cinema EQ.
+        CinemaEq,
+        /// Bluetooth transmitter.
+        BluetoothTransmitter,
+        /// Speaker virtualizer.
+        SpeakerVirtualizer,
+        /// Graphic EQ.
+        GraphicEq,
+        /// Headphone EQ.
+        HeadphoneEq,
+        /// Display dimmer.
+        Dimmer,
+        /// Eco mode.
+        Eco,
+        /// Sleep timer of the main zone.
+        Sleep,
+        /// Sleep timer of zone 2.
+        Zone2Sleep,
+        /// Sleep timer of zone 3.
+        Zone3Sleep,
+        /// Quick select of zone 2, or SMART select on a Marantz receiver.
+        Zone2QuickSelect,
+        /// Quick select of zone 3, or SMART select on a Marantz receiver.
+        Zone3QuickSelect,
+        /// HDMI monitor output.
+        HdmiOutput,
+        /// All zone stereo.
+        AllZoneStereo,
+        /// Audio delay (`PSDELAY`), the lip sync delay of the sound.
+        AudioDelay,
+        /// Video signal resolution.
+        VideoResolution,
+        /// Audio sampling rate.
+        SamplingRate,
+        /// Kind of the audio signal that comes in, for example Dolby or PCM.
+        AudioSignal,
+        /// Kind of the sound that goes out, after the sound mode.
+        AudioSound,
+        /// Output channels.
+        OutputChannels,
+        /// Input channels.
+        InputChannels,
+        /// Video signal input.
+        VideoInput,
+        /// Video signal output.
+        VideoOutput,
+        /// HDMI maximum resolution.
+        HdmiMaxResolution,
+        /// Video HDR format.
+        HdrFormat,
+        /// Video pixel depth.
+        PixelDepth,
+        /// Video maximum FRL.
+        MaxFrl,
+        /// Signal color space.
+        ColorSpace,
+        /// Signal extended colorimetry.
+        ExtendedColorimetry,
+        /// Dirac Live slots: name, filter and kind.
+        DiracSlots,
+        /// The selected Dirac Live filter.
+        DiracFilter,
+        /// Source names.
+        SourceNames,
+        /// Sources that are in use or hidden.
+        SourcesInUse,
+        /// Sound modes that the receiver offers.
+        SoundModeList,
+        /// Friendly name.
+        FriendlyName,
+        /// Quick select names (Denon).
+        QuickSelectNames,
+        /// Levels of the speaker channels, as in the setup menu (Denon).
+        SpeakerLevels,
+        /// Reference level offset.
+        ReferenceLevel,
+        /// Dynamic volume.
+        DynamicVolume,
+        /// Speaker preset.
+        SpeakerPreset,
+        /// Picture mode.
+        PictureMode,
+        /// Digital codec.
+        DigitalCodec,
+        /// Bass.
+        Bass,
+        /// Treble.
+        Treble,
+        /// Containment amount.
+        ContainmentAmount,
+        /// MultEQ.
+        MultEq,
+        /// IMAX.
+        Imax,
+        /// IMAX high pass filter.
+        ImaxHighPassFilter,
+        /// IMAX low pass filter.
+        ImaxLowPassFilter,
+        /// IMAX subwoofer output.
+        ImaxSubwooferOutput,
+        /// Subwoofer level.
+        SubwooferLevel,
+        /// Auto standby of the main zone.
+        AutoStandby,
+        /// Auto standby of zone 2.
+        Zone2AutoStandby,
+        /// Auto standby of zone 3.
+        Zone3AutoStandby,
+        /// Video process.
+        VideoProcess,
+        /// Front speaker A or B.
+        FrontSpeaker,
+        /// Aspect ratio.
+        AspectRatio,
+        /// Vertical stretch.
+        VerticalStretch,
+        /// Analog to HDMI resolution.
+        AnalogToHdmiResolution,
+        /// HDMI upscaler.
+        HdmiUpscaler,
+        /// LFE level.
+        LfeLevel,
+        /// Bass sync.
+        BassSync,
+        /// Dialog enhancer.
+        DialogEnhancer,
+        /// Auro-Matic preset.
+        AuroPreset,
+        /// Auro-Matic strength.
+        AuroStrength,
+        /// Auro-3D mode.
+        AuroMode,
+        /// Room size.
+        RoomSize,
+        /// Dialog control.
+        DialogControl,
+        /// Effect speaker selection.
+        EffectSpeakers,
+        /// Dynamic range compression.
+        Drc,
+        /// Delay time (`PSDEL`) of the surround modes that have it.
+        DelayTime,
+        /// Audio restorer.
+        AudioRestorer,
+        /// Center level.
+        CenterLevel,
+        /// Panorama.
+        Panorama,
+        /// Surround level compensation.
+        SurroundLevel,
+        /// Dimension.
+        Dimension,
+        /// Center width (`PSCEN`). Some receivers answer `PSCEW` instead: ask
+        /// for both.
+        CenterWidth,
+        /// Center width (`PSCEW`), the other text for [`CenterWidth`](Self::CenterWidth).
+        CenterWidthCew,
+        /// Effect.
+        Effect,
+        /// Audio input mode.
+        AudioInputMode,
+        /// Center image.
+        CenterImage,
+        /// Center gain (Marantz).
+        CenterGain,
+        /// Channel volume of the main zone (`CV?`). Some receivers do not answer
+        /// this query and send the list after an input change.
+        ChannelVolume,
+        /// Speaker configuration (Denon).
+        SpeakerConfiguration,
+        /// Speaker crossovers (Denon).
+        SpeakerCrossovers,
+        /// Graphic EQ of each speaker group (Denon).
+        SpeakerGraphicEq,
+        /// Volume settings of the main zone.
+        MainZoneVolumeSettings,
+        /// Volume settings of zone 2.
+        Zone2VolumeSettings,
+        /// Left and right level of zone 2 (`Z2CV?`).
+        Zone2ChannelLevels,
+        /// Left and right level of zone 3 (`Z3CV?`).
+        Zone3ChannelLevels,
+        /// Volume settings of zone 3.
+        Zone3VolumeSettings,
+        /// Contrast.
+        Contrast,
+        /// Brightness.
+        Brightness,
+        /// Saturation.
+        Saturation,
+        /// Noise reduction.
+        NoiseReduction,
+        /// Enhancer.
+        Enhancer,
+}
+
+impl Query {
+    /// The query text for this brand. `None` if the brand has no query for
+    /// the value.
+    #[must_use]
+    pub fn text(self, brand: Brand) -> Option<&'static str> {
+        QUERIES
+            .iter()
+            .find(|entry| entry.query == self && entry.is_for(brand))
+            .map(|entry| entry.text)
+    }
+}
+
 /// Brands that a query is for.
 #[derive(Debug, Clone, Copy)]
 enum Brands {
@@ -19,13 +299,14 @@ enum Brands {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Query {
+struct Entry {
+    query: Query,
     text: &'static str,
     brands: Brands,
     group: QueryGroup,
 }
 
-impl Query {
+impl Entry {
     const fn is_for(&self, brand: Brand) -> bool {
         matches!(
             (self.brands, brand),
@@ -34,24 +315,27 @@ impl Query {
     }
 }
 
-const fn both(group: QueryGroup, text: &'static str) -> Query {
-    Query {
+const fn both(group: QueryGroup, query: Query, text: &'static str) -> Entry {
+    Entry {
+        query,
         text,
         brands: Brands::Both,
         group,
     }
 }
 
-const fn denon(group: QueryGroup, text: &'static str) -> Query {
-    Query {
+const fn denon(group: QueryGroup, query: Query, text: &'static str) -> Entry {
+    Entry {
+        query,
         text,
         brands: Brands::Denon,
         group,
     }
 }
 
-const fn marantz(group: QueryGroup, text: &'static str) -> Query {
-    Query {
+const fn marantz(group: QueryGroup, query: Query, text: &'static str) -> Entry {
+    Entry {
+        query,
         text,
         brands: Brands::Marantz,
         group,
@@ -201,134 +485,134 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Query; 126] = [
-    both(Core, "SI?"),                  // Select INPUT source
-    both(Core, "MV?"),                  // MASTER VOLUME
-    both(Core, "MU?"),                  // Mute
-    both(Core, "Z2?"),                  // Z2 Zone Power
-    both(Core, "Z2MU?"),                // Z2 Mute
-    both(Core, "Z3?"),                  // Z3 Zone Power
-    both(Core, "Z3MU?"),                // Z3 Mute
-    both(Core, "MS?"),                  // Surround mode
-    both(Toggles, "MNMEN?"),            // Menu
-    marantz(Core, "MSSMART ?"),         // SMART Select
-    denon(Core, "MSQUICK ?"),           // Quick Select
-    both(Toggles, "TR?"),               // Trigger
-    marantz(Toggles, "PSMDAX ?"),       // MDAX
-    marantz(Toggles, "PSDACFIL ?"),     // DAC Filter
-    marantz(Toggles, "ILB ?"),          // Illumination
-    marantz(Toggles, "SSHOS ?"),        // Auto Lip Sync
-    both(Toggles, "PSTONE CTRL ?"),     // TONE
-    both(Toggles, "PSDYNEQ ?"),         // Dynamic EQ
-    both(Toggles, "PSLFC ?"),           // Audyssey LFC
-    both(Toggles, "PSNEURAL ?"),        // Neural:X
-    both(Toggles, "PSIMAXAUD ?"),       // IMAX Audio Settings Auto/Manual
-    both(Toggles, "PSIMAXSWM ?"),       // IMAX Subwoofer Mode
-    both(Toggles, "PSSWR ?"),           // Subwoofer
-    both(Toggles, "SSTTR ?"),           // Tactile Transducer
-    both(Toggles, "VSAUDIO ?"),         // HDMI Audio Decode
-    both(Toggles, "PSCES ?"),           // CENTER Spread
-    both(Toggles, "PSLOM ?"),           // Loudness Management
-    both(Toggles, "PSCINEMA EQ. ?"),    // CINEMA EQ
-    both(Toggles, "BTTX ?"),            // Bluetooth Transmitter
-    both(Toggles, "PSSPV ?"),           // Speaker Virtualizer
-    both(Toggles, "PSGEQ ?"),           // Graphic EQ
-    both(Toggles, "PSHEQ ?"),           // Headphone EQ
-    both(Device, "DIM ?"),              // Dimmer
-    both(Device, "ECO?"),               // ECO
-    both(Device, "SLP?"),               // Sleep
-    both(Device, "Z2SLP?"),             // Z2 Sleep
-    both(Device, "Z3SLP?"),             // Z3 Sleep
-    denon(Device, "Z2QUICK ?"),         // Z2 Quick Select
-    denon(Device, "Z3QUICK ?"),         // Z3 Quick Select
-    marantz(Device, "Z2SMART ?"),       // Z2 SMART Select
-    marantz(Device, "Z3SMART ?"),       // Z3 SMART Select
-    both(Device, "VSMONI ?"),           // HDMI Output
-    both(Sound, "MNZST?"),              // All zone stereo
-    both(Sound, "PSDELAY ?"),           // Audio Delay
-    both(Signal, "SSINFSIGRES ?"),      // Video Signal
-    both(Signal, "SSINFAISFSV ?"),      // Audio Sampling Rate
-    both(Signal, "SYSDA ?"),            // Audio Signal
-    both(Signal, "SYSMI ?"),            // Audio Sound
-    both(Signal, "OPINFASP ?"),         // Output Channels
-    both(Signal, "OPINFINS ?"),         // Input Channels
-    both(Signal, "SYSDVIN ?"),          // Video Signal Input
-    both(Signal, "SYSDVOUT ?"),         // Video Signal Output
-    both(Signal, "SYHDMIDIAGMAXRES ?"), // HDMI Max Resolution
-    both(Signal, "SSINFSIGHDR ?"),      // Video HDR Format
-    both(Signal, "SSINFSIGPIX ?"),      // Video Pixel Depth
-    both(Signal, "SSINFSIGFRL ?"),      // Video Max FRL
-    both(Signal, "SSINFSIGCOS ?"),      // Signal Color Space
-    both(Signal, "SSINFSIGECI ?"),      // Signal Extended Colorimetry
-    both(Names, "OPDLS ?"),             // Dirac Live slots: name, filter and kind
-    both(Names, "PSDIRAC ?"),           // Dirac Live filter that is selected
-    both(Names, "SSFUN ?"),             // Source names
-    both(Names, "SSSOD ?"),             // Sources in use or hidden
-    both(Names, "OPSMLALL ?"),          // Sound modes that the receiver offers
-    both(Names, "NSFRN?"),              // Friendly name
-    denon(Toggles, "OPALS ?"),          // Auto Lip Sync
-    denon(Names, "SSQS ?"),             // Quick select names
-    denon(Sound, "SSLEV ?"),            // Speaker channel levels
-    both(Sound, "PSREFLEV ?"),          // Reference Level
-    both(Sound, "PSDYNVOL ?"),          // Dynamic Vol.
-    both(Device, "SPPR ?"),             // Speaker Preset
-    both(Picture, "PV?"),               // Picture Mode
-    both(Device, "DC?"),                // Digital Codec
-    both(Sound, "PSBAS ?"),             // BASS
-    both(Sound, "PSTRE ?"),             // TREBLE
-    both(Sound, "PSCNTAMT ?"),          // Containment Amount
-    both(Sound, "PSMULTEQ: ?"),         // MultEQ
-    both(Sound, "PSIMAX ?"),            // IMAX
-    both(Sound, "PSIMAXHPF ?"),         // IMAX High Pass Filter
-    both(Sound, "PSIMAXLPF ?"),         // IMAX Low Pass Filter
-    both(Sound, "PSIMAXSWO ?"),         // Subwoofer Output LFE+Main/LFE
-    both(Sound, "PSSWL ?"),             // Subwoofer Level
-    both(Device, "STBY?"),              // Auto Standby
-    both(Device, "Z2STBY?"),            // Auto Standby
-    both(Device, "Z3STBY?"),            // Auto Standby
-    both(Device, "VSVPM ?"),            // Video Process
-    both(Device, "PSFRONT?"),           // Front Speaker A/B
-    both(Device, "VSASP ?"),            // Aspect Ratio
-    both(Device, "VSVST ?"),            // Vertical Stretch
-    both(Device, "VSSC ?"),             // Analog to HDMI Resolution
-    both(Device, "VSSCH ?"),            // HDMI Upscaler
-    both(Sound, "PSLFE ?"),             // LFE Level
-    both(Sound, "PSBSC ?"),             // Bass Sync
-    both(Sound, "PSDEH ?"),             // Dialog Enhancer
-    both(Sound, "PSAUROPR ?"),          // Auro-Matic Preset
-    both(Sound, "PSAUROST ?"),          // Auro-Matic Strength
-    both(Sound, "PSAUROMODE ?"),        // AURO-3D Mode
-    both(Sound, "PSRSZ ?"),             // ROOM SIZE
-    both(Sound, "PSDIC ?"),             // Dialog Control
-    both(Sound, "PSSP: ?"),             // Effect Speaker selection
-    both(Sound, "PSDRC ?"),             // DRC
-    both(Sound, "PSDEL ?"),             // DELAY TIME
-    both(Sound, "PSRSTR ?"),            // AUDIO RESTORER
-    both(Sound, "PSCLV ?"),             // Center level
-    both(Sound, "PSPAN ?"),             // Panorama
-    both(Sound, "PSSURLEV ?"),          // Surround level compensation
-    both(Sound, "PSDIM ?"),             // Dimension
-    both(Sound, "PSCEN ?"),             // Center width
-    both(Sound, "PSCEW ?"),             // Center width, current receivers
-    both(Sound, "PSEFF ?"),             // Effect
-    both(Sound, "SD?"),                 // Audio input mode
-    both(Sound, "PSCEI ?"),             // Center image
-    marantz(Sound, "PSCEG ?"),          // Center gain
+static QUERIES: [Entry; 126] = [
+    both(Core, Query::Source, "SI?"),      // Select INPUT source
+    both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
+    both(Core, Query::Mute, "MU?"),        // Mute
+    both(Core, Query::Zone2Power, "Z2?"),  // Z2 Zone Power
+    both(Core, Query::Zone2Mute, "Z2MU?"), // Z2 Mute
+    both(Core, Query::Zone3Power, "Z3?"),  // Z3 Zone Power
+    both(Core, Query::Zone3Mute, "Z3MU?"), // Z3 Mute
+    both(Core, Query::SoundMode, "MS?"),   // Surround mode
+    both(Toggles, Query::Menu, "MNMEN?"),  // Menu
+    marantz(Core, Query::QuickSelect, "MSSMART ?"), // SMART Select
+    denon(Core, Query::QuickSelect, "MSQUICK ?"), // Quick Select
+    both(Toggles, Query::Trigger, "TR?"),  // Trigger
+    marantz(Toggles, Query::Mdax, "PSMDAX ?"), // MDAX
+    marantz(Toggles, Query::DacFilter, "PSDACFIL ?"), // DAC Filter
+    marantz(Toggles, Query::Illumination, "ILB ?"), // Illumination
+    marantz(Toggles, Query::AutoLipSync, "SSHOS ?"), // Auto Lip Sync
+    both(Toggles, Query::ToneControl, "PSTONE CTRL ?"), // TONE
+    both(Toggles, Query::DynamicEq, "PSDYNEQ ?"), // Dynamic EQ
+    both(Toggles, Query::Lfc, "PSLFC ?"),  // Audyssey LFC
+    both(Toggles, Query::NeuralX, "PSNEURAL ?"), // Neural:X
+    both(Toggles, Query::ImaxAudio, "PSIMAXAUD ?"), // IMAX Audio Settings Auto/Manual
+    both(Toggles, Query::ImaxSubwooferMode, "PSIMAXSWM ?"), // IMAX Subwoofer Mode
+    both(Toggles, Query::Subwoofer, "PSSWR ?"), // Subwoofer
+    both(Toggles, Query::TactileTransducer, "SSTTR ?"), // Tactile Transducer
+    both(Toggles, Query::HdmiAudioDecode, "VSAUDIO ?"), // HDMI Audio Decode
+    both(Toggles, Query::CenterSpread, "PSCES ?"), // CENTER Spread
+    both(Toggles, Query::LoudnessManagement, "PSLOM ?"), // Loudness Management
+    both(Toggles, Query::CinemaEq, "PSCINEMA EQ. ?"), // CINEMA EQ
+    both(Toggles, Query::BluetoothTransmitter, "BTTX ?"), // Bluetooth Transmitter
+    both(Toggles, Query::SpeakerVirtualizer, "PSSPV ?"), // Speaker Virtualizer
+    both(Toggles, Query::GraphicEq, "PSGEQ ?"), // Graphic EQ
+    both(Toggles, Query::HeadphoneEq, "PSHEQ ?"), // Headphone EQ
+    both(Device, Query::Dimmer, "DIM ?"),  // Dimmer
+    both(Device, Query::Eco, "ECO?"),      // ECO
+    both(Device, Query::Sleep, "SLP?"),    // Sleep
+    both(Device, Query::Zone2Sleep, "Z2SLP?"), // Z2 Sleep
+    both(Device, Query::Zone3Sleep, "Z3SLP?"), // Z3 Sleep
+    denon(Device, Query::Zone2QuickSelect, "Z2QUICK ?"), // Z2 Quick Select
+    denon(Device, Query::Zone3QuickSelect, "Z3QUICK ?"), // Z3 Quick Select
+    marantz(Device, Query::Zone2QuickSelect, "Z2SMART ?"), // Z2 SMART Select
+    marantz(Device, Query::Zone3QuickSelect, "Z3SMART ?"), // Z3 SMART Select
+    both(Device, Query::HdmiOutput, "VSMONI ?"), // HDMI Output
+    both(Sound, Query::AllZoneStereo, "MNZST?"), // All zone stereo
+    both(Sound, Query::AudioDelay, "PSDELAY ?"), // Audio Delay
+    both(Signal, Query::VideoResolution, "SSINFSIGRES ?"), // Video Signal
+    both(Signal, Query::SamplingRate, "SSINFAISFSV ?"), // Audio Sampling Rate
+    both(Signal, Query::AudioSignal, "SYSDA ?"), // Audio Signal
+    both(Signal, Query::AudioSound, "SYSMI ?"), // Audio Sound
+    both(Signal, Query::OutputChannels, "OPINFASP ?"), // Output Channels
+    both(Signal, Query::InputChannels, "OPINFINS ?"), // Input Channels
+    both(Signal, Query::VideoInput, "SYSDVIN ?"), // Video Signal Input
+    both(Signal, Query::VideoOutput, "SYSDVOUT ?"), // Video Signal Output
+    both(Signal, Query::HdmiMaxResolution, "SYHDMIDIAGMAXRES ?"), // HDMI Max Resolution
+    both(Signal, Query::HdrFormat, "SSINFSIGHDR ?"), // Video HDR Format
+    both(Signal, Query::PixelDepth, "SSINFSIGPIX ?"), // Video Pixel Depth
+    both(Signal, Query::MaxFrl, "SSINFSIGFRL ?"), // Video Max FRL
+    both(Signal, Query::ColorSpace, "SSINFSIGCOS ?"), // Signal Color Space
+    both(Signal, Query::ExtendedColorimetry, "SSINFSIGECI ?"), // Signal Extended Colorimetry
+    both(Names, Query::DiracSlots, "OPDLS ?"), // Dirac Live slots: name, filter and kind
+    both(Names, Query::DiracFilter, "PSDIRAC ?"), // Dirac Live filter that is selected
+    both(Names, Query::SourceNames, "SSFUN ?"), // Source names
+    both(Names, Query::SourcesInUse, "SSSOD ?"), // Sources in use or hidden
+    both(Names, Query::SoundModeList, "OPSMLALL ?"), // Sound modes that the receiver offers
+    both(Names, Query::FriendlyName, "NSFRN?"), // Friendly name
+    denon(Toggles, Query::AutoLipSync, "OPALS ?"), // Auto Lip Sync
+    denon(Names, Query::QuickSelectNames, "SSQS ?"), // Quick select names
+    denon(Sound, Query::SpeakerLevels, "SSLEV ?"), // Speaker channel levels
+    both(Sound, Query::ReferenceLevel, "PSREFLEV ?"), // Reference Level
+    both(Sound, Query::DynamicVolume, "PSDYNVOL ?"), // Dynamic Vol.
+    both(Device, Query::SpeakerPreset, "SPPR ?"), // Speaker Preset
+    both(Picture, Query::PictureMode, "PV?"), // Picture Mode
+    both(Device, Query::DigitalCodec, "DC?"), // Digital Codec
+    both(Sound, Query::Bass, "PSBAS ?"),   // BASS
+    both(Sound, Query::Treble, "PSTRE ?"), // TREBLE
+    both(Sound, Query::ContainmentAmount, "PSCNTAMT ?"), // Containment Amount
+    both(Sound, Query::MultEq, "PSMULTEQ: ?"), // MultEQ
+    both(Sound, Query::Imax, "PSIMAX ?"),  // IMAX
+    both(Sound, Query::ImaxHighPassFilter, "PSIMAXHPF ?"), // IMAX High Pass Filter
+    both(Sound, Query::ImaxLowPassFilter, "PSIMAXLPF ?"), // IMAX Low Pass Filter
+    both(Sound, Query::ImaxSubwooferOutput, "PSIMAXSWO ?"), // Subwoofer Output LFE+Main/LFE
+    both(Sound, Query::SubwooferLevel, "PSSWL ?"), // Subwoofer Level
+    both(Device, Query::AutoStandby, "STBY?"), // Auto Standby
+    both(Device, Query::Zone2AutoStandby, "Z2STBY?"), // Auto Standby
+    both(Device, Query::Zone3AutoStandby, "Z3STBY?"), // Auto Standby
+    both(Device, Query::VideoProcess, "VSVPM ?"), // Video Process
+    both(Device, Query::FrontSpeaker, "PSFRONT?"), // Front Speaker A/B
+    both(Device, Query::AspectRatio, "VSASP ?"), // Aspect Ratio
+    both(Device, Query::VerticalStretch, "VSVST ?"), // Vertical Stretch
+    both(Device, Query::AnalogToHdmiResolution, "VSSC ?"), // Analog to HDMI Resolution
+    both(Device, Query::HdmiUpscaler, "VSSCH ?"), // HDMI Upscaler
+    both(Sound, Query::LfeLevel, "PSLFE ?"), // LFE Level
+    both(Sound, Query::BassSync, "PSBSC ?"), // Bass Sync
+    both(Sound, Query::DialogEnhancer, "PSDEH ?"), // Dialog Enhancer
+    both(Sound, Query::AuroPreset, "PSAUROPR ?"), // Auro-Matic Preset
+    both(Sound, Query::AuroStrength, "PSAUROST ?"), // Auro-Matic Strength
+    both(Sound, Query::AuroMode, "PSAUROMODE ?"), // AURO-3D Mode
+    both(Sound, Query::RoomSize, "PSRSZ ?"), // ROOM SIZE
+    both(Sound, Query::DialogControl, "PSDIC ?"), // Dialog Control
+    both(Sound, Query::EffectSpeakers, "PSSP: ?"), // Effect Speaker selection
+    both(Sound, Query::Drc, "PSDRC ?"),    // DRC
+    both(Sound, Query::DelayTime, "PSDEL ?"), // DELAY TIME
+    both(Sound, Query::AudioRestorer, "PSRSTR ?"), // AUDIO RESTORER
+    both(Sound, Query::CenterLevel, "PSCLV ?"), // Center level
+    both(Sound, Query::Panorama, "PSPAN ?"), // Panorama
+    both(Sound, Query::SurroundLevel, "PSSURLEV ?"), // Surround level compensation
+    both(Sound, Query::Dimension, "PSDIM ?"), // Dimension
+    both(Sound, Query::CenterWidth, "PSCEN ?"), // Center width
+    both(Sound, Query::CenterWidthCew, "PSCEW ?"), // Center width, current receivers
+    both(Sound, Query::Effect, "PSEFF ?"), // Effect
+    both(Sound, Query::AudioInputMode, "SD?"), // Audio input mode
+    both(Sound, Query::CenterImage, "PSCEI ?"), // Center image
+    marantz(Sound, Query::CenterGain, "PSCEG ?"), // Center gain
     // The A10H and its app never get an answer to this query. It pushes the list after an input change.
-    both(Sound, "CV?"),            // Channel Volume
-    denon(Speakers, "SSSPC ?"),    // Speaker configuration
-    denon(Speakers, "SSCFR ?"),    // Speaker crossovers
-    denon(Speakers, "SSAEQLRS ?"), // Graphic EQ of each speaker group
-    both(Zones, "SSVCTZMA ?"),     // Volume settings of the main zone
-    both(Zones, "SSVCTZ2S ?"),     // Volume settings of zone 2
-    both(Zones, "Z2CV?"),          // Channel levels of zone 2
-    both(Zones, "Z3CV?"),          // Channel levels of zone 3
-    both(Zones, "SSVCTZ3S ?"),     // Volume settings of zone 3
-    both(Picture, "PVCN ?"),       // Contrast
-    both(Picture, "PVBR ?"),       // Brightness
-    both(Picture, "PVST ?"),       // Saturation
-    both(Picture, "PVDNR ?"),      // Noise Reduction
-    both(Picture, "PVENH ?"),      // Enhancer
+    both(Sound, Query::ChannelVolume, "CV?"), // Channel Volume
+    denon(Speakers, Query::SpeakerConfiguration, "SSSPC ?"), // Speaker configuration
+    denon(Speakers, Query::SpeakerCrossovers, "SSCFR ?"), // Speaker crossovers
+    denon(Speakers, Query::SpeakerGraphicEq, "SSAEQLRS ?"), // Graphic EQ of each speaker group
+    both(Zones, Query::MainZoneVolumeSettings, "SSVCTZMA ?"), // Volume settings of the main zone
+    both(Zones, Query::Zone2VolumeSettings, "SSVCTZ2S ?"), // Volume settings of zone 2
+    both(Zones, Query::Zone2ChannelLevels, "Z2CV?"), // Channel levels of zone 2
+    both(Zones, Query::Zone3ChannelLevels, "Z3CV?"), // Channel levels of zone 3
+    both(Zones, Query::Zone3VolumeSettings, "SSVCTZ3S ?"), // Volume settings of zone 3
+    both(Picture, Query::Contrast, "PVCN ?"), // Contrast
+    both(Picture, Query::Brightness, "PVBR ?"), // Brightness
+    both(Picture, Query::Saturation, "PVST ?"), // Saturation
+    both(Picture, Query::NoiseReduction, "PVDNR ?"), // Noise Reduction
+    both(Picture, Query::Enhancer, "PVENH ?"), // Enhancer
 ];
 
 #[cfg(test)]
@@ -343,6 +627,46 @@ mod tests {
             for query in state_queries(brand) {
                 assert!(query.ends_with('?'), "{query}");
             }
+        }
+    }
+
+    #[test]
+    fn every_value_has_one_query_for_each_brand_that_asks_it() {
+        for query in Query::ALL {
+            let denon = query.text(Brand::Denon);
+            let marantz = query.text(Brand::Marantz);
+            assert!(denon.is_some() || marantz.is_some(), "{query:?}");
+            for brand in BRANDS {
+                let rows = QUERIES
+                    .iter()
+                    .filter(|entry| entry.query == *query && entry.is_for(brand))
+                    .count();
+                assert!(rows <= 1, "{query:?} has {rows} queries for {brand:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_value_gives_the_query_of_the_brand() {
+        assert_eq!(Query::DiracFilter.text(Brand::Denon), Some("PSDIRAC ?"));
+        assert_eq!(Query::QuickSelect.text(Brand::Denon), Some("MSQUICK ?"));
+        assert_eq!(Query::QuickSelect.text(Brand::Marantz), Some("MSSMART ?"));
+        assert_eq!(Query::AutoLipSync.text(Brand::Denon), Some("OPALS ?"));
+        assert_eq!(Query::AutoLipSync.text(Brand::Marantz), Some("SSHOS ?"));
+        assert_eq!(Query::SpeakerGraphicEq.text(Brand::Marantz), None);
+    }
+
+    #[test]
+    fn the_values_of_a_brand_are_the_queries_of_the_brand() {
+        for brand in BRANDS {
+            let mut from_values: Vec<_> = Query::ALL
+                .iter()
+                .filter_map(|query| query.text(brand))
+                .collect();
+            let mut asked: Vec<_> = state_queries(brand).collect();
+            from_values.sort_unstable();
+            asked.sort_unstable();
+            assert_eq!(from_values, asked);
         }
     }
 

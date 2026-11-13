@@ -101,8 +101,10 @@ are fetched with `telnet_refresh_group`, or all of them by setting
 The receiver does not send the values that depend on a changed value, for
 example the Dirac Live filters when the speaker preset changes. The library does
 not ask for them: a client that shows such values listens for the event and
-asks for the group again with `telnet_refresh_group`. A client that does not
-show them does not need to.
+asks for exactly those values with `telnet_ask`, for example
+`Query::DiracFilter` and `Query::DiracSlots`. A client that does not show them
+does not need to. `Ask::Raw` asks a query as text, for a query of another model
+that the library does not know. `telnet_refresh_group` asks a whole group.
 
 The query groups, in the order of `QueryGroup::DEFAULT_ORDER`. Ask for one group
 again with `telnet_refresh_group`. The counts are the queries for a Denon and for

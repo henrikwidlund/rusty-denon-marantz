@@ -13,6 +13,6 @@ pub use command::Command;
 pub use decoder::LineDecoder;
 pub use event::{DuplicateFilter, Event, EventZone, Message};
 pub use query::{
-    DEVICE_POWER_QUERY, MAIN_ZONE_POWER_QUERY, QueryGroup, SignalPart, after_appcommand_queries,
-    group_queries, queries, signal_queries, state_queries,
+    DEVICE_POWER_QUERY, MAIN_ZONE_POWER_QUERY, Query, QueryGroup, SignalPart,
+    after_appcommand_queries, group_queries, queries, signal_queries, state_queries,
 };

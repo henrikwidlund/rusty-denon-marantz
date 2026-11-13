@@ -11,8 +11,8 @@ use common::{
     avr_x_receiver_with_pages, builder, wait_until,
 };
 use denon_marantz::{
-    Avr, Blocker, Command, Error, Feature, PageStatus, QueryGroup, SettingStatus, SkipReason,
-    TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
+    Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
+    SkipReason, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
@@ -455,6 +455,113 @@ async fn a_group_that_was_left_out_can_be_fetched_later() {
     })
     .await;
     assert_eq!(sent(&telnet)[core..], names);
+}
+
+/// A connection that fetched nothing at connect, and what it sent so far.
+async fn connected_without_queries(telnet: &FakeTelnet) -> Avr {
+    static NONE: [QueryGroup; 0] = [];
+    let config = TelnetConfig {
+        query_groups: &NONE,
+        ..telnet_config(telnet.port)
+    };
+    let (avr, _http) = connected(config).await;
+    avr.telnet_connect().await.unwrap();
+    wait_until("the first query", || !sent(telnet).is_empty()).await;
+    avr
+}
+
+#[tokio::test]
+async fn ask_sends_exactly_the_values_and_the_raw_queries() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_without_queries(&telnet).await;
+    let before = sent(&telnet).len();
+    avr.telnet_ask(&[
+        Query::DiracFilter.into(),
+        Ask::Raw("XYZ ?"),
+        Query::DynamicEq.into(),
+    ])
+    .await
+    .unwrap();
+    wait_until("the three queries", || sent(&telnet).len() >= before + 3).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        sent(&telnet)[before..],
+        ["PSDIRAC ?", "XYZ ?", "PSDYNEQ ?"].map(str::to_owned)
+    );
+}
+
+#[tokio::test]
+async fn ask_sends_nothing_if_one_entry_is_not_valid() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_without_queries(&telnet).await;
+    let before = sent(&telnet).len();
+    // A Marantz value on a Denon receiver.
+    let error = avr
+        .telnet_ask(&[Query::DynamicEq.into(), Query::Mdax.into()])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    // A raw text that is not a query.
+    let error = avr.telnet_ask(&[Ask::Raw("PWON")]).await.unwrap_err();
+    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    // A carriage return would start a new command.
+    let error = avr
+        .telnet_ask(&[Ask::Raw("MV?\rPWSTANDBY?")])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    // Nothing may follow the question mark.
+    let error = avr.telnet_ask(&[Ask::Raw("PW? ")]).await.unwrap_err();
+    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    let error = avr.telnet_ask(&[Ask::Raw("")]).await.unwrap_err();
+    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(sent(&telnet).len(), before);
+}
+
+#[tokio::test]
+async fn repeated_asks_do_not_grow_the_queue() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        query_interval: Duration::from_millis(60),
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    // The queue is slower than the requests, so these would pile up. A typed
+    // value and the same query as text count as one.
+    for _ in 0..3 {
+        avr.telnet_ask(&[Query::DynamicEq.into(), Ask::Raw("XYZ ?")])
+            .await
+            .unwrap();
+        avr.telnet_ask(&[Ask::Raw("PSDYNEQ ?")]).await.unwrap();
+    }
+    wait_until("the raw query", || {
+        sent(&telnet).contains(&"XYZ ?".to_owned())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let lines = sent(&telnet);
+    let count = |query: &str| lines.iter().filter(|line| line.as_str() == query).count();
+    assert_eq!(count("PSDYNEQ ?"), 1, "{lines:?}");
+    assert_eq!(count("XYZ ?"), 1, "{lines:?}");
+}
+
+#[tokio::test]
+async fn ask_needs_an_open_connection() {
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
+    let error = avr
+        .telnet_ask(&[Query::DiracFilter.into()])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, Error::NotConnected), "{error}");
 }
 
 #[tokio::test]
