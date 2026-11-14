@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
 use denon_marantz_proto::{
-    Brand, DeviceDescription, DeviceInfo, Error, NowPlaying, TunerPage, Zone,
+    Brand, DeviceDescription, DeviceInfo, Error, NowPlaying, TunerBand, TunerInfo, TunerPage, Zone,
 };
 
 const DEFINITIONS: [(&str, Definition); 10] = [
@@ -165,6 +165,30 @@ fn device_info_has_the_expected_values() {
         ok += 1;
     }
     assert!(ok > 15 && html > 3, "{ok} {html}");
+}
+
+#[test]
+fn device_info_tells_the_tuner() {
+    let bands = |bands: &[TunerBand]| TunerInfo::Present(bands.iter().copied().collect());
+    let (am, fm, dab) = (TunerBand::Am, TunerBand::Fm, TunerBand::Dab);
+    let cases = [
+        // Older receivers describe the tuner and its bands.
+        ("AVR-X1100W-Deviceinfo.xml", bands(&[am, fm])),
+        ("AVR-X4000-Deviceinfo.xml", bands(&[fm])),
+        ("AV7703-Deviceinfo-8080.xml", bands(&[am, fm])),
+        ("M-RC610-Deviceinfo.xml", bands(&[fm, dab])),
+        // `Control` 0: no tuner.
+        ("M-CR510-Deviceinfo.xml", TunerInfo::Absent),
+        ("DRA-N4-Deviceinfo.xml", TunerInfo::Absent),
+        // Newer receivers only link the tuner source to it.
+        ("AVC-A10H-Deviceinfo-8080.xml", bands(&[])),
+        ("AVC-X3700H-Deviceinfo-8080.xml", bands(&[])),
+    ];
+    for (name, expected) in cases {
+        let body = read_bytes(&format!("xml/{name}"));
+        let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(info.tuner, expected, "{name}");
+    }
 }
 
 #[test]

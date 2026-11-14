@@ -34,6 +34,13 @@ pub(crate) struct Children<'a> {
     source: &'a [u8],
 }
 
+/// Iterator over the elements with one name at any depth of a [`Node`].
+pub(crate) struct Descendants<'a, 'n> {
+    reader: Reader<&'a [u8]>,
+    source: &'a [u8],
+    name: &'n str,
+}
+
 impl<'a> Node<'a> {
     pub(crate) const fn new(inner: &'a [u8]) -> Self {
         Self { inner }
@@ -43,6 +50,16 @@ impl<'a> Node<'a> {
         Children {
             reader: Reader::from_reader(self.inner),
             source: self.inner,
+        }
+    }
+
+    /// The elements with this name at any depth, in document order. The
+    /// content of a match is not searched.
+    pub(crate) fn descendants<'n>(self, name: &'n str) -> Descendants<'a, 'n> {
+        Descendants {
+            reader: Reader::from_reader(self.inner),
+            source: self.inner,
+            name,
         }
     }
 
@@ -82,16 +99,7 @@ impl<'a> Node<'a> {
 
     /// Returns true if an element with this name is anywhere inside.
     pub(crate) fn contains_descendant(self, name: &str) -> bool {
-        let mut reader = Reader::from_reader(self.inner);
-        loop {
-            match reader.read_event() {
-                Ok(Event::Start(s) | Event::Empty(s)) if s.local_name().as_ref() == name => {
-                    return true;
-                }
-                Ok(Event::Eof) | Err(_) => return false,
-                Ok(_) => {}
-            }
-        }
+        self.descendants(name).next().is_some()
     }
 }
 
@@ -122,25 +130,54 @@ impl<'a> Iterator for Children<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             match self.reader.read_event().ok()? {
-                Event::Start(start) => {
-                    let span = self.reader.read_to_end(start.name()).ok()?;
-                    let range =
-                        usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;
-                    return Some(Child {
-                        start,
-                        node: Node::new(self.source.get(range)?),
-                    });
+                Event::Start(start) => return element(&mut self.reader, self.source, start),
+                Event::Empty(start) => return Some(empty_element(start)),
+                Event::Eof => return None,
+                _ => {}
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for Descendants<'a, '_> {
+    type Item = Child<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.reader.read_event().ok()? {
+                Event::Start(start) if start.local_name().as_ref() == self.name => {
+                    return element(&mut self.reader, self.source, start);
                 }
-                Event::Empty(start) => {
-                    return Some(Child {
-                        start,
-                        node: Node::new(&[]),
-                    });
+                Event::Empty(start) if start.local_name().as_ref() == self.name => {
+                    return Some(empty_element(start));
                 }
                 Event::Eof => return None,
                 _ => {}
             }
         }
+    }
+}
+
+/// The element that `start` opens, with its content. The reader moves past
+/// its end tag.
+fn element<'a>(
+    reader: &mut Reader<&'a [u8]>,
+    source: &'a [u8],
+    start: BytesStart<'a>,
+) -> Option<Child<'a>> {
+    let span = reader.read_to_end(start.name()).ok()?;
+    let range = usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;
+    Some(Child {
+        start,
+        node: Node::new(source.get(range)?),
+    })
+}
+
+/// An element without content, for example `<a/>`.
+const fn empty_element(start: BytesStart<'_>) -> Child<'_> {
+    Child {
+        start,
+        node: Node::new(&[]),
     }
 }
 
@@ -229,6 +266,17 @@ mod tests {
         ));
         assert_eq!(node.child("b").unwrap().node().text().unwrap(), "a<bA");
         assert_eq!(node.child("c").unwrap().node().text().unwrap(), "<raw>");
+    }
+
+    #[test]
+    fn descendants_are_found_at_any_depth() {
+        let node = root("<r><a><x>1</x></a><x>2<x>inner</x></x><b><c><x/></c></b></r>").node();
+        let found: Vec<String> = node
+            .descendants("x")
+            .map(|x| x.node().text().unwrap().into_owned())
+            .collect();
+        assert_eq!(found, ["1", "2", ""]);
+        assert_eq!(node.descendants("y").count(), 0);
     }
 
     #[test]

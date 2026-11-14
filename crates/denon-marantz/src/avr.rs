@@ -18,8 +18,8 @@ use denon_marantz_proto::{
     InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch,
     PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH,
     SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings,
-    TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
-    Zone,
+    TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH,
+    XlrAssign, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -143,6 +143,8 @@ pub struct Info {
     pub mac_address: Option<String>,
     /// The receiver supports Dirac Live.
     pub dirac_live: bool,
+    /// What the device information says about a tuner.
+    pub tuner: TunerInfo,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
     pub zones: Vec<Zone>,
@@ -1502,6 +1504,7 @@ impl AvrBuilder {
             comm_api_version: owned(device_info.comm_api_version.as_ref()),
             mac_address: owned(device_info.mac_address.as_ref()),
             dirac_live: device_info.dirac_live,
+            tuner: device_info.tuner,
             zones: Zone::ALL[..zone_count].to_vec(),
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");

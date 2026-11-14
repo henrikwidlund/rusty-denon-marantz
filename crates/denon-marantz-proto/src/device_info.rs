@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use crate::error::Error;
+use crate::values::TunerBand;
 use crate::xml::{Node, check_well_formed};
 
 /// URL path of `Deviceinfo.xml`.
@@ -24,6 +25,116 @@ pub struct DeviceInfo<'a> {
     /// MAC address of the wired network, as 12 hexadecimal digits without
     /// separators.
     pub mac_address: Option<Cow<'a, str>>,
+    /// What the file says about a tuner.
+    pub tuner: TunerInfo,
+}
+
+/// What `Deviceinfo.xml` says about a tuner.
+///
+/// It tells if the receiver has a tuner. It does not tell if the status page
+/// of the tuner has the band and the frequency.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TunerInfo {
+    /// The file does not say. Receivers older than about 2013 do not, and
+    /// newer receivers without a tuner may not.
+    #[default]
+    Unknown,
+    /// The receiver has no tuner.
+    Absent,
+    /// The receiver has a tuner. Receivers of about 2017 and later list no
+    /// bands, so all bands are false for them.
+    Present(TunerBands),
+}
+
+/// The bands of a tuner that `Deviceinfo.xml` lists.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TunerBands {
+    /// AM.
+    pub am: bool,
+    /// FM.
+    pub fm: bool,
+    /// DAB.
+    pub dab: bool,
+}
+
+impl TunerBands {
+    /// Returns these bands with `band` added.
+    #[must_use]
+    pub const fn with(mut self, band: TunerBand) -> Self {
+        match band {
+            TunerBand::Am => self.am = true,
+            TunerBand::Fm => self.fm = true,
+            TunerBand::Dab => self.dab = true,
+        }
+        self
+    }
+
+    /// Returns true if the band is listed.
+    #[must_use]
+    pub const fn contains(self, band: TunerBand) -> bool {
+        match band {
+            TunerBand::Am => self.am,
+            TunerBand::Fm => self.fm,
+            TunerBand::Dab => self.dab,
+        }
+    }
+
+    /// Returns true if no band is listed.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        !(self.am || self.fm || self.dab)
+    }
+}
+
+impl FromIterator<TunerBand> for TunerBands {
+    fn from_iter<I: IntoIterator<Item = TunerBand>>(bands: I) -> Self {
+        bands.into_iter().fold(Self::default(), Self::with)
+    }
+}
+
+impl TunerInfo {
+    /// Reads the tuner from the root of `Deviceinfo.xml`. Older receivers
+    /// describe it in `TunerOperation`, where `Control` 0 means none. Newer
+    /// ones only link the tuner source to `TunerOperation`. A missing or empty
+    /// `Control` is read as if there were no `TunerOperation`.
+    ///
+    /// Each zone has a `TunerOperation`. The first one (main zone) is used.
+    /// In all captures the blocks of all zones are the same.
+    fn parse(root: Node<'_>) -> Self {
+        if let Some(operation) = root.descendants("TunerOperation").next() {
+            let operation = operation.node();
+            let control = operation
+                .child("Control")
+                .and_then(|control| control.node().text());
+            match control.as_deref().map(str::trim) {
+                None | Some("") => {}
+                Some("1") => {
+                    let bands = operation
+                        .child("BandList")
+                        .into_iter()
+                        .flat_map(|list| list.node().children())
+                        .filter_map(|band| {
+                            TunerBand::from_code(band.node().child("Name")?.node().text()?.trim())
+                        })
+                        .collect();
+                    return Self::Present(bands);
+                }
+                Some(_) => return Self::Absent,
+            }
+        }
+        let linked = root.descendants("RelatedFunc").any(|func| {
+            func.node()
+                .text()
+                .is_some_and(|text| text.trim() == "TunerOperation")
+        });
+        if linked {
+            Self::Present(TunerBands::default())
+        } else {
+            Self::Unknown
+        }
+    }
 }
 
 /// Versions of the communication API that AVR-X receivers report.
@@ -63,6 +174,7 @@ impl<'a> DeviceInfo<'a> {
             dirac_live: root.contains_descendant("DiracLive"),
             category: text("CategoryName"),
             mac_address: text("MacAddress"),
+            tuner: TunerInfo::parse(root),
         })
     }
 
@@ -76,6 +188,7 @@ impl<'a> DeviceInfo<'a> {
             dirac_live: self.dirac_live,
             category: self.category.map(|v| Cow::Owned(v.into_owned())),
             mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
+            tuner: self.tuner,
         }
     }
 
@@ -149,7 +262,33 @@ mod tests {
         assert_eq!(info.model_name, None);
         assert_eq!(info.device_zones, None);
         assert!(!info.dirac_live);
+        assert_eq!(info.tuner, TunerInfo::Unknown);
         assert!(!info.is_avr_x());
+    }
+
+    #[test]
+    fn tuner_control() {
+        let tuner = |operation: &str| {
+            let xml =
+                format!("<Device_Info><TunerOperation>{operation}</TunerOperation></Device_Info>");
+            DeviceInfo::parse(xml.as_bytes()).unwrap().tuner
+        };
+        let present = tuner(
+            "<Control> 1 </Control><BandList><Band><Name>FM</Name></Band>\
+             <Band><Name>HD</Name></Band></BandList>",
+        );
+        assert_eq!(
+            present,
+            TunerInfo::Present(TunerBands::default().with(TunerBand::Fm))
+        );
+        assert_eq!(tuner("<Control>0</Control>"), TunerInfo::Absent);
+        assert_eq!(tuner("<Control/>"), TunerInfo::Unknown);
+        assert_eq!(tuner("<Control> </Control>"), TunerInfo::Unknown);
+        assert_eq!(tuner("<BandList/>"), TunerInfo::Unknown);
+        let linked = b"<Device_Info><TunerOperation/>\
+                       <Source><RelatedFunc>TunerOperation</RelatedFunc></Source></Device_Info>";
+        let linked = DeviceInfo::parse(linked).unwrap().tuner;
+        assert_eq!(linked, TunerInfo::Present(TunerBands::default()));
     }
 
     #[test]
@@ -194,10 +333,7 @@ mod tests {
         let by = |version: Option<&'static str>, model: Option<&'static str>| DeviceInfo {
             comm_api_version: version.map(Cow::Borrowed),
             model_name: model.map(Cow::Borrowed),
-            device_zones: None,
-            dirac_live: false,
-            category: None,
-            mac_address: None,
+            ..DeviceInfo::default()
         };
         assert!(by(Some("0210"), None).is_avr_x());
         assert!(by(Some("x0300y"), Some("Unknown")).is_avr_x());

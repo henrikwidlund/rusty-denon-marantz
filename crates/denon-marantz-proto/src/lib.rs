@@ -53,7 +53,7 @@ pub use brand::Brand;
 pub use channel::{Channel, ChannelLevel, ChannelVolumeCommand, Subwoofer};
 pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
-pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, is_avr_x_model};
+pub use device_info::{DEVICE_INFO_PATH, DeviceInfo, TunerBands, TunerInfo, is_avr_x_model};
 pub use device_settings::DeviceSettingValue;
 pub use error::Error;
 pub use general_menu::{
