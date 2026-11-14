@@ -92,6 +92,8 @@ mod http;
 #[cfg(feature = "http")]
 mod identify;
 #[cfg(feature = "http")]
+mod priority;
+#[cfg(feature = "http")]
 mod sound_control;
 #[cfg(feature = "http")]
 mod status;

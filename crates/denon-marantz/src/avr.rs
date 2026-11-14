@@ -21,7 +21,7 @@ use denon_marantz_proto::{
     TUNER_STATUS_PATH, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign,
     Zone,
 };
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{broadcast, watch};
 
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
@@ -36,6 +36,7 @@ use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, identify, identify_on};
 use crate::pacer::Pacing;
+use crate::priority::Priority;
 use crate::sound_control::SoundControl;
 #[cfg(feature = "telnet")]
 use crate::telnet::{Ask, Telnet, TelnetConfig, TelnetEvent, TelnetStatus};
@@ -169,6 +170,7 @@ pub struct AvrBuilder {
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
     follow_up_read: Option<FollowUpRead>,
+    background_pause: Duration,
     #[cfg(feature = "telnet")]
     telnet: TelnetConfig,
 }
@@ -211,8 +213,8 @@ pub struct Avr {
     telnet: Telnet,
     /// The reset key that was given out last.
     reset_keys: ResetKeys,
-    /// Commands over HTTP go one after the other.
-    command_gate: Mutex<()>,
+    /// Commands over HTTP go one after the other, and before the HTTP reads.
+    priority: Arc<Priority>,
     /// Reads the values that a command over HTTP changed.
     follow_up: Option<FollowUp>,
 }
@@ -229,6 +231,7 @@ impl Avr {
             probes: None,
             description_port: None,
             follow_up_read: Some(FollowUpRead::default()),
+            background_pause: Duration::from_millis(250),
             #[cfg(feature = "telnet")]
             telnet: TelnetConfig::default(),
         }
@@ -803,9 +806,10 @@ impl Avr {
     ///
     /// Commands wait for each other and for the spacing between writes (see
     /// [`TelnetConfig::command_interval`]). They go before the queries that
-    /// fill the state. This returns when the command is written. That does not
-    /// mean that the receiver did it: its answer is an event. If the command
-    /// is waiting when the future is dropped, it is still sent.
+    /// fill the state, see [`AvrBuilder::background_pause`]. This returns when
+    /// the command is written. That does not mean that the receiver did it:
+    /// its answer is an event. If the command is waiting when the future is
+    /// dropped, it is still sent.
     ///
     /// # Errors
     ///
@@ -875,11 +879,13 @@ impl Avr {
     /// of the receiver.
     ///
     /// Commands wait for each other, in the order of the calls, and for the
-    /// spacing of the HTTP requests (see [`AvrBuilder::http_config`]). This
-    /// returns when the receiver has answered the request. The answer does not
-    /// say if the receiver did the command, as on telnet. The receiver does not
-    /// send events over HTTP, so a command that changes a value of
-    /// [`Avr::update`] makes a read of these values later, see
+    /// spacing of the HTTP requests (see [`AvrBuilder::http_config`]). They go
+    /// before the HTTP reads that wait, also those of the web interface, see
+    /// [`AvrBuilder::background_pause`]. A read that has started is not
+    /// stopped. This returns when the receiver has answered the request. The
+    /// answer does not say if the receiver did the command, as on telnet. The
+    /// receiver does not send events over HTTP, so a command that changes a
+    /// value of [`Avr::update`] makes a read of these values later, see
     /// [`AvrBuilder::follow_up_read`]. The values of other settings change
     /// when they are read.
     ///
@@ -895,9 +901,8 @@ impl Avr {
             return Err(Error::QueryNeedsTelnet);
         }
         {
-            // The lock keeps the order of the callers.
-            let _turn = self.command_gate.lock().await;
-            self.http.get(&command::http_path(&line)).await?;
+            let _turn = self.priority.command().await;
+            self.http.command(&command::http_path(&line)).await?;
         }
         if let (Some(follow_up), Some(reads)) = (&self.follow_up, Reads::after(&command)) {
             follow_up.note(reads);
@@ -1331,6 +1336,20 @@ impl AvrBuilder {
         self
     }
 
+    /// Sets the time after a command in which background work waits, so that
+    /// the receiver does the command first. The default is 250 ms.
+    ///
+    /// On telnet, the queries that fill the state wait after a command from
+    /// the caller. Over HTTP, reads wait while a command over HTTP waits or
+    /// runs, and for this time after it ends. The read after a command (see
+    /// [`AvrBuilder::follow_up_read`]) does not wait for this time. A command
+    /// on telnet does not make HTTP reads wait.
+    #[must_use]
+    pub const fn background_pause(mut self, pause: Duration) -> Self {
+        self.background_pause = pause;
+        self
+    }
+
     /// Sets the port of the web interface. The default is 11080.
     #[must_use]
     pub const fn web_interface_port(mut self, port: u16) -> Self {
@@ -1384,7 +1403,9 @@ impl AvrBuilder {
             Some(probes) => identify_on(&self.host, probes, self.http).await?,
             None => identify(&self.host, self.http).await?,
         };
-        let http = Arc::new(HttpClient::new(&self.host, port, self.http)?);
+        let priority = Arc::new(Priority::new(self.background_pause));
+        let http =
+            Arc::new(HttpClient::new(&self.host, port, self.http)?.with_priority(priority.clone()));
         let description = self.description(receiver_type).await?;
         let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
 
@@ -1440,7 +1461,8 @@ impl AvrBuilder {
                 &info.host,
                 self.web_interface_port,
                 self.web_interface,
-            )?,
+            )?
+            .with_priority(priority.clone()),
             info,
             update_commands: update_commands.into_boxed_slice(),
             update_body,
@@ -1458,9 +1480,9 @@ impl AvrBuilder {
             channels,
             starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
-            telnet: Telnet::new(self.telnet, brand, single_zone),
+            telnet: Telnet::new(self.telnet, self.background_pause, brand, single_zone),
             reset_keys: ResetKeys::default(),
-            command_gate: Mutex::new(()),
+            priority,
             follow_up,
         })
     }

@@ -426,10 +426,12 @@ pub(crate) async fn web_interface_with_pages(
     .await
 }
 
-/// The settings for an `Avr` that talks to `fake`.
+/// The settings for an `Avr` that talks to `fake`, with no pause after a
+/// command.
 pub(crate) fn builder(fake: &Fake, receiver_type: ReceiverType) -> AvrBuilder {
     Avr::builder("127.0.0.1")
         .http_config(config())
+        .background_pause(Duration::ZERO)
         .probes(&[(receiver_type, fake.port)])
         .description_port(fake.port)
 }

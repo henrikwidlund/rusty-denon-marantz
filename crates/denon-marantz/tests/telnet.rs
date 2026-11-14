@@ -39,15 +39,20 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         command_interval: Duration::ZERO,
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
-        background_pause: Duration::ZERO,
         query_groups: QueryGroup::DEFAULT_ORDER,
     }
 }
 
 /// An `Avr` with a telnet connection to `telnet`.
 async fn connected(config: TelnetConfig) -> (Avr, common::Fake) {
+    connected_with_pause(config, Duration::ZERO).await
+}
+
+/// An `Avr` with a telnet connection to `telnet` and the pause after a command.
+async fn connected_with_pause(config: TelnetConfig, pause: Duration) -> (Avr, common::Fake) {
     let http = avr_x_receiver().await;
     let avr = builder(&http, ReceiverType::AvrX)
+        .background_pause(pause)
         .telnet_config(config)
         .connect()
         .await
@@ -728,10 +733,9 @@ async fn queries_wait_after_a_command() {
     let config = TelnetConfig {
         command_interval: Duration::from_millis(10),
         query_interval: Duration::from_millis(20),
-        background_pause: Duration::from_millis(300),
         ..telnet_config(telnet.port)
     };
-    let (avr, _http) = connected(config).await;
+    let (avr, _http) = connected_with_pause(config, Duration::from_millis(300)).await;
     wait_until("a few queries", || sent(&telnet).len() >= 3).await;
     avr.telnet_send(Zone::Main, Command::VolumeUp)
         .await

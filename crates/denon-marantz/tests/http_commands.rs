@@ -4,10 +4,13 @@
 
 mod common;
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use common::{AVR_X_INFO, Fake, avr_x_receiver_with_pages, builder, wait_until};
-use denon_marantz::{Avr, Command, Error, FollowUpRead, ReceiverType, Volume, Zone};
+use common::{AVR_X_INFO, Fake, avr_x_receiver_with_pages, builder, config, wait_until};
+use denon_marantz::{
+    Avr, Command, Error, FollowUpRead, HttpConfig, Pacing, ReceiverType, Volume, Zone,
+};
 
 const COMMAND: &str = "/goform/formiPhoneAppDirect.xml?";
 
@@ -306,4 +309,83 @@ async fn the_follow_up_settings_are_checked() {
         .await
         .unwrap_err();
     assert!(error.is_invalid_config(), "{error}");
+}
+
+#[tokio::test]
+async fn a_command_goes_before_the_reads_that_wait() {
+    let fake = receiver().await;
+    let avr = Arc::new(
+        builder(&fake, ReceiverType::AvrX)
+            .http_config(HttpConfig {
+                pacing: Pacing::Fixed {
+                    interval: Duration::from_millis(300),
+                },
+                ..config()
+            })
+            .follow_up_read(None)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let known = fake.requests().len();
+    let reads: Vec<_> = (0..5)
+        .map(|_| {
+            let avr = avr.clone();
+            tokio::spawn(async move { avr.update().await })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    // In a task too, so that it does not run before the reads by chance.
+    let command = tokio::spawn({
+        let avr = avr.clone();
+        async move { avr.http_send(Zone::Main, Command::VolumeUp).await }
+    });
+    command.await.unwrap().unwrap();
+    for read in reads {
+        read.await.unwrap().unwrap();
+    }
+    // The first read had started, the others waited for the command.
+    let methods: Vec<String> = fake.requests()[known..]
+        .iter()
+        .map(|seen| seen.method.clone())
+        .collect();
+    assert_eq!(methods, ["POST", "GET", "POST", "POST", "POST", "POST"]);
+}
+
+#[tokio::test]
+async fn a_read_waits_for_the_pause_after_a_command() {
+    let fake = receiver().await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .background_pause(Duration::from_millis(200))
+        .follow_up_read(None)
+        .connect()
+        .await
+        .unwrap();
+    avr.http_send(Zone::Main, Command::VolumeUp).await.unwrap();
+    let start = tokio::time::Instant::now();
+    avr.update().await.unwrap();
+    assert!(
+        start.elapsed() >= Duration::from_millis(190),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn a_key_that_is_held_down_is_read_before_it_is_released() {
+    let fake = receiver().await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .background_pause(Duration::from_millis(300))
+        .follow_up_read(Some(quick()))
+        .connect()
+        .await
+        .unwrap();
+    let known = fake.requests().len();
+    // A command every 100 ms, so there is never a pause of 300 ms.
+    for _ in 0..8 {
+        avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_ne!(reads_after(&fake, known), [] as [String; 0]);
 }

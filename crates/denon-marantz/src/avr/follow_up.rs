@@ -1,7 +1,6 @@
 //! Reads the values that a command over HTTP changed. A command over HTTP
 //! gets no answer, so the state does not change by itself.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -78,7 +77,7 @@ const DEVICE: [Definition; 3] = [
 
 /// What the worker needs to read.
 struct Reader {
-    http: Arc<HttpClient>,
+    http: HttpClient,
     channels: Channels,
     zones: Box<[Zone]>,
     method: UpdateMethod,
@@ -113,7 +112,7 @@ impl FollowUp {
     /// dropped.
     pub(super) fn start(
         config: Option<FollowUpRead>,
-        http: &Arc<HttpClient>,
+        http: &HttpClient,
         channels: &Channels,
         info: &Info,
     ) -> Result<Option<Self>, Error> {
@@ -121,7 +120,9 @@ impl FollowUp {
             return Ok(None);
         };
         let reader = Reader {
-            http: Arc::clone(http),
+            // The read is for the commands, so it does not wait for the pause
+            // after them. It runs between the commands of a key that is held.
+            http: http.without_pause(),
             channels: channels.clone(),
             zones: info.zones.clone().into_boxed_slice(),
             method: info.update_method,

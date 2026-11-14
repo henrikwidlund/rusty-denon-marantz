@@ -6,6 +6,7 @@
 
 use std::error::Error as StdError;
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -18,6 +19,7 @@ use tokio::time::Instant;
 
 use crate::error::Error;
 use crate::pacer::{Adaptive, Pacer, Pacing};
+use crate::priority::Priority;
 
 /// Settings of an [`HttpClient`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,7 +27,8 @@ pub struct HttpConfig {
     /// Time allowed to open a connection.
     pub connect_timeout: Duration,
     /// Time allowed for a whole request, from sending it until the answer is read.
-    /// It includes the connect time and the wait for the pacer is not counted.
+    /// It includes the connect time. The wait for the pacer and for commands
+    /// is not counted.
     pub request_timeout: Duration,
     /// Largest answer that is accepted, in bytes.
     pub max_response_bytes: usize,
@@ -65,7 +68,11 @@ pub struct HttpClient {
     client: Client<HttpConnector, Full<Bytes>>,
     authority: hyper::http::uri::Authority,
     config: HttpConfig,
-    pacer: Pacer,
+    pacer: Arc<Pacer>,
+    /// Makes the requests wait for the commands, if set.
+    priority: Option<Arc<Priority>>,
+    /// The requests also wait for the pause after the last command.
+    pause: bool,
 }
 
 impl HttpClient {
@@ -94,8 +101,31 @@ impl HttpClient {
             client,
             authority,
             config,
-            pacer: Pacer::new(config.pacing)?,
+            pacer: Arc::new(Pacer::new(config.pacing)?),
+            priority: None,
+            pause: true,
         })
+    }
+
+    /// The requests wait for the commands of `priority`. Commands are sent
+    /// with [`HttpClient::command`].
+    pub(crate) fn with_priority(mut self, priority: Arc<Priority>) -> Self {
+        self.priority = Some(priority);
+        self
+    }
+
+    /// A client that shares the connections, the pacer and the commands of
+    /// this one. Its requests wait for the commands, but not for the pause
+    /// after them.
+    pub(crate) fn without_pause(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            authority: self.authority.clone(),
+            config: self.config,
+            pacer: Arc::clone(&self.pacer),
+            priority: self.priority.clone(),
+            pause: false,
+        }
     }
 
     /// Host and port of the receiver.
@@ -162,8 +192,35 @@ impl HttpClient {
         })
     }
 
-    async fn send(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+    /// Sends a command as a GET request. Unlike the other requests, it does
+    /// not wait for the commands. The caller holds the turn of the command.
+    pub(crate) async fn command(&self, path: &str) -> Result<Bytes, Error> {
         self.pacer.wait().await;
+        self.timed(Method::GET, path, Bytes::new()).await
+    }
+
+    async fn send(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+        self.wait_turn().await;
+        self.timed(method, path, body).await
+    }
+
+    /// Waits for the pacer and, if set, for the commands. A command that comes
+    /// while the request waits for the pacer goes first.
+    async fn wait_turn(&self) {
+        let Some(priority) = &self.priority else {
+            return self.pacer.wait().await;
+        };
+        loop {
+            priority.read(self.pause).await;
+            self.pacer.wait().await;
+            if priority.read_allowed(self.pause) {
+                return;
+            }
+        }
+    }
+
+    /// Sends a request with the time limit, after the wait.
+    async fn timed(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
         let started = Instant::now();
         tracing::trace!(host = self.authority(), %method, path, "request");
         let result = tokio::time::timeout(

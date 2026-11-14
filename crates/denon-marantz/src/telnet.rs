@@ -70,9 +70,6 @@ pub struct TelnetConfig {
     /// queries is answered late. A query does not wait longer than
     /// one second after the last write.
     pub query_quiet: Duration,
-    /// Time after a command from the caller in which queries wait, so that the
-    /// receiver answers the command first.
-    pub background_pause: Duration,
     /// The groups of queries that fill the state after a connect, in the order
     /// that they are sent. A group that is left out stays empty until the
     /// receiver reports a change, or until it is fetched with
@@ -96,7 +93,6 @@ impl Default for TelnetConfig {
             command_interval: Duration::from_millis(50),
             query_interval: Duration::from_millis(50),
             query_quiet: Duration::from_millis(50),
-            background_pause: Duration::from_millis(250),
             query_groups: QueryGroup::START_ORDER,
         }
     }
@@ -196,6 +192,8 @@ enum Request {
 #[derive(Debug)]
 pub(crate) struct Telnet {
     config: TelnetConfig,
+    /// See [`AvrBuilder::background_pause`](crate::AvrBuilder::background_pause).
+    background_pause: Duration,
     queries: Queries,
     events: broadcast::Sender<TelnetEvent>,
     status: watch::Sender<TelnetStatus>,
@@ -240,9 +238,15 @@ impl Queries {
 }
 
 impl Telnet {
-    pub(crate) fn new(config: TelnetConfig, brand: Brand, single_zone: bool) -> Self {
+    pub(crate) fn new(
+        config: TelnetConfig,
+        background_pause: Duration,
+        brand: Brand,
+        single_zone: bool,
+    ) -> Self {
         Self {
             config,
+            background_pause,
             queries: Queries {
                 brand,
                 single_zone,
@@ -294,6 +298,7 @@ impl Telnet {
         let worker = Worker {
             host: host.to_owned(),
             config: self.config,
+            background_pause: self.background_pause,
             queries: self.queries,
             first: first.map(|queries| queries.into_iter().map(Cow::Borrowed).collect()),
             channels: channels.clone(),
@@ -468,6 +473,7 @@ impl std::fmt::Display for End {
 struct Worker {
     host: String,
     config: TelnetConfig,
+    background_pause: Duration,
     queries: Queries,
     /// The queries of the first session, if they are not the ones of `queries`.
     first: Option<VecDeque<Cow<'static, str>>>,
@@ -526,7 +532,7 @@ impl Queue {
     /// write. A query waits for the query interval, and for the pause after
     /// the last line from the caller. It also waits until the receiver is quiet,
     /// but not longer than [`MAX_QUERY_WAIT`] after the last write.
-    fn write_time(&self, config: &TelnetConfig) -> Option<Instant> {
+    fn write_time(&self, config: &TelnetConfig, background_pause: Duration) -> Option<Instant> {
         let after_last = |interval: Duration| {
             self.last_write
                 .map_or_else(Instant::now, |written| written + interval)
@@ -541,7 +547,7 @@ impl Queue {
             }
             let after_command = self
                 .last_user_write
-                .map(|written| written + config.background_pause);
+                .map(|written| written + background_pause);
             Some(after_command.map_or(spaced, |time| time.max(spaced)))
         } else {
             None
@@ -698,7 +704,7 @@ impl Worker {
         let mut idle_since = Instant::now();
         let mut asked = false;
         let end = loop {
-            let write_time = queue.write_time(&self.config);
+            let write_time = queue.write_time(&self.config, self.background_pause);
             tokio::select! {
                 biased;
                 _ = shutdown.changed() => break End::Shutdown,
@@ -959,10 +965,9 @@ mod tests {
                 "{config:?}"
             );
         }
-        // No spacing and no pause are allowed, for tests and fast receivers.
+        // No spacing is allowed, for tests and fast receivers.
         let none = TelnetConfig {
             command_interval: Duration::ZERO,
-            background_pause: Duration::ZERO,
             ..default
         };
         assert!(none.check().is_ok());
@@ -1044,36 +1049,36 @@ mod tests {
             command_interval: Duration::from_millis(50),
             query_interval: Duration::from_millis(100),
             query_quiet: Duration::from_millis(50),
-            background_pause: Duration::from_millis(250),
             ..TelnetConfig::default()
         };
         let ms = Duration::from_millis;
+        let pause = ms(250);
         let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]));
         let start = Instant::now();
         // The first write is due at once.
-        assert_eq!(queue.write_time(&config), Some(start));
+        assert_eq!(queue.write_time(&config, pause), Some(start));
         // A line from the caller goes first. It waits for the command interval.
         queue.user.push_back(Outgoing {
             line: "MVUP\r".to_owned(),
             done: None,
         });
         queue.last_write = Some(start);
-        assert_eq!(queue.write_time(&config), Some(start + ms(50)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(50)));
         // A query waits for the longer query interval.
         queue.user.clear();
-        assert_eq!(queue.write_time(&config), Some(start + ms(100)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(100)));
         // After a command, queries wait for the pause.
         queue.last_user_write = Some(start);
-        assert_eq!(queue.write_time(&config), Some(start + ms(250)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(250)));
         // If the last write is later, the interval counts from there.
         queue.last_write = Some(start + ms(400));
-        assert_eq!(queue.write_time(&config), Some(start + ms(500)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(500)));
         // A query waits until the receiver is quiet, but not for ever.
         queue.last_read = Some(start + ms(480));
-        assert_eq!(queue.write_time(&config), Some(start + ms(530)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(530)));
         queue.last_read = Some(start + ms(1390));
-        assert_eq!(queue.write_time(&config), Some(start + ms(1400)));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(1400)));
         queue.background.clear();
-        assert_eq!(queue.write_time(&config), None);
+        assert_eq!(queue.write_time(&config, pause), None);
     }
 }
