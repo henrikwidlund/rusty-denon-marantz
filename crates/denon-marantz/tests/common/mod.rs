@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use denon_marantz::{Avr, AvrBuilder, HttpConfig, Pacing};
+use denon_marantz::{Avr, AvrBuilder, FollowUpRead, HttpConfig, Pacing};
 use denon_marantz_proto::ReceiverType;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -424,6 +424,27 @@ pub(crate) async fn web_interface_with_pages(
             .map_or(Reply::Status(404), |(_, body)| Reply::Body(body.to_vec()))
     })
     .await
+}
+
+/// A read after commands that comes soon, so that tests are quick.
+pub(crate) const fn quick_follow_up() -> FollowUpRead {
+    FollowUpRead {
+        quiet: Duration::from_millis(60),
+        longest_wait: Duration::from_millis(200),
+        retry_every: Duration::from_millis(100),
+        retries: 1,
+    }
+}
+
+/// The bodies of the requests after the first `known` requests that `keep`
+/// selects.
+pub(crate) fn bodies_after(fake: &Fake, known: usize, keep: impl Fn(&Seen) -> bool) -> Vec<String> {
+    fake.requests()
+        .into_iter()
+        .skip(known)
+        .filter(|seen| keep(seen))
+        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
+        .collect()
 }
 
 /// The settings for an `Avr` that talks to `fake`, with no pause after a

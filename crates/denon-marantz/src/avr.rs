@@ -57,9 +57,9 @@ pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart, Tel
 const DEFAULT_NAME: &str = "AVR";
 
 /// Queries that fill the state. The answer has one item for each, in this order.
-/// Receivers of the 2016 generation and later get [`appcommand::GET_TONE_CONTROL`]
-/// after them.
-const UPDATE_COMMANDS: [Definition; 12] = [
+/// [`appcommand::GET_TONE_CONTROL`] is last, so that it can be left out for a
+/// receiver that does not answer it.
+const UPDATE_COMMANDS: [Definition; 13] = [
     appcommand::GET_ALL_ZONE_POWER_STATUS,
     appcommand::GET_AUTO_STANDBY,
     appcommand::GET_DIMMER,
@@ -72,11 +72,15 @@ const UPDATE_COMMANDS: [Definition; 12] = [
     appcommand::GET_DELETED_SOURCE,
     appcommand::GET_ZONE_NAME,
     appcommand::GET_FRIENDLY_NAME,
+    appcommand::GET_TONE_CONTROL,
 ];
 
-/// The queries of `AppCommand0300.xml` that [`Avr::update_signal`] sends for a
-/// receiver of the 2016 generation and later: the Audyssey settings, the
-/// video and audio signal, and the channels of the signal and of the speakers.
+/// [`UPDATE_COMMANDS`] without tone control.
+const UPDATE_COMMANDS_WITHOUT_TONE: &[Definition] = UPDATE_COMMANDS.split_last().unwrap().1;
+
+/// The queries of `AppCommand0300.xml` that [`Avr::update_signal_and_audyssey`]
+/// sends: the Audyssey settings, the video and audio signal, and the channels
+/// of the signal and of the speakers.
 const APPCOMMAND0300_COMMANDS: [Definition; 5] = [
     appcommand::GET_AUDYSSEY,
     appcommand::GET_VIDEO_INFO,
@@ -187,24 +191,22 @@ pub struct Avr {
     /// The web interface on its own port.
     web_interface: HttpClient,
     info: Info,
-    /// The queries of [`Avr::update`].
-    update_commands: Box<[Definition]>,
-    /// The request body of `update_commands`.
+    /// The request body of [`UPDATE_COMMANDS`].
     update_body: Bytes,
+    /// The request body of [`UPDATE_COMMANDS_WITHOUT_TONE`].
+    update_body_without_tone: Bytes,
     /// The request body of [`HTTP_ONLY_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_body: Bytes,
     /// The request body of [`HTTP_ONLY_WITH_DEVICE_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_with_device_body: Bytes,
-    /// The request body of [`APPCOMMAND0300_COMMANDS`]. Receivers of the 2016
-    /// generation and later have them.
+    /// The request body of [`APPCOMMAND0300_COMMANDS`].
     appcommand0300_body: Bytes,
-    /// The receiver does not answer the queries of `AppCommand0300.xml`, so
-    /// they are not asked again.
-    appcommand0300_missing: AtomicBool,
-    /// The last [`Avr::update_signal`] read the signal and the channels with
-    /// `AppCommand0300.xml`.
+    /// Reads that the receiver does not answer.
+    missing: Arc<Missing>,
+    /// The last [`Avr::update_signal_and_audyssey`] read the signal and the
+    /// channels with `AppCommand0300.xml`.
     signal_from_appcommand: AtomicBool,
     channels: Channels,
     /// A start is running, see [`Avr::start_with`].
@@ -217,6 +219,35 @@ pub struct Avr {
     priority: Arc<Priority>,
     /// Reads the values that a command over HTTP changed.
     follow_up: Option<FollowUp>,
+}
+
+/// Reads that the receiver does not answer, so they are not asked again.
+#[derive(Debug)]
+struct Missing {
+    /// `AppCommand0300.xml` answered 404.
+    appcommand0300: AtomicBool,
+    /// A request with tone control failed, and the receiver may not have it.
+    tone_control: AtomicBool,
+    /// The receiver is older than the 2016 models, which all have tone
+    /// control.
+    tone_control_optional: bool,
+}
+
+impl Missing {
+    fn new(receiver_type: ReceiverType) -> Self {
+        Self {
+            appcommand0300: AtomicBool::new(false),
+            tone_control: AtomicBool::new(false),
+            tone_control_optional: receiver_type == ReceiverType::AvrX,
+        }
+    }
+
+    /// A request with tone control that failed with `error` can mean that
+    /// the receiver does not have tone control. It may leave out the item or
+    /// refuse the request.
+    const fn may_lack_tone_control(&self, error: &Error) -> bool {
+        self.tone_control_optional && !error.is_unreachable()
+    }
 }
 
 impl Avr {
@@ -274,6 +305,8 @@ impl Avr {
     ///
     /// Returns an error if the receiver cannot be reached, or if an answer is
     /// not valid. Values that were read before the error stay in the state.
+    /// An `AvrX` whose answer fails with tone control and works without it is
+    /// read without tone control from then on.
     pub async fn update(&self) -> Result<(), Error> {
         match self.info.update_method {
             UpdateMethod::AppCommand => self.update_with_appcommand().await,
@@ -694,18 +727,7 @@ impl Avr {
     /// What the source of the main zone plays, from its name or its telnet
     /// name. A source that has a name of the user is found by that name.
     fn playing_kind(&self) -> Option<PlayingKind> {
-        let state = self.channels.watch_state();
-        let state = state.borrow();
-        let source = state.zone(Zone::Main).source.as_deref()?;
-        denon_marantz_proto::source::playing_kind(source).or_else(|| {
-            state
-                .device()
-                .sources
-                .as_slice()
-                .iter()
-                .find(|info| info.name.as_deref() == Some(source))
-                .and_then(|info| denon_marantz_proto::source::playing_kind(&info.code))
-        })
+        playing_kind(&self.channels)
     }
 
     /// Returns true if the state shows that a Dirac ART filter is active.
@@ -904,7 +926,7 @@ impl Avr {
             let _turn = self.priority.command().await;
             self.http.command(&command::http_path(&line)).await?;
         }
-        if let (Some(follow_up), Some(reads)) = (&self.follow_up, Reads::after(&command)) {
+        if let (Some(follow_up), Some(reads)) = (&self.follow_up, Reads::after(zone, &command)) {
             follow_up.note(reads);
         }
         Ok(())
@@ -1095,10 +1117,36 @@ impl Avr {
     }
 
     async fn update_with_appcommand(&self) -> Result<(), Error> {
+        if !self.missing.tone_control.load(Ordering::Relaxed) {
+            let result = self
+                .read_appcommand(
+                    Endpoint::AppCommand,
+                    &UPDATE_COMMANDS,
+                    self.update_body.clone(),
+                )
+                .await;
+            let Err(error) = &result else {
+                return result;
+            };
+            if !self.missing.may_lack_tone_control(error) {
+                return result;
+            }
+            let without = self.update_without_tone().await;
+            if without.is_ok() {
+                tracing::debug!(host = %self.info.host, "tone control is left out of the update");
+                self.missing.tone_control.store(true, Ordering::Relaxed);
+                return without;
+            }
+            return result;
+        }
+        self.update_without_tone().await
+    }
+
+    async fn update_without_tone(&self) -> Result<(), Error> {
         self.read_appcommand(
             Endpoint::AppCommand,
-            &self.update_commands,
-            self.update_body.clone(),
+            UPDATE_COMMANDS_WITHOUT_TONE,
+            self.update_body_without_tone.clone(),
         )
         .await
     }
@@ -1116,7 +1164,7 @@ impl Avr {
     /// [`DeviceState::signal`](denon_marantz_proto::DeviceState::signal) and,
     /// for Audyssey, in the fields of [`DeviceState`](denon_marantz_proto::DeviceState).
     ///
-    /// Only receivers of the 2016 generation and later have it. The result is
+    /// Receivers that are read with `AppCommand` are asked. The result is
     /// [`PageStatus::NotFound`] for another receiver and for a receiver that
     /// answers 404, and then it is not asked again. Another refusal or an
     /// answer that cannot be read gives [`PageStatus::Refused`] or
@@ -1130,9 +1178,9 @@ impl Avr {
     ///
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
-    pub async fn update_signal(&self) -> Result<PageStatus, Error> {
-        if self.info.receiver_type != ReceiverType::AvrX2016
-            || self.appcommand0300_missing.load(Ordering::Relaxed)
+    pub async fn update_signal_and_audyssey(&self) -> Result<PageStatus, Error> {
+        if self.info.update_method != UpdateMethod::AppCommand
+            || self.missing.appcommand0300.load(Ordering::Relaxed)
         {
             return Ok(PageStatus::NotFound);
         }
@@ -1192,7 +1240,7 @@ impl Avr {
                 Ok(match error {
                     // Only a missing file means that the receiver does not have it.
                     Error::Status { status: 404, .. } => {
-                        self.appcommand0300_missing.store(true, Ordering::Relaxed);
+                        self.missing.appcommand0300.store(true, Ordering::Relaxed);
                         PageStatus::NotFound
                     }
                     Error::Status { status, .. } => PageStatus::Refused(status),
@@ -1283,6 +1331,22 @@ async fn read_appcommand(
         Ok(())
     })
     .await
+}
+
+/// What the source of the main zone plays, from the state of `channels`.
+fn playing_kind(channels: &Channels) -> Option<PlayingKind> {
+    let state = channels.watch_state();
+    let state = state.borrow();
+    let source = state.zone(Zone::Main).source.as_deref()?;
+    denon_marantz_proto::source::playing_kind(source).or_else(|| {
+        state
+            .device()
+            .sources
+            .as_slice()
+            .iter()
+            .find(|info| info.name.as_deref() == Some(source))
+            .and_then(|info| denon_marantz_proto::source::playing_kind(&info.code))
+    })
 }
 
 /// Reads the status pages of each zone into the state of `channels`.
@@ -1442,18 +1506,21 @@ impl AvrBuilder {
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
 
-        let mut update_commands = UPDATE_COMMANDS.to_vec();
-        if receiver_type == ReceiverType::AvrX2016 {
-            update_commands.push(appcommand::GET_TONE_CONTROL);
-        }
-        let commands: Vec<Cmd<'_>> = update_commands
-            .iter()
-            .map(|definition| definition.cmd)
-            .collect();
-        let update_body = request_body(&commands)?;
         let single_zone = device_info.device_zones == Some(1);
         let channels = Channels::new(State::new(single_zone));
-        let follow_up = FollowUp::start(self.follow_up_read, &http, &channels, &info)?;
+        let missing = Arc::new(Missing::new(receiver_type));
+        let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
+        #[cfg(feature = "telnet")]
+        let telnet = Telnet::new(self.telnet, self.background_pause, brand, single_zone);
+        let follow_up = FollowUp::start(
+            self.follow_up_read,
+            &http,
+            &channels,
+            &info,
+            &missing,
+            #[cfg(feature = "telnet")]
+            telnet.watch_status(),
+        )?;
         Ok(Avr {
             http,
             web_interface: HttpClient::new(
@@ -1463,8 +1530,10 @@ impl AvrBuilder {
             )?
             .with_priority(priority.clone()),
             info,
-            update_commands: update_commands.into_boxed_slice(),
-            update_body,
+            update_body: request_body(&update_cmds)?,
+            update_body_without_tone: request_body(
+                &update_cmds[..UPDATE_COMMANDS_WITHOUT_TONE.len()],
+            )?,
             #[cfg(feature = "telnet")]
             http_only_body: request_body(&HTTP_ONLY_COMMANDS.map(|definition| definition.cmd))?,
             #[cfg(feature = "telnet")]
@@ -1474,12 +1543,12 @@ impl AvrBuilder {
             appcommand0300_body: request_body(
                 &APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd),
             )?,
-            appcommand0300_missing: AtomicBool::new(false),
+            missing,
             signal_from_appcommand: AtomicBool::new(false),
             channels,
             starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
-            telnet: Telnet::new(self.telnet, self.background_pause, brand, single_zone),
+            telnet,
             reset_keys: ResetKeys::default(),
             priority,
             follow_up,

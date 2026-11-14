@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use common::{
     AVR_X_DIRAC_INFO, AVR_X_INFO, FakeTelnet, appcommand0300_answer, avr_x_receiver,
-    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, receiver_with_audyssey,
-    wait_until,
+    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, quick_follow_up,
+    receiver_with_audyssey, wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
@@ -70,6 +70,38 @@ async fn status_is(avr: &Avr, wanted: TelnetStatus) {
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for {wanted:?}"))
     .unwrap();
+}
+
+#[tokio::test]
+async fn an_audyssey_command_over_http_is_not_read_while_telnet_is_open() {
+    // A blank answer would clear what telnet reported, and telnet reports the
+    // change itself. Tone control is still read.
+    const PAGES: &[(&str, &[u8])] = &[
+        ("/goform/formiPhoneAppDirect.xml?PSDYNEQ%20ON", b""),
+        ("/goform/formiPhoneAppDirect.xml?PSBAS%20UP", b""),
+    ];
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver_with_pages(AVR_X_INFO, PAGES).await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .follow_up_read(Some(quick_follow_up()))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    let asked = |text: &str| {
+        http.requests()
+            .iter()
+            .filter(|seen| String::from_utf8_lossy(&seen.body).contains(text))
+            .count()
+    };
+    avr.http_send(Zone::Main, Command::DynamicEq(true))
+        .await
+        .unwrap();
+    avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
+    wait_until("the tone read", || asked("GetToneControl") > 0).await;
+    assert_eq!(asked("GetAudyssey"), 0);
 }
 
 #[tokio::test]
@@ -289,7 +321,10 @@ async fn blank_audyssey_values_over_http_keep_the_telnet_values() {
     })
     .await;
 
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     let state = avr.snapshot();
     let device = state.device();
     assert_eq!(device.dynamic_eq, Some(false));

@@ -7,7 +7,11 @@ mod common;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{AVR_X_INFO, Fake, avr_x_receiver_with_pages, builder, config, wait_until};
+use common::{
+    AVR_X_INFO, Fake, Reply, avr_x_receiver_with_pages, bodies_after, builder, config,
+    friendly_name_answer, is_friendly_name_request, quick_follow_up, update_answer_for, wait_until,
+};
+use denon_marantz::proto::{TUNER_STATUS_PATH, TunerCommand};
 use denon_marantz::{
     Avr, Command, Error, FollowUpRead, HttpConfig, Pacing, ReceiverType, Volume, Zone,
 };
@@ -23,16 +27,15 @@ const PAGES: &[(&str, &[u8])] = &[
     ("/goform/formiPhoneAppDirect.xml?SIGAME", b""),
     ("/goform/formiPhoneAppDirect.xml?MUON", b""),
     ("/goform/formiPhoneAppDirect.xml?PSBAS%2050", b""),
+    ("/goform/formiPhoneAppDirect.xml?PSBAS%20UP", b""),
+    ("/goform/formiPhoneAppDirect.xml?Z2PSBAS%20UP", b""),
+    ("/goform/formiPhoneAppDirect.xml?PSDYNEQ%20ON", b""),
+    ("/goform/formiPhoneAppDirect.xml?TFANUP", b""),
 ];
 
-const fn quick() -> FollowUpRead {
-    FollowUpRead {
-        quiet: Duration::from_millis(60),
-        longest_wait: Duration::from_millis(200),
-        retry_every: Duration::from_millis(100),
-        retries: 1,
-    }
-}
+/// A status page of the tuner on FM 87.50 MHz.
+const TUNER_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/Own-formTuner_TunerXml-fm.xml");
 
 async fn receiver() -> Fake {
     avr_x_receiver_with_pages(AVR_X_INFO, PAGES).await
@@ -56,12 +59,7 @@ fn commands(fake: &Fake) -> Vec<String> {
 
 /// The `AppCommand` requests after the first `known` requests.
 fn reads_after(fake: &Fake, known: usize) -> Vec<String> {
-    fake.requests()
-        .into_iter()
-        .skip(known)
-        .filter(|seen| seen.method == "POST")
-        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
-        .collect()
+    bodies_after(fake, known, |seen| seen.method == "POST")
 }
 
 #[tokio::test]
@@ -131,7 +129,7 @@ async fn a_refused_command_is_an_error() {
 #[tokio::test]
 async fn a_volume_command_reads_only_the_volume_and_mute() {
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     let known = fake.requests().len();
     avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
     wait_until("the read", || !reads_after(&fake, known).is_empty()).await;
@@ -146,7 +144,7 @@ async fn a_volume_command_reads_only_the_volume_and_mute() {
 #[tokio::test]
 async fn a_key_that_is_held_down_causes_few_reads() {
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     let known = fake.requests().len();
     let main = avr.zone(Zone::Main).unwrap();
     // At least 600 ms of commands, one every 5 ms.
@@ -177,7 +175,7 @@ async fn late_values_are_read_again_until_one_changes() {
     let config = FollowUpRead {
         quiet: Duration::from_millis(400),
         longest_wait: Duration::from_secs(2),
-        ..quick()
+        ..quick_follow_up()
     };
     let avr = connect(&fake, Some(config)).await;
     avr.update().await.unwrap();
@@ -206,7 +204,7 @@ async fn the_retries_are_as_many_as_set() {
     let fake = receiver().await;
     let config = FollowUpRead {
         retries: 3,
-        ..quick()
+        ..quick_follow_up()
     };
     let avr = connect(&fake, Some(config)).await;
     avr.update().await.unwrap();
@@ -223,7 +221,7 @@ async fn a_read_that_shows_a_change_ends_the_retries() {
     let fake = receiver().await;
     let config = FollowUpRead {
         retries: 3,
-        ..quick()
+        ..quick_follow_up()
     };
     let avr = connect(&fake, Some(config)).await;
     let known = fake.requests().len();
@@ -237,7 +235,7 @@ async fn a_read_that_shows_a_change_ends_the_retries() {
 #[tokio::test]
 async fn a_volume_command_is_not_read_a_second_time() {
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     let known = fake.requests().len();
     avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
     wait_until("the read", || !reads_after(&fake, known).is_empty()).await;
@@ -249,7 +247,7 @@ async fn a_volume_command_is_not_read_a_second_time() {
 async fn a_read_after_a_command_puts_the_values_into_the_state() {
     // The state is empty. If a read failed, the values would stay empty.
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
     wait_until("the volume", || {
         avr.snapshot().zone(Zone::Main).volume.map(Volume::db) == Some(-36.5)
@@ -261,7 +259,7 @@ async fn a_read_after_a_command_puts_the_values_into_the_state() {
 #[tokio::test]
 async fn commands_of_different_kinds_are_each_read() {
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     let known = fake.requests().len();
     let main = avr.zone(Zone::Main).unwrap();
     main.power_on().await.unwrap();
@@ -275,7 +273,7 @@ async fn commands_of_different_kinds_are_each_read() {
 #[tokio::test]
 async fn a_command_that_the_read_does_not_cover_causes_no_read() {
     let fake = receiver().await;
-    let avr = connect(&fake, Some(quick())).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
     let known = fake.requests().len();
     avr.http_send(Zone::Main, Command::Raw("PSBAS 50"))
         .await
@@ -377,7 +375,7 @@ async fn a_key_that_is_held_down_is_read_before_it_is_released() {
     let fake = receiver().await;
     let avr = builder(&fake, ReceiverType::AvrX)
         .background_pause(Duration::from_millis(300))
-        .follow_up_read(Some(quick()))
+        .follow_up_read(Some(quick_follow_up()))
         .connect()
         .await
         .unwrap();
@@ -388,4 +386,144 @@ async fn a_key_that_is_held_down_is_read_before_it_is_released() {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert_ne!(reads_after(&fake, known), [] as [String; 0]);
+}
+
+/// The requests after the first `known` requests that went to `path`, with
+/// their bodies.
+fn bodies_to(fake: &Fake, known: usize, path: &str) -> Vec<String> {
+    bodies_after(fake, known, |seen| seen.path == path)
+}
+
+#[tokio::test]
+async fn a_bass_command_reads_tone_control() {
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
+    wait_until("the read", || !reads_after(&fake, known).is_empty()).await;
+    let reads = reads_after(&fake, known);
+    assert!(reads[0].contains("GetToneControl"), "{}", reads[0]);
+    assert!(!reads[0].contains("GetAllZoneVolume"), "{}", reads[0]);
+}
+
+#[tokio::test]
+async fn a_bass_command_in_zone_2_causes_no_read() {
+    // The read of tone control has the main zone only.
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    avr.http_send(Zone::Zone2, Command::BassUp).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(reads_after(&fake, known), [] as [String; 0]);
+}
+
+#[tokio::test]
+async fn an_audyssey_command_reads_the_audyssey_settings() {
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    avr.http_send(Zone::Main, Command::DynamicEq(true))
+        .await
+        .unwrap();
+    let path = "/goform/AppCommand0300.xml";
+    wait_until("the read", || !bodies_to(&fake, known, path).is_empty()).await;
+    let reads = bodies_to(&fake, known, path);
+    assert!(reads[0].contains("GetAudyssey"), "{}", reads[0]);
+    assert!(!reads[0].contains("GetVideoInfo"), "{}", reads[0]);
+}
+
+#[tokio::test]
+async fn a_missing_audyssey_file_is_not_asked_again() {
+    // The fake receiver answers 404 for `AppCommand0300.xml`.
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    let path = "/goform/AppCommand0300.xml";
+    avr.http_send(Zone::Main, Command::DynamicEq(true))
+        .await
+        .unwrap();
+    wait_until("the read", || !bodies_to(&fake, known, path).is_empty()).await;
+    avr.http_send(Zone::Main, Command::DynamicEq(true))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(bodies_to(&fake, known, path).len(), 1);
+}
+
+#[tokio::test]
+async fn a_failed_tone_read_of_an_older_receiver_is_not_sent_again() {
+    let fake = Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("GET", path) if path.starts_with(COMMAND) => Reply::Body(Vec::new()),
+        ("POST", _) if is_friendly_name_request(&seen.body) => {
+            Reply::Body(friendly_name_answer("X"))
+        }
+        ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
+            Reply::Status(500)
+        }
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    let tone_reads = || {
+        bodies_after(&fake, known, |seen| seen.method == "POST")
+            .iter()
+            .filter(|body| body.contains("GetToneControl"))
+            .count()
+    };
+    avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
+    wait_until("the read", || tone_reads() > 0).await;
+    avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(tone_reads(), 1);
+}
+
+/// A receiver whose main zone plays the tuner.
+async fn tuner_receiver() -> Fake {
+    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("GET", TUNER_STATUS_PATH) => Reply::Body(TUNER_PAGE.to_vec()),
+        ("GET", path) if path.starts_with(COMMAND) => Reply::Body(Vec::new()),
+        ("POST", _) if is_friendly_name_request(&seen.body) => {
+            Reply::Body(friendly_name_answer("X"))
+        }
+        ("POST", "/goform/AppCommand.xml") => Reply::Body(
+            String::from_utf8(update_answer_for(&seen.body))
+                .unwrap()
+                .replace("MPLAY", "TUNER")
+                .into_bytes(),
+        ),
+        _ => Reply::Status(404),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_tuner_command_reads_the_tuner_page() {
+    let fake = tuner_receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    avr.update().await.unwrap();
+    avr.http_send(Zone::Main, Command::Tuner(TunerCommand::FrequencyUp))
+        .await
+        .unwrap();
+    wait_until("the frequency", || {
+        avr.snapshot().device().tuner.frequency.is_some()
+    })
+    .await;
+    let frequency = avr.snapshot().device().tuner.frequency.unwrap();
+    assert_eq!(frequency.hundredths(), 8750);
+}
+
+#[tokio::test]
+async fn a_tuner_command_reads_no_page_for_another_source() {
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    avr.update().await.unwrap();
+    let known = fake.requests().len();
+    avr.http_send(Zone::Main, Command::Tuner(TunerCommand::FrequencyUp))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(bodies_to(&fake, known, TUNER_STATUS_PATH).len(), 0);
 }

@@ -90,7 +90,8 @@ reads and the pages are done. `all_synced()` also waits until the receiver has
 answered the telnet queries of the start, so the values that only telnet gives
 are in the state. Both are optional: values that arrive later come as events.
 More groups in `TelnetConfig::query_groups` are asked after the first queries,
-and `all_synced()` then takes longer.
+and `all_synced()` then takes longer. Commands go before the queries, and the
+queries wait 250 ms after a command (`AvrBuilder::background_pause`).
 
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in
@@ -130,7 +131,7 @@ avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
 avr.update_detailed_availability().await?; // surround parameters, HDMI setup, video output
-avr.update_signal().await?; // resolution, audio signal and channels in one fast request
+avr.update_signal_and_audyssey().await?; // signal, channels and Audyssey in one fast request
 avr.update_video_details().await?; // on-screen display, TV format, HDCP, 4K/8K per input
 avr.update_general_settings().await?; // language, firmware update, triggers
 avr.update_system_settings().await?;
@@ -142,8 +143,9 @@ HTTP. Your code does not choose.
 
 To see the video and audio signal now, call `avr.refresh_signal().await?`. It
 reads the resolution, the audio signal and the channels with one fast request
-(`update_signal`) if the receiver has it, the HDR and color values from the web
-interface, and asks telnet for the rest if it is open. Your code does not choose.
+(`update_signal_and_audyssey`) if the receiver has it, the HDR and color values
+from the web interface, and asks telnet for the rest if it is open. Your code
+does not choose.
 
 To see what plays, call `avr.refresh_now_playing().await?`. It asks on telnet if
 the connection is open and reads the status page if not, so your code does not
@@ -173,13 +175,22 @@ A program that does not want telnet never opens it: use
   Queries (`PW?`) need telnet, and give `Error::QueryNeedsTelnet` whenever
   telnet is not connected, also while it connects again.
 - After a command, the values that it changed are read, for example the volume
-  and mute after a volume command. The read waits until no command came for
+  and mute after a volume command, tone control after a bass command on the
+  main zone, the Audyssey settings after an Audyssey command (not while telnet
+  is open, which reports them), and the band and frequency after a tuner
+  command while the tuner plays. The read waits until no command came for
   500 ms, and not longer than 2 s, so a held key causes few reads. The
   receiver shows a new power state, source or sound mode late, so these are
   read again every 1.5 s until a read shows a change, at most 3 times. Change
   this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
-- Settings that `update()` does not read, such as tone or Audyssey, change in
-  the state when you read them.
+- Commands go before the reads that wait, also those of the web interface.
+  A read waits while a command waits or runs, and for 250 ms after it, so
+  the receiver does the command first. A read that has started is not
+  stopped. The read after a command does not wait for the pause. Change the
+  pause with `AvrBuilder::background_pause`. It is the same pause that telnet
+  queries wait after a telnet command.
+- Settings that no read after a command covers change in the state when you
+  read them, for example with `update_signal_and_audyssey()`.
 - The list of sound modes of the receiver needs telnet. Without it, select a
   mode by its name, for example `select_sound_mode("MOVIE")`.
 
@@ -206,6 +217,12 @@ have not run on a receiver:
   sheets and the Denon ones, but no Marantz receiver was available.
 - Receivers without `AppCommand`, which are read over the status pages. They
   are tested with captured pages and fake receivers.
+- Tone control and `AppCommand0300.xml` on receivers older than the 2016
+  models. They are asked as on newer models. If a request with tone control
+  fails on such a receiver and works without it, tone control is not asked
+  again.
+- The tuner status page while the tuner plays. All captured pages are from
+  other sources and have no band or frequency.
 - Receivers that are older than the AVC-A10H. The effect speaker, center image
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.

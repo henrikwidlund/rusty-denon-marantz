@@ -88,7 +88,7 @@ async fn update_reads_all_zones_with_one_request() {
         String::from_utf8_lossy(&last.body)
             .matches("<cmd id=\"1\">")
             .count(),
-        12
+        13
     );
 
     let state = avr.snapshot();
@@ -367,9 +367,15 @@ async fn update_reads_the_zone_names_and_the_friendly_name() {
 }
 
 #[tokio::test]
-async fn update_of_a_2016_receiver_reads_tone_control() {
+async fn update_with_appcommand_reads_tone_control() {
+    for receiver_type in [ReceiverType::AvrX, ReceiverType::AvrX2016] {
+        update_reads_tone_control(receiver_type).await;
+    }
+}
+
+async fn update_reads_tone_control(receiver_type: ReceiverType) {
     let fake = avr_x_receiver().await;
-    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    let avr = connect(&fake, receiver_type).await.unwrap();
     avr.update().await.unwrap();
     let request = fake
         .requests()
@@ -925,7 +931,10 @@ async fn update_of_a_2016_receiver_reads_the_audyssey_settings() {
     let answer: &'static str = Box::leak(answer.into_boxed_str());
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     let state = avr.snapshot();
     let device = state.device();
     assert_eq!(device.dynamic_eq, Some(true));
@@ -940,7 +949,10 @@ async fn update_of_a_2016_receiver_reads_the_signal() {
     let answer: &'static str = Box::leak(answer.into_boxed_str());
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     let state = avr.snapshot();
     let signal = &state.device().signal;
     assert_eq!(signal.video.input.as_deref(), Some("4K50"));
@@ -968,7 +980,10 @@ async fn blank_audyssey_values_are_unknown() {
     let answer: &'static str = Box::leak(answer.into_boxed_str());
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     let state = avr.snapshot();
     assert_eq!(state.device().dynamic_eq, None);
     assert_eq!(state.device().multi_eq, None);
@@ -979,8 +994,14 @@ async fn a_receiver_without_the_audyssey_query_is_asked_once() {
     let fake = receiver_with_audyssey(None, true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     // The missing query is not an error, and it is not asked again.
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::NotFound
+    );
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::NotFound
+    );
     assert_eq!(audyssey_requests(&fake), 1);
 }
 
@@ -996,8 +1017,14 @@ async fn an_error_item_keeps_the_channels_that_the_state_has() {
     })
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     let state = avr.snapshot();
     let signal = &state.device().signal;
     assert_eq!(signal.channels.input.unwrap().to_string(), "2.0");
@@ -1016,15 +1043,100 @@ async fn a_refusal_that_is_not_a_404_does_not_stop_the_asking() {
     })
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Refused(503));
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::Read);
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Refused(503)
+    );
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
     assert_eq!(audyssey_requests(&fake), 2);
 }
 
 #[tokio::test]
-async fn only_2016_receivers_are_asked_for_audyssey() {
+async fn a_receiver_with_status_pages_is_not_asked_for_audyssey() {
+    let fake = old_receiver().await;
+    let avr = connect(&fake, ReceiverType::Avr).await.unwrap();
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::NotFound
+    );
+    assert_eq!(audyssey_requests(&fake), 0);
+}
+
+#[tokio::test]
+async fn an_older_receiver_with_appcommand_is_asked_for_audyssey() {
+    let answer: &'static str = Box::leak(
+        appcommand0300_answer("<param name=\"dynamiceq\" control=\"1\">1</param>").into_boxed_str(),
+    );
+    let fake = receiver_with_audyssey(Some(answer), true).await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(
+        avr.update_signal_and_audyssey().await.unwrap(),
+        PageStatus::Read
+    );
+    assert_eq!(avr.snapshot().device().dynamic_eq, Some(true));
+}
+
+/// The `AppCommand` requests for the update, and the number of commands in each.
+fn update_sizes(fake: &Fake) -> Vec<usize> {
+    fake.requests()
+        .iter()
+        .filter(|seen| seen.path == "/goform/AppCommand.xml")
+        .map(|seen| {
+            String::from_utf8_lossy(&seen.body)
+                .matches("<cmd id=")
+                .count()
+        })
+        .filter(|&count| count > 1)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_update_without_the_tone_item_drops_tone_control() {
+    // The receiver answers the update without an item for tone control.
     let fake = receiver_with_audyssey(None, false).await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
-    assert_eq!(avr.update_signal().await.unwrap(), PageStatus::NotFound);
-    assert_eq!(audyssey_requests(&fake), 0);
+    avr.update().await.unwrap();
+    assert_eq!(update_sizes(&fake), [13, 12]);
+    // It is not asked again.
+    avr.update().await.unwrap();
+    assert_eq!(update_sizes(&fake), [13, 12, 12]);
+    assert_eq!(avr.snapshot().zone(Zone::Main).power, Some(Power::On));
+}
+
+/// A receiver that refuses a request with tone control.
+async fn receiver_that_refuses_tone_control() -> Fake {
+    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
+        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+        ("POST", _) if is_friendly_name_request(&seen.body) => {
+            Reply::Body(friendly_name_answer("X"))
+        }
+        ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
+            Reply::Status(500)
+        }
+        ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn an_update_that_is_refused_with_tone_control_drops_it() {
+    let fake = receiver_that_refuses_tone_control().await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    avr.update().await.unwrap();
+    avr.update().await.unwrap();
+    assert_eq!(update_sizes(&fake), [13, 12, 12]);
+}
+
+#[tokio::test]
+async fn a_2016_receiver_keeps_asking_for_tone_control() {
+    // All 2016 models have tone control, so a refusal is not a reason to drop it.
+    let fake = receiver_that_refuses_tone_control().await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert!(avr.update().await.unwrap_err().is_status());
+    assert!(avr.update().await.unwrap_err().is_status());
+    assert_eq!(update_sizes(&fake), [13, 13]);
 }

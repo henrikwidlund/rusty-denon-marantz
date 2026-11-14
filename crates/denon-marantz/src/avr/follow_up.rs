@@ -1,19 +1,27 @@
 //! Reads the values that a command over HTTP changed. A command over HTTP
 //! gets no answer, so the state does not change by itself.
 
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use bytes::Bytes;
-use denon_marantz_proto::Zone;
 use denon_marantz_proto::appcommand::{self, Definition, Endpoint};
+use denon_marantz_proto::{PlayingKind, TUNER_STATUS_PATH, TunerPage, Zone};
+#[cfg(feature = "telnet")]
+use tokio::sync::watch;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Instant, timeout, timeout_at};
 
-use super::{Info, UpdateMethod, read_appcommand, read_status_pages, request_body};
+use super::{
+    Info, Missing, UpdateMethod, playing_kind, read_appcommand, read_status_pages, request_body,
+};
 use crate::channels::Channels;
 use crate::command::Reads;
 use crate::error::Error;
 use crate::http::HttpClient;
+#[cfg(feature = "telnet")]
+use crate::telnet::TelnetStatus;
 
 /// When the values that a command over HTTP changed are read.
 ///
@@ -74,6 +82,8 @@ const DEVICE: [Definition; 3] = [
     appcommand::GET_DIMMER,
     appcommand::GET_ECO,
 ];
+const TONE: [Definition; 1] = [appcommand::GET_TONE_CONTROL];
+const AUDYSSEY: [Definition; 1] = [appcommand::GET_AUDYSSEY];
 
 /// What the worker needs to read.
 struct Reader {
@@ -81,23 +91,65 @@ struct Reader {
     channels: Channels,
     zones: Box<[Zone]>,
     method: UpdateMethod,
+    missing: Arc<Missing>,
+    #[cfg(feature = "telnet")]
+    telnet: watch::Receiver<TelnetStatus>,
+}
+
+impl Reader {
+    /// Telnet is open, so the receiver reports the changes itself.
+    // Without telnet it is always false.
+    #[cfg_attr(
+        not(feature = "telnet"),
+        allow(clippy::missing_const_for_fn, clippy::unused_self)
+    )]
+    fn telnet_open(&self) -> bool {
+        #[cfg(feature = "telnet")]
+        return *self.telnet.borrow() == TelnetStatus::Connected;
+        #[cfg(not(feature = "telnet"))]
+        false
+    }
 }
 
 /// A request for one kind of value.
 struct Request {
     reads: Reads,
+    endpoint: Endpoint,
     commands: &'static [Definition],
     body: Bytes,
 }
 
 impl Request {
     fn new(reads: Reads, commands: &'static [Definition]) -> Result<Self, Error> {
+        Self::on(Endpoint::AppCommand, reads, commands)
+    }
+
+    fn on(
+        endpoint: Endpoint,
+        reads: Reads,
+        commands: &'static [Definition],
+    ) -> Result<Self, Error> {
         let cmds: Vec<_> = commands.iter().map(|definition| definition.cmd).collect();
         Ok(Self {
             reads,
+            endpoint,
             commands,
             body: request_body(&cmds)?,
         })
+    }
+
+    /// Whether to send the request: the receiver answers it, as far as is
+    /// known, and the answer does not undo what telnet reported.
+    fn useful(&self, reader: &Reader) -> bool {
+        match self.reads {
+            Reads::Tone => !reader.missing.tone_control.load(Ordering::Relaxed),
+            // A receiver can answer blank Audyssey values, which would clear
+            // the values that telnet reported.
+            Reads::Audyssey => {
+                !reader.missing.appcommand0300.load(Ordering::Relaxed) && !reader.telnet_open()
+            }
+            _ => true,
+        }
     }
 }
 
@@ -115,6 +167,8 @@ impl FollowUp {
         http: &HttpClient,
         channels: &Channels,
         info: &Info,
+        missing: &Arc<Missing>,
+        #[cfg(feature = "telnet")] telnet: watch::Receiver<TelnetStatus>,
     ) -> Result<Option<Self>, Error> {
         let Some(config) = config else {
             return Ok(None);
@@ -126,6 +180,9 @@ impl FollowUp {
             channels: channels.clone(),
             zones: info.zones.clone().into_boxed_slice(),
             method: info.update_method,
+            missing: Arc::clone(missing),
+            #[cfg(feature = "telnet")]
+            telnet,
         };
         Self::spawn(config, reader).map(Some)
     }
@@ -139,6 +196,8 @@ impl FollowUp {
                 Request::new(Reads::Source, &SOURCE)?,
                 Request::new(Reads::SoundMode, &SOUND_MODE)?,
                 Request::new(Reads::Device, &DEVICE)?,
+                Request::new(Reads::Tone, &TONE)?,
+                Request::on(Endpoint::AppCommand0300, Reads::Audyssey, &AUDYSSEY)?,
             ],
             UpdateMethod::StatusPages => Vec::new(),
         };
@@ -242,23 +301,70 @@ async fn read_until_seen(reader: &Reader, requests: &[Request], wanted: u8) -> u
 }
 
 async fn read(reader: &Reader, requests: &[Request], wanted: u8) -> Result<(), Error> {
-    if reader.method == UpdateMethod::StatusPages {
-        return read_status_pages(&reader.http, &reader.channels, &reader.zones).await;
-    }
     let mut result = Ok(());
-    for request in requests.iter().filter(|r| wanted & r.reads.bit() != 0) {
-        let read = read_appcommand(
-            &reader.http,
-            &reader.channels,
-            &reader.zones,
-            Endpoint::AppCommand,
-            request.commands,
-            request.body.clone(),
-        )
-        .await;
-        result = result.and(read);
+    if reader.method == UpdateMethod::StatusPages {
+        if wanted & !(Reads::Tone.bit() | Reads::Audyssey.bit() | Reads::Tuner.bit()) != 0 {
+            result = read_status_pages(&reader.http, &reader.channels, &reader.zones).await;
+        }
+    } else {
+        for request in requests
+            .iter()
+            .filter(|r| wanted & r.reads.bit() != 0 && r.useful(reader))
+        {
+            let read = read_appcommand(
+                &reader.http,
+                &reader.channels,
+                &reader.zones,
+                request.endpoint,
+                request.commands,
+                request.body.clone(),
+            )
+            .await;
+            if let Err(error) = &read {
+                note_missing(&reader.missing, request.reads, error);
+            }
+            result = result.and(read);
+        }
+    }
+    // A receiver without the page must not make the other values count as
+    // not seen.
+    if wanted & Reads::Tuner.bit() != 0
+        && let Err(error) = read_tuner_page(reader).await
+    {
+        tracing::debug!(%error, "the tuner page after a command was not read");
     }
     result
+}
+
+/// Notes a read that the receiver does not answer, so that it is not sent
+/// again.
+fn note_missing(missing: &Missing, reads: Reads, error: &Error) {
+    match reads {
+        // Only a missing file means that the receiver does not have it.
+        Reads::Audyssey if matches!(error, Error::Status { status: 404, .. }) => {
+            missing.appcommand0300.store(true, Ordering::Relaxed);
+        }
+        Reads::Tone if missing.may_lack_tone_control(error) => {
+            missing.tone_control.store(true, Ordering::Relaxed);
+        }
+        _ => {}
+    }
+}
+
+/// Reads the band and the frequency, if the main zone plays the tuner. The
+/// page has no values for another source.
+async fn read_tuner_page(reader: &Reader) -> Result<(), Error> {
+    if playing_kind(&reader.channels) != Some(PlayingKind::Tuner) {
+        return Ok(());
+    }
+    let page = reader
+        .http
+        .get_parsed(TUNER_STATUS_PATH, TunerPage::parse)
+        .await?;
+    reader
+        .channels
+        .modify(|state, notify| notify(state.apply_tuner_page(page)));
+    Ok(())
 }
 
 #[cfg(test)]

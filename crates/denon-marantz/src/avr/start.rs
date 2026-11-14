@@ -7,8 +7,6 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 #[cfg(feature = "telnet")]
-use denon_marantz_proto::ReceiverType;
-#[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{SignalPart, after_appcommand_queries, signal_queries};
 use denon_marantz_proto::{
     AUDIO_CHANNELS_PATH, AudioChannelsPage, GroupAvailability, SettingsGroup, State,
@@ -146,10 +144,11 @@ pub struct StartReport {
     /// waits for this.
     pub telnet_sync: TelnetSync,
     /// The signal, the channels and the Audyssey settings from
-    /// `AppCommand0300.xml`, see [`Avr::update_signal`]. [`PageStatus::Read`]
-    /// means that the state has them. [`PageStatus::NotFound`] means that the
-    /// receiver does not have the file, and [`PageStatus::NoAnswer`] that the
-    /// request timed out or the connection failed.
+    /// `AppCommand0300.xml`, see [`Avr::update_signal_and_audyssey`].
+    /// [`PageStatus::Read`] means that the state has them.
+    /// [`PageStatus::NotFound`] means that the receiver does not have the
+    /// file, and [`PageStatus::NoAnswer`] that the request timed out or the
+    /// connection failed.
     pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
@@ -325,10 +324,9 @@ impl Avr {
     async fn start_telnet(&self) -> TelnetStart {
         let first = (self.info.update_method == UpdateMethod::AppCommand).then(|| {
             let brand = self.info.brand;
+            // `AppCommand0300.xml` gives the audio values, or the fallback
+            // asks for them.
             let mut queries: Vec<&'static str> = after_appcommand_queries(brand).collect();
-            if !self.has_appcommand0300() {
-                queries.extend(signal_queries(brand, SignalPart::AudioInfo));
-            }
             queries.extend(signal_queries(brand, SignalPart::TelnetOnly));
             // The groups that were asked for, after the ones that are needed first.
             for query in self.telnet.extra_start_queries() {
@@ -352,7 +350,10 @@ impl Avr {
     async fn finish_start(&self, options: StartOptions, telnet: TelnetStart) -> StartReport {
         // The receiver answers this one fast, and it has the channels, so it
         // is first.
-        let signal = self.update_signal().await.unwrap_or(PageStatus::NoAnswer);
+        let signal = self
+            .update_signal_and_audyssey()
+            .await
+            .unwrap_or(PageStatus::NoAnswer);
         let web_interface = self.read_start_pages(options).await;
         #[cfg(feature = "telnet")]
         if matches!(telnet, TelnetStart::Open)
@@ -397,12 +398,12 @@ impl Avr {
         }
     }
 
-    /// The receiver is of a generation that has `AppCommand0300.xml`. The
-    /// first queries leave out the audio values for it, and `update_signal`
-    /// or the fallback after it gives them.
+    /// The receiver is read with `AppCommand`, so `AppCommand0300.xml` is
+    /// asked. The first queries leave out the audio values for it, and
+    /// `update_signal_and_audyssey` or the fallback after it gives them.
     #[cfg(feature = "telnet")]
     fn has_appcommand0300(&self) -> bool {
-        self.info.receiver_type == ReceiverType::AvrX2016
+        self.info.update_method == UpdateMethod::AppCommand
     }
 
     async fn read_video_page(&self) -> Result<PageStatus, Error> {
@@ -465,7 +466,10 @@ impl Avr {
         // A receiver that answers `AppCommand0300.xml` gives the resolution, the
         // audio signal and the channels at once, and its answer for the
         // channels is more complete than the page.
-        let answered = matches!(self.update_signal().await, Ok(PageStatus::Read));
+        let answered = matches!(
+            self.update_signal_and_audyssey().await,
+            Ok(PageStatus::Read)
+        );
         let video = self.read_video_page().await;
         let channels = if answered {
             Ok(PageStatus::Skipped(SkipReason::AlreadyRead))

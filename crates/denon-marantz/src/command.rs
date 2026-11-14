@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, Setting, Zone};
+use denon_marantz_proto::{Brand, Setting, TunerCommand, Zone};
 
 use crate::error::Error;
 
@@ -49,12 +49,18 @@ pub(crate) enum Reads {
     Source,
     SoundMode,
     Device,
+    /// Tone control, bass and treble of the main zone.
+    Tone,
+    /// The Audyssey settings.
+    Audyssey,
+    /// The band and the frequency of the tuner.
+    Tuner,
 }
 
 impl Reads {
-    /// The values that an HTTP read after the command can show. `None` if the
-    /// read of the zones does not have what the command changes.
-    pub(crate) const fn after(command: &Command<'_>) -> Option<Self> {
+    /// The values that an HTTP read after the command in `zone` can show.
+    /// `None` if no HTTP read has what the command changes.
+    pub(crate) const fn after(zone: Zone, command: &Command<'_>) -> Option<Self> {
         match command {
             Command::PowerOn
             | Command::PowerStandby
@@ -66,6 +72,29 @@ impl Reads {
             Command::SelectSource(_) => Some(Self::Source),
             Command::SelectSoundMode(_) => Some(Self::SoundMode),
             Command::SetDeviceSetting(_) => Some(Self::Device),
+            // The reads of tone control and Audyssey have the main zone only.
+            Command::ToneControl(_)
+            | Command::SetBass(_)
+            | Command::BassUp
+            | Command::BassDown
+            | Command::SetTreble(_)
+            | Command::TrebleUp
+            | Command::TrebleDown
+                if matches!(zone, Zone::Main) =>
+            {
+                Some(Self::Tone)
+            }
+            Command::DynamicEq(_)
+            | Command::SetMultiEq(_)
+            | Command::SetReferenceLevelOffset(_)
+            | Command::SetDynamicVolume(_)
+                if matches!(zone, Zone::Main) =>
+            {
+                Some(Self::Audyssey)
+            }
+            // Tuning mode and storing a preset leave band and frequency as they are.
+            Command::Tuner(TunerCommand::Mode(_) | TunerCommand::StorePreset(_)) => None,
+            Command::Tuner(_) => Some(Self::Tuner),
             _ => None,
         }
     }
@@ -121,28 +150,43 @@ mod tests {
 
     #[test]
     fn commands_say_what_to_read_afterwards() {
-        assert_eq!(Reads::after(&Command::PowerOn), Some(Reads::Power));
-        assert_eq!(Reads::after(&Command::VolumeUp), Some(Reads::Volume));
-        assert_eq!(Reads::after(&Command::Mute(true)), Some(Reads::Volume));
+        let main = |command| Reads::after(Zone::Main, &command);
+        assert_eq!(main(Command::PowerOn), Some(Reads::Power));
+        assert_eq!(main(Command::VolumeUp), Some(Reads::Volume));
+        assert_eq!(main(Command::Mute(true)), Some(Reads::Volume));
+        assert_eq!(main(Command::SelectSource("GAME")), Some(Reads::Source));
         assert_eq!(
-            Reads::after(&Command::SelectSource("GAME")),
-            Some(Reads::Source)
-        );
-        assert_eq!(
-            Reads::after(&Command::SelectSoundMode("MOVIE")),
+            main(Command::SelectSoundMode("MOVIE")),
             Some(Reads::SoundMode)
         );
-        assert_eq!(Reads::after(&Command::BassUp), None);
+        assert_eq!(main(Command::BassUp), Some(Reads::Tone));
+        assert_eq!(main(Command::DynamicEq(true)), Some(Reads::Audyssey));
+        assert_eq!(
+            main(Command::Tuner(TunerCommand::FrequencyUp)),
+            Some(Reads::Tuner)
+        );
+        assert_eq!(main(Command::Tuner(TunerCommand::StorePreset(1))), None);
+        assert_eq!(main(Command::Play), None);
+        // The reads of tone control and Audyssey have the main zone only.
+        assert_eq!(Reads::after(Zone::Zone2, &Command::BassUp), None);
+        assert_eq!(Reads::after(Zone::Zone2, &Command::DynamicEq(true)), None);
+        assert_eq!(
+            Reads::after(Zone::Zone2, &Command::VolumeUp),
+            Some(Reads::Volume)
+        );
         let bits: Vec<u8> = [
             Reads::Power,
             Reads::Volume,
             Reads::Source,
             Reads::SoundMode,
             Reads::Device,
+            Reads::Tone,
+            Reads::Audyssey,
+            Reads::Tuner,
         ]
         .iter()
         .map(|reads| reads.bit())
         .collect();
-        assert_eq!(bits, [1, 2, 4, 8, 16]);
+        assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128]);
     }
 }
