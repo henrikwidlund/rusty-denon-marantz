@@ -183,7 +183,7 @@ pub struct AvrBuilder {
 /// `update_`, `telnet_` and `refresh`.
 #[derive(Debug)]
 pub struct Avr {
-    http: Arc<HttpClient>,
+    http: HttpClient,
     /// The web interface on its own port.
     web_interface: HttpClient,
     info: Info,
@@ -1404,8 +1404,7 @@ impl AvrBuilder {
             None => identify(&self.host, self.http).await?,
         };
         let priority = Arc::new(Priority::new(self.background_pause));
-        let http =
-            Arc::new(HttpClient::new(&self.host, port, self.http)?.with_priority(priority.clone()));
+        let http = HttpClient::new(&self.host, port, self.http)?.with_priority(priority.clone());
         let description = self.description(receiver_type).await?;
         let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
 
