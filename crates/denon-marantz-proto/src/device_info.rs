@@ -50,6 +50,10 @@ pub enum TunerInfo {
 /// The bands of a tuner that `Deviceinfo.xml` lists.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each field is one band of a set"
+)]
 pub struct TunerBands {
     /// AM.
     pub am: bool,
@@ -57,6 +61,8 @@ pub struct TunerBands {
     pub fm: bool,
     /// DAB.
     pub dab: bool,
+    /// A listed band that [`TunerBand`] does not have.
+    pub other: bool,
 }
 
 impl TunerBands {
@@ -84,7 +90,7 @@ impl TunerBands {
     /// Returns true if no band is listed.
     #[must_use]
     pub const fn is_empty(self) -> bool {
-        !(self.am || self.fm || self.dab)
+        !(self.am || self.fm || self.dab || self.other)
     }
 }
 
@@ -115,10 +121,17 @@ impl TunerInfo {
                         .child("BandList")
                         .into_iter()
                         .flat_map(|list| list.node().children())
-                        .filter_map(|band| {
-                            TunerBand::from_code(band.node().child("Name")?.node().text()?.trim())
-                        })
-                        .collect();
+                        .filter_map(|band| band.node().child("Name")?.node().text())
+                        .fold(TunerBands::default(), |bands, name| match name.trim() {
+                            "" => bands,
+                            name => TunerBand::from_code(name).map_or(
+                                TunerBands {
+                                    other: true,
+                                    ..bands
+                                },
+                                |band| bands.with(band),
+                            ),
+                        });
                     return Self::Present(bands);
                 }
                 Some(_) => return Self::Absent,
@@ -275,12 +288,18 @@ mod tests {
         };
         let present = tuner(
             "<Control> 1 </Control><BandList><Band><Name>FM</Name></Band>\
-             <Band><Name>HD</Name></Band></BandList>",
+             <Band><Name> </Name></Band><Band/></BandList>",
         );
         assert_eq!(
             present,
             TunerInfo::Present(TunerBands::default().with(TunerBand::Fm))
         );
+        let other =
+            tuner("<Control>1</Control><BandList><Band><Name>DAB+</Name></Band></BandList>");
+        let TunerInfo::Present(other) = other else {
+            panic!("{other:?}");
+        };
+        assert!(other.other && !other.is_empty() && !other.contains(TunerBand::Dab));
         assert_eq!(tuner("<Control>0</Control>"), TunerInfo::Absent);
         assert_eq!(tuner("<Control/>"), TunerInfo::Unknown);
         assert_eq!(tuner("<Control> </Control>"), TunerInfo::Unknown);
