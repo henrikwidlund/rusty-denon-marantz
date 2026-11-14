@@ -2470,6 +2470,42 @@ async fn repeated_group_requests_do_not_grow_the_queue() {
 }
 
 #[tokio::test]
+async fn a_signal_change_asks_for_the_colorimetry_again() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    let bt2020 = || avr.snapshot().device().signal.bt2020.input;
+    let asked = || {
+        sent(&telnet)
+            .iter()
+            .filter(|line| *line == "SSINFSIGECI ?")
+            .count()
+    };
+    telnet.send(b"SSINFSIGCOS 11\rSSINFSIGECI 55\r");
+    wait_until("BT.2020", || bt2020() == Some(true)).await;
+    assert_eq!(asked(), 0);
+
+    // A new resolution makes BT.2020 not known, so it is asked once.
+    telnet.send(b"SSINFSIGRES I1080p50\r");
+    wait_until("the colorimetry query", || asked() == 1).await;
+    assert_eq!(bt2020(), None);
+    // The answer repeats the last value, and must still count.
+    telnet.send(b"SSINFSIGECI 55\r");
+    wait_until("BT.2020 again", || bt2020() == Some(true)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(asked(), 1);
+}
+
+#[tokio::test]
 async fn a_page_does_not_hide_the_next_telnet_event_with_the_old_value() {
     let telnet = FakeTelnet::start().await;
     let web = common::Fake::start(|seen| match seen.path.as_str() {

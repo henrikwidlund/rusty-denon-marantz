@@ -130,6 +130,26 @@ impl fmt::Display for ChannelLayout {
     }
 }
 
+/// Color of a video signal: the color space and if it uses BT.2020.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VideoColor {
+    /// Color space.
+    pub space: ColorSpace,
+    /// The signal uses the BT.2020 color range.
+    pub bt2020: bool,
+}
+
+impl fmt::Display for VideoColor {
+    /// For example `4:4:4` or `4:4:4/BT.2020`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.space.label())?;
+        if self.bt2020 {
+            f.write_str("/BT.2020")?;
+        }
+        Ok(())
+    }
+}
+
 /// A value for the input and one for the output of the receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InOut<T> {
@@ -183,11 +203,13 @@ pub struct SignalState {
     pub hdr: InOut<String>,
     /// Highest HDMI FRL rate.
     pub max_frl: InOut<String>,
-    /// Bits for each color.
+    /// Bits for each color, as the receiver sends them. See
+    /// [`SignalState::effective_pixel_depth`].
     pub pixel_depth: InOut<PixelDepth>,
-    /// Color space.
+    /// Color space. See [`SignalState::video_color`].
     pub color_space: InOut<ColorSpace>,
-    /// The signal uses the BT.2020 color range.
+    /// The signal uses the BT.2020 color range. See
+    /// [`SignalState::video_color`].
     pub bt2020: InOut<bool>,
     /// Highest resolution that the TV and the cables allow, as the receiver
     /// writes it, for example `NO` for no limit or `8G`.
@@ -204,9 +226,77 @@ pub struct SignalState {
     pub allm: Option<bool>,
     /// Quick frame transport is on. Only the web interface reports it.
     pub qft: Option<bool>,
+    /// Telnet `SSINFSIGECI` was seen. Some receivers do not answer it.
+    eci_seen: bool,
+    /// The `Colorimetry` element of the page was seen.
+    colorimetry_seen: bool,
 }
 
 impl SignalState {
+    /// Bits for each color. Some receivers send `0` (unknown) for the input
+    /// while there is an input signal. Then the input takes the output value.
+    #[must_use]
+    pub fn effective_pixel_depth(&self) -> InOut<PixelDepth> {
+        let InOut { input, output } = self.pixel_depth;
+        let input = match (input, output) {
+            (Some(PixelDepth::Unknown), Some(known))
+                if known != PixelDepth::Unknown && self.video.input.is_some() =>
+            {
+                Some(known)
+            }
+            _ => input,
+        };
+        InOut { input, output }
+    }
+
+    /// Color space and BT.2020 of each side. If `bt2020` is not known, it is
+    /// off on a receiver that reports BT.2020. On other receivers an HDR
+    /// format means BT.2020.
+    #[must_use]
+    pub fn video_color(&self) -> InOut<VideoColor> {
+        let reported = self.reports_bt2020();
+        let side = |space: Option<ColorSpace>, bt2020: Option<bool>, hdr: Option<&String>| {
+            space.map(|space| VideoColor {
+                space,
+                bt2020: bt2020.unwrap_or_else(|| !reported && hdr.is_some()),
+            })
+        };
+        InOut {
+            input: side(
+                self.color_space.input,
+                self.bt2020.input,
+                self.hdr.input.as_ref(),
+            ),
+            output: side(
+                self.color_space.output,
+                self.bt2020.output,
+                self.hdr.output.as_ref(),
+            ),
+        }
+    }
+
+    /// True if `SSINFSIGECI ?` should be asked: the receiver answers it, and
+    /// BT.2020 of a side with a color space is not known.
+    #[must_use]
+    pub const fn needs_colorimetry_query(&self) -> bool {
+        self.eci_seen
+            && ((self.color_space.input.is_some() && self.bt2020.input.is_none())
+                || (self.color_space.output.is_some() && self.bt2020.output.is_none()))
+    }
+
+    const fn reports_bt2020(&self) -> bool {
+        self.eci_seen || self.colorimetry_seen
+    }
+
+    /// Call when the resolution, the HDR format or the color space of a side
+    /// changed. BT.2020 is not known until the receiver reports it again.
+    fn signal_changed(&mut self, is_input: bool, changed: bool) -> bool {
+        if changed {
+            self.bt2020.set(is_input, None);
+        }
+        changed
+    }
+
     /// Applies the text of an `SS` event, for example `INFSIGRES I4K50`.
     /// Returns true if a value changed. Other events and text that is not a
     /// value change nothing.
@@ -214,7 +304,11 @@ impl SignalState {
         if let Some(rest) = parameter.strip_prefix("INFSIGRES") {
             self.set_video(rest)
         } else if let Some(rest) = parameter.strip_prefix("INFSIGHDR") {
-            set_side_text(&mut self.hdr, rest)
+            let Some((side, value)) = split_side(rest) else {
+                return false;
+            };
+            let changed = self.hdr.set_text(side, video(value));
+            self.signal_changed(side, changed)
         } else if let Some(rest) = parameter.strip_prefix("INFSIGFRL") {
             set_side_text(&mut self.max_frl, rest)
         } else if let Some(rest) = parameter.strip_prefix("INFSIGPIX") {
@@ -227,13 +321,13 @@ impl SignalState {
             let Some((input, output)) = digit_pair(rest) else {
                 return false;
             };
-            let (input, output) = (ColorSpace::from_code(input), ColorSpace::from_code(output));
-            self.color_space.set(true, input) | self.color_space.set(false, output)
+            self.set_color_space(true, input) | self.set_color_space(false, output)
         } else if let Some(rest) = parameter.strip_prefix("INFSIGECI") {
             // A digit that is not 0 means BT.2020.
             let Some((input, output)) = digit_pair(rest) else {
                 return false;
             };
+            self.eci_seen = true;
             self.bt2020.set(true, Some(input != "0")) | self.bt2020.set(false, Some(output != "0"))
         } else if let Some(rate) = parameter.strip_prefix("INFAISFSV") {
             set_text(&mut self.sampling_rate, sampling_rate(rate))
@@ -258,9 +352,9 @@ impl SignalState {
     /// if a value changed.
     pub(crate) fn apply_sy(&mut self, parameter: &str) -> bool {
         if let Some(rest) = parameter.strip_prefix("SDVIN") {
-            self.video.set_text(true, video(rest))
+            self.set_video_side(true, video(rest))
         } else if let Some(rest) = parameter.strip_prefix("SDVOUT") {
-            self.video.set_text(false, video(rest))
+            self.set_video_side(false, video(rest))
         } else if let Some(rest) = parameter.strip_prefix("SDA") {
             set_text(&mut self.audio_signal, audio_text(rest))
         } else if let Some(rest) = parameter.strip_prefix("SMI") {
@@ -282,8 +376,8 @@ impl SignalState {
     pub(crate) fn apply_appcommand(&mut self, field: Field, value: Option<&str>) -> bool {
         let value = value.map(str::trim);
         match field {
-            Field::VideoSignalIn => self.video.set_text(true, value.and_then(video)),
-            Field::VideoSignalOut => self.video.set_text(false, value.and_then(video)),
+            Field::VideoSignalIn => self.set_video_side(true, value.and_then(video)),
+            Field::VideoSignalOut => self.set_video_side(false, value.and_then(video)),
             Field::AudioSignal => set_text(&mut self.audio_signal, value.and_then(audio_text)),
             Field::AudioSound => set_text(&mut self.audio_sound, value.and_then(audio_text)),
             // The text is the rate and the unit, for example `48 kHz`.
@@ -301,10 +395,18 @@ impl SignalState {
     /// changed. A value that the page has and that has no signal clears the
     /// state. A value that the page does not have keeps it.
     pub(crate) fn apply_video_page(&mut self, page: &VideoSignalPage) -> bool {
-        let mut changed = self.video.set_text_page(&page.resolution);
-        changed |= self.hdr.set_text_page(&page.hdr);
+        let input = page.resolution.input.store_text(&mut self.video.input)
+            | page.hdr.input.store_text(&mut self.hdr.input)
+            | page.color_space.input.store(&mut self.color_space.input);
+        let output = page.resolution.output.store_text(&mut self.video.output)
+            | page.hdr.output.store_text(&mut self.hdr.output)
+            | page.color_space.output.store(&mut self.color_space.output);
+        let mut changed = self.signal_changed(true, input) | self.signal_changed(false, output);
+        if page.bt2020.input.as_value().is_some() || page.bt2020.output.as_value().is_some() {
+            self.colorimetry_seen = true;
+        }
+        changed |= self.bt2020.set_page(&page.bt2020);
         changed |= self.max_frl.set_text_page(&page.frl_rate);
-        changed |= self.color_space.set_page(&page.color_space);
         changed |= self.pixel_depth.set_page(&page.pixel_depth);
         changed |= page.allm.store(&mut self.allm);
         changed |= page.qft.store(&mut self.qft);
@@ -321,7 +423,31 @@ impl SignalState {
         let Some((side, value)) = split_side(rest) else {
             return false;
         };
-        self.video.set_text(side, video(value))
+        self.set_video_side(side, video(value))
+    }
+
+    /// Sets the color space of a side from its `SSINFSIGCOS` digit. `9` is
+    /// 4:2:2 with BT.2020. If neither telnet `SSINFSIGECI` nor the page
+    /// reports BT.2020, only `9` says it, so other digits make it not known.
+    fn set_color_space(&mut self, is_input: bool, digit: &str) -> bool {
+        let (space, bt2020) = match digit {
+            "9" => (Some(ColorSpace::Yuv422), true),
+            digit => (ColorSpace::from_code(digit), false),
+        };
+        let changed = self.color_space.set(is_input, space);
+        let changed = self.signal_changed(is_input, changed);
+        if bt2020 {
+            self.bt2020.set(is_input, Some(true)) | changed
+        } else if !self.reports_bt2020() {
+            self.bt2020.set(is_input, None) | changed
+        } else {
+            changed
+        }
+    }
+
+    fn set_video_side(&mut self, is_input: bool, value: Option<&str>) -> bool {
+        let changed = self.video.set_text(is_input, value);
+        self.signal_changed(is_input, changed)
     }
 }
 
@@ -412,6 +538,14 @@ mod tests {
     use super::*;
     use crate::reading::Reading;
 
+    const SDR_PAGE: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-video-signal.xml");
+    const HDR10_PAGE: &[u8] =
+        include_bytes!("../tests/data/xml/AVC-A10H-web-video-signal-hdr10.xml");
+
+    fn page(body: &[u8]) -> VideoSignalPage {
+        VideoSignalPage::parse(body).unwrap()
+    }
+
     fn ss(signal: &mut SignalState, text: &str) -> bool {
         signal.apply_ss(text)
     }
@@ -482,6 +616,190 @@ mod tests {
             assert!(!ss(&mut signal, text), "{text}");
         }
         assert_eq!(signal, before);
+    }
+
+    #[test]
+    fn effective_pixel_depth_takes_output_for_unknown_input() {
+        use PixelDepth::{Bits8, Bits12, Unknown};
+        let cases = [
+            ("INFSIGRES I1080p25", "INFSIGPIX 03", Some(Bits12)),
+            ("INFSIGRES I4K24", "INFSIGPIX 01", Some(Bits8)),
+            ("INFSIGRES I1080p50", "INFSIGPIX 31", Some(Bits12)),
+            // No input signal: the input stays unknown.
+            ("INFSIGRES I---", "INFSIGPIX 01", Some(Unknown)),
+            ("INFSIGRES I---", "INFSIGPIX 00", Some(Unknown)),
+            // Nothing to take: both are unknown.
+            ("INFSIGRES I1080p25", "INFSIGPIX 00", Some(Unknown)),
+        ];
+        for (resolution, depth, expected) in cases {
+            let mut signal = SignalState::default();
+            ss(&mut signal, resolution);
+            ss(&mut signal, depth);
+            let effective = signal.effective_pixel_depth();
+            assert_eq!(effective.input, expected, "{resolution} {depth}");
+            assert_eq!(
+                effective.output, signal.pixel_depth.output,
+                "{resolution} {depth}"
+            );
+        }
+        // The raw value is kept.
+        let mut signal = SignalState::default();
+        ss(&mut signal, "INFSIGRES I1080p25");
+        ss(&mut signal, "INFSIGPIX 03");
+        assert_eq!(signal.pixel_depth.input, Some(Unknown));
+        assert_eq!(
+            SignalState::default().effective_pixel_depth(),
+            InOut::default()
+        );
+    }
+
+    #[test]
+    fn video_color_adds_bt2020() {
+        let cases: [(&[&str], Option<&str>, Option<&str>); 14] = [
+            (&["INFSIGCOS 22"], Some("4:4:4"), Some("4:4:4")),
+            // A receiver without `SSINFSIGECI`: HDR means BT.2020.
+            (
+                &["INFSIGCOS 22", "INFSIGHDR IHDR10"],
+                Some("4:4:4/BT.2020"),
+                Some("4:4:4"),
+            ),
+            (
+                &["INFSIGCOS 11", "INFSIGHDR IDolby Vision"],
+                Some("4:2:2/BT.2020"),
+                Some("4:2:2"),
+            ),
+            // A receiver with `SSINFSIGECI`: HDR alone does not mean BT.2020.
+            (
+                &["INFSIGECI 00", "INFSIGCOS 33", "INFSIGHDR IDolby Vision"],
+                Some("RGB"),
+                Some("RGB"),
+            ),
+            (&["INFSIGCOS 03"], None, Some("RGB")),
+            (
+                &["INFSIGCOS 11", "INFSIGHDR IDolby Vision", "INFSIGECI 55"],
+                Some("4:2:2/BT.2020"),
+                Some("4:2:2/BT.2020"),
+            ),
+            (&["INFSIGCOS 33", "INFSIGECI 00"], Some("RGB"), Some("RGB")),
+            // Each side follows its own digit.
+            (
+                &["INFSIGCOS 22", "INFSIGECI 50"],
+                Some("4:4:4/BT.2020"),
+                Some("4:4:4"),
+            ),
+            (
+                &["INFSIGCOS 22", "INFSIGECI 05"],
+                Some("4:4:4"),
+                Some("4:4:4/BT.2020"),
+            ),
+            // `9` is 4:2:2 with BT.2020.
+            (
+                &["INFSIGCOS 99"],
+                Some("4:2:2/BT.2020"),
+                Some("4:2:2/BT.2020"),
+            ),
+            (
+                &["INFSIGCOS 99", "INFSIGCOS 11"],
+                Some("4:2:2"),
+                Some("4:2:2"),
+            ),
+            (
+                &["INFSIGCOS 99", "INFSIGHDR IDolby Vision", "INFSIGCOS 11"],
+                Some("4:2:2/BT.2020"),
+                Some("4:2:2"),
+            ),
+            // A new signal turns BT.2020 off until telnet says it again.
+            (
+                &["INFSIGCOS 22", "INFSIGECI 55", "INFSIGRES I1080p50"],
+                Some("4:4:4"),
+                Some("4:4:4/BT.2020"),
+            ),
+            (
+                &[
+                    "INFSIGCOS 22",
+                    "INFSIGECI 55",
+                    "INFSIGHDR O---",
+                    "INFSIGHDR OHDR10",
+                ],
+                Some("4:4:4/BT.2020"),
+                Some("4:4:4"),
+            ),
+        ];
+        for (events, input, output) in cases {
+            let mut signal = SignalState::default();
+            for event in events {
+                ss(&mut signal, event);
+            }
+            let color = signal.video_color();
+            assert_eq!(
+                color.input.map(|c| c.to_string()).as_deref(),
+                input,
+                "{events:?}"
+            );
+            assert_eq!(
+                color.output.map(|c| c.to_string()).as_deref(),
+                output,
+                "{events:?}"
+            );
+        }
+        assert_eq!(SignalState::default().video_color(), InOut::default());
+    }
+
+    #[test]
+    fn bt2020_turns_off_when_the_signal_changes() {
+        let both = |input, output| InOut { input, output };
+        let off = |signal: &SignalState| {
+            let color = signal.video_color();
+            (
+                color.input.map(|c| c.bt2020),
+                color.output.map(|c| c.bt2020),
+            )
+        };
+        let mut signal = SignalState::default();
+        assert!(ss(&mut signal, "INFSIGRES I4K50"));
+        assert_eq!(signal.bt2020.input, None);
+        // Before the first `SSINFSIGECI`, nothing is asked.
+        ss(&mut signal, "INFSIGCOS 11");
+        assert!(!signal.needs_colorimetry_query());
+        ss(&mut signal, "INFSIGECI 55");
+        assert_eq!(signal.bt2020, both(Some(true), Some(true)));
+        assert!(!signal.needs_colorimetry_query());
+        // The same value again changes nothing.
+        assert!(!ss(&mut signal, "INFSIGCOS 11"));
+        assert_eq!(signal.bt2020.input, Some(true));
+        // A change makes it not known: it reads as off and is asked again.
+        assert!(signal.apply_sy("SDVOUT 4K24"));
+        assert_eq!(signal.bt2020, both(Some(true), None));
+        assert_eq!(off(&signal), (Some(true), Some(false)));
+        assert!(signal.needs_colorimetry_query());
+        ss(&mut signal, "INFSIGECI 55");
+        assert!(!signal.needs_colorimetry_query());
+        assert!(signal.apply_appcommand(Field::VideoSignalIn, Some("1080p60")));
+        assert_eq!(signal.bt2020.input, None);
+        assert!(signal.needs_colorimetry_query());
+        // No color space: nothing to ask for that side.
+        ss(&mut signal, "INFSIGCOS 01");
+        assert_eq!(signal.color_space.input, None);
+        assert!(!signal.needs_colorimetry_query());
+        // The SDR page after the HDR10 page turns it off.
+        let (hdr10, sdr) = (page(HDR10_PAGE), page(SDR_PAGE));
+        assert!(signal.apply_video_page(&hdr10));
+        assert_eq!(signal.bt2020, both(Some(true), Some(true)));
+        assert!(signal.apply_video_page(&sdr));
+        assert_eq!(signal.bt2020, both(None, None));
+        assert_eq!(off(&signal), (Some(false), Some(false)));
+        assert!(!signal.apply_video_page(&sdr));
+    }
+
+    #[test]
+    fn a_page_alone_turns_bt2020_off_after_a_change() {
+        let mut signal = SignalState::default();
+        signal.apply_video_page(&page(HDR10_PAGE));
+        signal.apply_video_page(&page(SDR_PAGE));
+        let color = signal.video_color();
+        assert_eq!(color.input.unwrap().to_string(), "4:4:4");
+        // Telnet `SSINFSIGECI` was not seen, so it is not asked.
+        assert!(!signal.needs_colorimetry_query());
     }
 
     #[test]
@@ -601,13 +919,19 @@ mod tests {
     }
 
     #[test]
+    fn video_color_from_the_hdr10_page() {
+        let mut signal = SignalState::default();
+        assert!(signal.apply_video_page(&page(HDR10_PAGE)));
+        assert_eq!(signal.bt2020.input, Some(true));
+        let color = signal.video_color();
+        assert_eq!(color.input.unwrap().to_string(), "4:2:2/BT.2020");
+        assert_eq!(color.output.unwrap().to_string(), "4:2:2/BT.2020");
+    }
+
+    #[test]
     fn a_partial_video_page_keeps_the_other_values() {
         let mut signal = SignalState::default();
-        let full = VideoSignalPage::parse(include_bytes!(
-            "../tests/data/xml/AVC-A10H-web-video-signal.xml"
-        ))
-        .unwrap();
-        assert!(signal.apply_video_page(&full));
+        assert!(signal.apply_video_page(&page(SDR_PAGE)));
         let partial = VideoSignalPage::parse(
             b"<Video><Resolution><Input>1080p60</Input></Resolution></Video>",
         )

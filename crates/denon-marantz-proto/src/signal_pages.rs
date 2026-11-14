@@ -29,6 +29,9 @@ pub struct VideoSignalPage {
     pub frl_rate: Sides<String>,
     /// Color space.
     pub color_space: Sides<ColorSpace>,
+    /// The signal uses the BT.2020 color range. Pages without a BT.2020
+    /// signal do not have the `Colorimetry` element.
+    pub bt2020: Sides<bool>,
     /// Bits for each color.
     pub pixel_depth: Sides<PixelDepth>,
     /// Auto low latency mode is on.
@@ -52,7 +55,14 @@ impl VideoSignalPage {
         let node = root.node();
         // A page without these elements is not a signal page, and must not
         // clear the state.
-        let known = ["Resolution", "HDR", "FRLRate", "ColorSpace", "PixelDepth"];
+        let known = [
+            "Resolution",
+            "HDR",
+            "FRLRate",
+            "ColorSpace",
+            "Colorimetry",
+            "PixelDepth",
+        ];
         if !known.iter().any(|name| node.child(name).is_some()) {
             return Err(Error::UnexpectedDocument { expected: "Video" });
         }
@@ -80,11 +90,17 @@ impl VideoSignalPage {
             }
         };
         let color_space = text("ColorSpace");
+        // `BT.2020` is true, other texts are false.
+        let colorimetry = text("Colorimetry");
         let pixel_depth = text("PixelDepth");
         Ok(Self {
             resolution: text("Resolution"),
             hdr: text("HDR"),
             frl_rate: text("FRLRate"),
+            bt2020: Sides {
+                input: colorimetry.input.convert(|text| Some(text == "BT.2020")),
+                output: colorimetry.output.convert(|text| Some(text == "BT.2020")),
+            },
             color_space: Sides {
                 input: color_space.input.convert(color_space_of),
                 output: color_space.output.convert(color_space_of),
@@ -200,6 +216,7 @@ mod tests {
     use super::*;
 
     const VIDEO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-video-signal.xml");
+    const HDR10: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-video-signal-hdr10.xml");
     const NO_VIDEO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-video-no-signal.xml");
     const AUDIO: &[u8] = include_bytes!("../tests/data/xml/AVC-A10H-web-audio-channels.xml");
 
@@ -233,6 +250,28 @@ mod tests {
         assert_eq!(page.pixel_depth.output, Value(PixelDepth::Bits8));
         assert_eq!(page.allm, Value(false));
         assert_eq!(page.qft, Value(false));
+    }
+
+    #[test]
+    fn video_page_with_an_hdr10_signal() {
+        let page = VideoSignalPage::parse(HDR10).unwrap();
+        assert_eq!(page.hdr.input, text("HDR10"));
+        assert_eq!(page.hdr.output, text("HDR10"));
+        assert_eq!(page.color_space.input, Value(ColorSpace::Yuv422));
+        assert_eq!(page.color_space.output, Value(ColorSpace::Yuv422));
+        assert_eq!(page.bt2020.input, Value(true));
+        assert_eq!(page.bt2020.output, Value(true));
+        assert_eq!(page.pixel_depth.input, Value(PixelDepth::Bits12));
+        // The SDR page has no colorimetry.
+        assert_eq!(
+            VideoSignalPage::parse(VIDEO).unwrap().bt2020,
+            Sides::default()
+        );
+        let other = VideoSignalPage::parse(
+            b"<Video><Colorimetry><Input>BT.709</Input></Colorimetry></Video>",
+        )
+        .unwrap();
+        assert_eq!(other.bt2020.input, Value(false));
     }
 
     #[test]

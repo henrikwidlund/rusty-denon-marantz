@@ -1,0 +1,2 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Video><Resolution><Input>4K50</Input><Output>4K50</Output></Resolution><HDR><Input>HDR10</Input><Output>HDR10</Output></HDR><ColorSpace><Input>YCbCr 4:2:2</Input><Output>YCbCr 4:2:2</Output></ColorSpace><Colorimetry><Input>BT.2020</Input><Output>BT.2020</Output></Colorimetry><PixelDepth><Input>12bits</Input><Output>12bits</Output></PixelDepth><ALLM>2</ALLM><QFT>2</QFT><FRLRate><Input>---</Input><Output>---</Output></FRLRate></Video>

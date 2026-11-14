@@ -74,7 +74,7 @@ pub use remote_key::RemoteKey;
 pub use settings_availability::{
     Availability, GroupAvailability, SettingAvailability, SettingsAvailability, SettingsGroup,
 };
-pub use signal::{ChannelLayout, InOut, SignalState};
+pub use signal::{ChannelLayout, InOut, SignalState, VideoColor};
 pub use signal_pages::{
     AUDIO_CHANNELS_PATH, AudioChannelsPage, VIDEO_SIGNAL_PATH, VideoSignalPage,
 };

@@ -369,7 +369,8 @@ impl Avr {
         }
     }
 
-    /// Asks on telnet for the signal values that the pages did not give.
+    /// Asks on telnet for the signal values that the pages did not give, and
+    /// for the colorimetry last.
     #[cfg(feature = "telnet")]
     async fn ask_for_signal(&self, web_interface: &Result<StartPages, Error>) {
         let brand = self.info.brand;
@@ -387,13 +388,16 @@ impl Avr {
         if self.has_appcommand0300() && !self.signal_from_appcommand.load(Ordering::Relaxed) {
             queries.extend(signal_queries(brand, SignalPart::AudioInfo));
         }
-        if !video {
-            queries.extend(signal_queries(brand, SignalPart::Video));
-        }
         if !channels {
             queries.extend(signal_queries(brand, SignalPart::Channels));
         }
-        if !queries.is_empty() && self.telnet.ask(queries).await.is_err() {
+        if !video {
+            queries.extend(signal_queries(brand, SignalPart::Video));
+        }
+        // Last, after the pages and the video queries, so that the answer is
+        // for the signal that the state has.
+        queries.extend(signal_queries(brand, SignalPart::Colorimetry));
+        if self.telnet.ask(queries).await.is_err() {
             tracing::debug!(host = %self.info.host, "signal queries not sent, telnet closed");
         }
     }
@@ -413,7 +417,29 @@ impl Avr {
             })
             .await;
         self.forget_telnet_values(&result);
+        self.ask_colorimetry_if_unknown().await;
         result
+    }
+
+    /// Asks telnet for the colorimetry if a change made BT.2020 not known, see
+    /// [`SignalState::needs_colorimetry_query`](denon_marantz_proto::SignalState::needs_colorimetry_query).
+    #[cfg_attr(
+        not(feature = "telnet"),
+        allow(clippy::unused_async, clippy::unused_self)
+    )]
+    pub(super) async fn ask_colorimetry_if_unknown(&self) {
+        #[cfg(feature = "telnet")]
+        if self
+            .channels
+            .read(|state| state.device().signal.needs_colorimetry_query())
+            && self
+                .telnet
+                .ask(signal_queries(self.info.brand, SignalPart::Colorimetry))
+                .await
+                .is_err()
+        {
+            tracing::debug!(host = %self.info.host, "colorimetry query not sent, telnet closed");
+        }
     }
 
     async fn read_channels_page(&self) -> Result<PageStatus, Error> {
@@ -493,6 +519,8 @@ impl Avr {
             if !channels {
                 queries.extend(signal_queries(self.info.brand, SignalPart::Channels));
             }
+            // Last, so that its answer comes after the video values.
+            queries.extend(signal_queries(self.info.brand, SignalPart::Colorimetry));
             return self.telnet.ask(queries).await;
         }
         if answered || is_read(&video) || is_read(&channels) {

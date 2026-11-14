@@ -1233,6 +1233,7 @@ impl Avr {
                 self.signal_from_appcommand
                     .store(complete, Ordering::Relaxed);
                 self.forget_telnet_values(&Ok(PageStatus::Read));
+                self.ask_colorimetry_if_unknown().await;
                 Ok(PageStatus::Read)
             }
             // A timeout or a network error can pass.

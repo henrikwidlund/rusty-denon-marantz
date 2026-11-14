@@ -123,6 +123,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The value as text, or `-` if there is none.
+fn shown(value: Option<impl std::fmt::Display>) -> String {
+    value.map_or_else(|| "-".to_owned(), |value| value.to_string())
+}
+
 fn print_state(avr: &Avr) {
     let state = avr.snapshot();
     let main = state.zone(Zone::Main);
@@ -143,24 +148,22 @@ fn print_state(avr: &Avr) {
         "STATE hdr in={:?} out={:?}",
         signal.hdr.input, signal.hdr.output
     );
+    let color = signal.video_color();
     println!(
-        "STATE color_space in={:?} out={:?}",
-        signal.color_space.input, signal.color_space.output
+        "STATE color in={} out={}",
+        shown(color.input),
+        shown(color.output)
     );
+    let depth = signal.effective_pixel_depth();
     println!(
-        "STATE pixel_depth in={:?} out={:?}",
-        signal.pixel_depth.input, signal.pixel_depth.output
+        "STATE pixel_depth in={} out={}",
+        shown(depth.input),
+        shown(depth.output)
     );
     println!(
         "STATE channels in={} out={}",
-        signal
-            .channels
-            .input
-            .map_or_else(|| "-".to_owned(), |c| c.to_string()),
-        signal
-            .channels
-            .output
-            .map_or_else(|| "-".to_owned(), |c| c.to_string()),
+        shown(signal.channels.input),
+        shown(signal.channels.output)
     );
     println!(
         "STATE audio_signal={:?} audio_sound={:?} sampling_rate={:?}",

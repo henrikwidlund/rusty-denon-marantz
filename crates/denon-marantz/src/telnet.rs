@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
     DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, MAIN_ZONE_POWER_QUERY,
-    Message, Query, QueryGroup, group_queries, queries,
+    Message, Query, QueryGroup, SignalPart, group_queries, queries, signal_queries,
 };
 use denon_marantz_proto::{Brand, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -67,8 +67,8 @@ pub struct TelnetConfig {
     pub query_interval: Duration,
     /// Time without data from the receiver that a query waits for. The receiver
     /// answers in order, so a command that is sent while it still answers
-    /// queries is answered late. A query does not wait longer than
-    /// one second after the last write.
+    /// queries is answered late. A query does not wait longer than one second
+    /// after the last write or, if that is later, after it was added.
     pub query_quiet: Duration,
     /// The groups of queries that fill the state after a connect, in the order
     /// that they are sent. A group that is left out stays empty until the
@@ -500,6 +500,8 @@ struct Queue {
     last_read: Option<Instant>,
     /// Callers that wait for the answer to a marker query, oldest first.
     markers: VecDeque<Marker>,
+    /// When a query or a marker started to wait while nothing else waited.
+    waiting_since: Option<Instant>,
 }
 
 /// A caller that waits for the answer to a marker query.
@@ -515,8 +517,9 @@ struct Marker {
 const MARKER_STALE: Duration = Duration::from_secs(5);
 
 impl Queue {
-    const fn new(background: VecDeque<Cow<'static, str>>) -> Self {
+    fn new(background: VecDeque<Cow<'static, str>>) -> Self {
         Self {
+            waiting_since: (!background.is_empty()).then(Instant::now),
             user: VecDeque::new(),
             background,
             last_write: None,
@@ -526,12 +529,27 @@ impl Queue {
         }
     }
 
+    /// A query or a marker waits for a write.
+    fn has_query_work(&self) -> bool {
+        !self.background.is_empty() || self.marker_due()
+    }
+
+    /// Runs `change`, and notes the time if it made work wait while none did.
+    fn queue_work(&mut self, change: impl FnOnce(&mut Self)) {
+        let was_idle = !self.has_query_work();
+        change(self);
+        if was_idle && self.has_query_work() {
+            self.waiting_since = Some(Instant::now());
+        }
+    }
+
     /// When the next line may be written. `None` if there is nothing to write.
     ///
     /// A line from the caller waits for the command interval after the last
     /// write. A query waits for the query interval, and for the pause after
     /// the last line from the caller. It also waits until the receiver is quiet,
-    /// but not longer than [`MAX_QUERY_WAIT`] after the last write.
+    /// but not longer than [`MAX_QUERY_WAIT`] after the last write or, if that
+    /// is later, after the query started to wait.
     fn write_time(&self, config: &TelnetConfig, background_pause: Duration) -> Option<Instant> {
         let after_last = |interval: Duration| {
             self.last_write
@@ -539,11 +557,14 @@ impl Queue {
         };
         if !self.user.is_empty() {
             Some(after_last(config.command_interval))
-        } else if !self.background.is_empty() || self.marker_due() {
+        } else if self.has_query_work() {
             let mut spaced = after_last(config.query_interval);
             if let Some(read) = self.last_read {
-                let quiet = (read + config.query_quiet).min(after_last(MAX_QUERY_WAIT));
-                spaced = spaced.max(quiet);
+                let limit = self
+                    .last_write
+                    .max(self.waiting_since)
+                    .map_or_else(Instant::now, |since| since + MAX_QUERY_WAIT);
+                spaced = spaced.max((read + config.query_quiet).min(limit));
             }
             let after_command = self
                 .last_user_write
@@ -598,12 +619,14 @@ impl Queue {
     /// added again, so repeated requests cannot make the queue grow without
     /// limit.
     fn add<Q: Into<Cow<'static, str>>>(&mut self, queries: impl IntoIterator<Item = Q>) {
-        for query in queries {
-            let query = query.into();
-            if !self.background.contains(&query) {
-                self.background.push_back(query);
+        self.queue_work(|queue| {
+            for query in queries {
+                let query = query.into();
+                if !queue.background.contains(&query) {
+                    queue.background.push_back(query);
+                }
             }
-        }
+        });
     }
 
     /// Tells every caller that is waiting that the line is not sent.
@@ -719,6 +742,7 @@ impl Worker {
                         asked = false;
                         let mut tuner = false;
                         let mut power_lines = 0_usize;
+                        let unknown_before = self.colorimetry_unknown();
                         decoder.decode(&buffer[..count], |text| {
                             // The source of the main zone changed to the tuner.
                             tuner |= text == "SITUNER";
@@ -728,6 +752,15 @@ impl Worker {
                         });
                         if tuner {
                             queue.add(TUNER_QUERIES);
+                        }
+                        // A change made BT.2020 not known: ask once more. The
+                        // answer can repeat the last value, so the filter must
+                        // let it through. This asks only when it becomes not
+                        // known: if a query from HTTP failed before, it stays
+                        // off until the next change or `refresh_signal`.
+                        if !unknown_before && self.colorimetry_unknown() {
+                            filter.forget_colorimetry();
+                            queue.add(signal_queries(self.queries.brand, SignalPart::Colorimetry));
                         }
                         for _ in 0..power_lines {
                             queue.answer_marker();
@@ -739,7 +772,8 @@ impl Worker {
                     Some(Request::Send(outgoing)) => queue.user.push_back(outgoing),
                     Some(Request::Refresh) => {
                         filter.clear();
-                        queue.background = self.queries.all();
+                        let all = self.queries.all();
+                        queue.queue_work(|queue| queue.background = all);
                     }
                     Some(Request::RefreshGroup(group)) => {
                         filter.clear();
@@ -751,9 +785,11 @@ impl Worker {
                     }
                     Some(Request::Synced(done)) => {
                         queue.drop_dead_markers(Instant::now());
-                        queue.markers.push_back(Marker {
-                            done,
-                            written: None,
+                        queue.queue_work(|queue| {
+                            queue.markers.push_back(Marker {
+                                done,
+                                written: None,
+                            });
                         });
                     }
                     None => break End::Shutdown,
@@ -792,6 +828,7 @@ impl Worker {
         let (text, done, from_user) = if let Some(outgoing) = queue.user.pop_front() {
             (outgoing.line, outgoing.done, true)
         } else if let Some(query) = queue.background.pop_front() {
+            tracing::trace!(query = %query, "telnet query");
             line.clear();
             line.push_str(&query);
             line.push('\r');
@@ -828,6 +865,11 @@ impl Worker {
             });
         }
         result.map_err(End::Failed)
+    }
+
+    fn colorimetry_unknown(&self) -> bool {
+        self.channels
+            .read(|state| state.device().signal.needs_colorimetry_query())
     }
 
     fn handle_line(&self, line: &str, filter: &mut DuplicateFilter) {
@@ -1080,5 +1122,31 @@ mod tests {
         assert_eq!(queue.write_time(&config, pause), Some(start + ms(1400)));
         queue.background.clear();
         assert_eq!(queue.write_time(&config, pause), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_query_after_a_quiet_time_waits_until_the_receiver_is_quiet() {
+        let config = TelnetConfig {
+            query_interval: Duration::from_millis(100),
+            query_quiet: Duration::from_millis(50),
+            ..TelnetConfig::default()
+        };
+        let ms = Duration::from_millis;
+        let mut queue = Queue::new(VecDeque::new());
+        let start = Instant::now();
+        queue.last_write = Some(start);
+        // Long after the last write, the receiver sends events and a query
+        // is added. It waits for the quiet time.
+        tokio::time::advance(ms(5000)).await;
+        queue.last_read = Some(start + ms(5000));
+        queue.add(["SSINFSIGECI ?"]);
+        assert_eq!(queue.write_time(&config, ms(0)), Some(start + ms(5050)));
+        // Events that keep coming do not hold it back longer than the limit.
+        queue.last_read = Some(start + ms(5990));
+        assert_eq!(queue.write_time(&config, ms(0)), Some(start + ms(6000)));
+        // A query added while another waits keeps the first time.
+        tokio::time::advance(ms(500)).await;
+        queue.add(["SSINFSIGCOS ?"]);
+        assert_eq!(queue.waiting_since, Some(start + ms(5000)));
     }
 }

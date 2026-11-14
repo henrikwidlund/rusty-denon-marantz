@@ -150,6 +150,19 @@ reads the resolution, the audio signal and the channels with one fast request
 from the web interface, and asks telnet for the rest if it is open. Your code
 does not choose.
 
+The signal fields keep the values as the receiver sends them. Two methods of
+`SignalState` add what the receiver leaves out. `effective_pixel_depth()` gives
+the input the output depth when the receiver sends `0` (unknown) for an input
+signal. `video_color()` joins the color space and BT.2020, for example
+`4:4:4/BT.2020`. Receivers report BT.2020 in different ways: in the color
+space code (`SSINFSIGCOS` `9` is 4:2:2 with BT.2020), with `SSINFSIGECI` or in
+the web interface. If a receiver reports it, BT.2020 is off after the
+resolution, the HDR format or the color space changes, until the receiver says
+it is on. Telnet asks `SSINFSIGECI ?` after the video queries, and once more
+after such a change. If that query cannot be sent, for example while telnet
+connects again, BT.2020 stays off until the next change or `refresh_signal()`.
+If a receiver does not report it, an HDR format means BT.2020.
+
 To see what plays, call `avr.refresh_now_playing().await?`. It asks on telnet if
 the connection is open and reads the status page if not, so your code does not
 choose. The values reach `snapshot()` and `changes()` either way. Nothing asks
@@ -232,9 +245,9 @@ have not run on a receiver:
 - What plays (`refresh_now_playing`, `update_now_playing`,
   `telnet_refresh_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
   from other receivers and with fake receivers. The `NSA` text is not used.
-- The signal pages of the web interface with an HDR signal or an FRL rate: the
-  text of these values is only seen as no signal. The values of `ALLM` and
-  `QFT` (1 is on) were only seen as off.
+- The signal pages of the web interface with an FRL rate, and colorimetry
+  texts other than `BT.2020`: the FRL rate is only seen as no signal. The values
+  of `ALLM` and `QFT` (1 is on) were only seen as off.
 - The query `MNZST?` and the `MNZST` event of all zone stereo on other receivers.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay

@@ -65,13 +65,14 @@ code_enum! {
 }
 
 code_enum! {
-    /// Color space of an HDMI video signal.
+    /// Color space of an HDMI video signal. Some receivers send `9` for
+    /// 4:2:2 with BT.2020: that is [`ColorSpace::Yuv422`] and
+    /// [`SignalState::bt2020`](crate::SignalState::bt2020).
     pub enum ColorSpace {
         Yuv422 = "1", "4:2:2";
         Yuv444 = "2", "4:4:4";
         Rgb = "3", "RGB";
         Yuv420 = "8", "4:2:0";
-        Yuv422Bt2020 = "9", "4:2:2/BT.2020";
     }
 }
 
@@ -582,7 +583,7 @@ mod tests {
         assert_eq!(HdmiOutput::Hdmi2.label(), "HDMI2");
         assert_eq!(PictureMode::IsfNight.code(), "NGT");
         assert_eq!(DiracFilter::Slot3.code(), "3");
-        assert_eq!(ColorSpace::from_code("9"), Some(ColorSpace::Yuv422Bt2020));
+        assert_eq!(ColorSpace::from_code("9"), None);
         assert_eq!(ColorSpace::from_code("0"), None);
         assert_eq!(
             PixelDepth::from_code("2").map(PixelDepth::label),

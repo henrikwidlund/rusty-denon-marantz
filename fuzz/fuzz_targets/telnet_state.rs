@@ -18,4 +18,7 @@ fuzz_target!(|data: &[u8]| {
     }
     // The state must stay usable: read it back.
     let _ = state.clone();
+    let signal = &state.device().signal;
+    let _ = signal.effective_pixel_depth();
+    let _ = signal.video_color().input.map(|color| color.to_string());
 });

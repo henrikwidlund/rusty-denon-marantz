@@ -436,8 +436,11 @@ pub enum SignalPart {
     /// The kind of the audio signal and of the sound, and the sampling rate.
     /// `AppCommand0300.xml` answers it too ([`GET_AUDIO_INFO`](crate::appcommand::GET_AUDIO_INFO)).
     AudioInfo,
-    /// The HDMI limit and the extended colorimetry. Only telnet answers it.
+    /// The HDMI limit. Only telnet answers it.
     TelnetOnly,
+    /// The extended colorimetry (BT.2020). Only telnet answers it. Ask it
+    /// after the video queries, so that its answer comes after theirs.
+    Colorimetry,
 }
 
 impl SignalPart {
@@ -447,6 +450,7 @@ impl SignalPart {
             | "SSINFSIGFRL ?" | "SSINFSIGCOS ?" => Self::Video,
             "OPINFASP ?" | "OPINFINS ?" => Self::Channels,
             "SSINFAISFSV ?" | "SYSDA ?" | "SYSMI ?" => Self::AudioInfo,
+            "SSINFSIGECI ?" => Self::Colorimetry,
             _ => Self::TelnetOnly,
         }
     }
@@ -799,6 +803,7 @@ mod tests {
                 SignalPart::Channels,
                 SignalPart::AudioInfo,
                 SignalPart::TelnetOnly,
+                SignalPart::Colorimetry,
             ]
             .into_iter()
             .map(|part| signal_queries(brand, part).count())
@@ -807,7 +812,9 @@ mod tests {
             assert_eq!(signal_queries(brand, SignalPart::Channels).count(), 2);
             assert!(signal_queries(brand, SignalPart::AudioInfo).any(|q| q == "SYSDA ?"));
             assert_eq!(signal_queries(brand, SignalPart::AudioInfo).count(), 3);
-            assert!(signal_queries(brand, SignalPart::TelnetOnly).any(|q| q == "SSINFSIGECI ?"));
+            assert!(signal_queries(brand, SignalPart::Colorimetry).eq(["SSINFSIGECI ?"]));
+            // In the group, it comes after the video queries.
+            assert_eq!(group_queries(brand, Signal).last(), Some("SSINFSIGECI ?"));
             assert!(!signal_queries(brand, SignalPart::Video).any(|q| q == "SYSDA ?"));
         }
     }

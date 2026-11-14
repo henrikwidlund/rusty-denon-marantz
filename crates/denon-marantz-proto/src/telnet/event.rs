@@ -272,6 +272,17 @@ impl DuplicateFilter {
         true
     }
 
+    /// Forgets the last value of the group of `SSINFSIGECI`. Call this before
+    /// that query when its answer must be reported.
+    pub fn forget_colorimetry(&mut self) {
+        if let Some(index) = DUPLICATE_PREFIXES
+            .iter()
+            .position(|prefix| *prefix == "INFSIGECI")
+        {
+            self.last[index].clear();
+        }
+    }
+
     /// Forgets all values. Call this before queries that must be reported.
     pub fn clear(&mut self) {
         for last in &mut self.last {
@@ -401,6 +412,12 @@ mod tests {
         assert!(filter.accept("INFSIGECI 55"));
         assert!(!filter.accept("INFSIGECI 55"));
         assert!(filter.accept("INFSIGECI 00"));
+        // Forgetting it lets the same value through once more, and keeps the
+        // other groups.
+        assert!(filter.accept("INFSIGCOS 11"));
+        filter.forget_colorimetry();
+        assert!(filter.accept("INFSIGECI 00"));
+        assert!(!filter.accept("INFSIGCOS 11"));
     }
 
     #[test]
