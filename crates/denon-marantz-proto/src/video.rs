@@ -71,7 +71,7 @@ impl VideoSettings {
                 VideoProcessingMode::from_code(code),
             )
         } else if parameter.starts_with("MONI") {
-            put(&mut self.hdmi_output, HdmiOutput::from_code(parameter))
+            put(&mut self.hdmi_output, HdmiOutput::from_telnet(parameter))
         } else if let Some(code) = parameter.strip_prefix("AUDIO") {
             put(
                 &mut self.hdmi_audio,
@@ -136,7 +136,7 @@ impl VideoSettingValue {
             }
             Self::HdmiOutput(output) => {
                 out.push_str("VS");
-                out.push_str(output.code());
+                out.push_str(output.telnet_code());
             }
             Self::HdmiAudio(decode) => {
                 out.push_str("VSAUDIO ");

@@ -78,16 +78,32 @@ const UPDATE_COMMANDS: [Definition; 13] = [
 /// [`UPDATE_COMMANDS`] without tone control.
 const UPDATE_COMMANDS_WITHOUT_TONE: &[Definition] = UPDATE_COMMANDS.split_last().unwrap().1;
 
-/// The queries of `AppCommand0300.xml` that [`Avr::update_signal_and_audyssey`]
-/// sends: the Audyssey settings, the video and audio signal, and the channels
-/// of the signal and of the speakers.
-const APPCOMMAND0300_COMMANDS: [Definition; 5] = [
+/// The queries of `AppCommand0300.xml` that [`Avr::update_signal_and_settings`]
+/// sends: the Audyssey settings, the video and audio signal, the channels of
+/// the signal and of the speakers, and the HDMI output. The last one only if
+/// the receiver lists it, see [`appcommand0300_commands`].
+const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
     appcommand::GET_AUDYSSEY,
     appcommand::GET_VIDEO_INFO,
     appcommand::GET_AUDIO_INFO,
     appcommand::GET_INPUT_SIGNAL,
     appcommand::GET_ACTIVE_SPEAKER,
+    appcommand::GET_OUTPUT_SETTINGS,
 ];
+
+/// [`APPCOMMAND0300_COMMANDS`] without the HDMI output.
+const APPCOMMAND0300_COMMANDS_WITHOUT_OUTPUT: &[Definition] =
+    APPCOMMAND0300_COMMANDS.split_last().unwrap().1;
+
+/// The queries of [`APPCOMMAND0300_COMMANDS`] that the receiver answers. A
+/// receiver can fail the whole request for a query that it does not know.
+const fn appcommand0300_commands(info: &Info) -> &'static [Definition] {
+    if info.hdmi_output_over_http {
+        &APPCOMMAND0300_COMMANDS
+    } else {
+        APPCOMMAND0300_COMMANDS_WITHOUT_OUTPUT
+    }
+}
 
 /// The commands that read what telnet does not report. [`Avr::refresh`] sends
 /// only these when the telnet connection is open.
@@ -149,6 +165,10 @@ pub struct Info {
     /// information lists. `0` if it says that there are none, `None` if it
     /// does not say. A receiver can accept more than it lists.
     pub quick_select_count: Option<u8>,
+    /// The receiver answers the HDMI output over HTTP, so
+    /// [`Avr::update_signal_and_settings`] and the read after
+    /// `set_hdmi_output` over HTTP read it.
+    pub hdmi_output_over_http: bool,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
     pub zones: Vec<Zone>,
@@ -207,11 +227,11 @@ pub struct Avr {
     /// The request body of [`HTTP_ONLY_WITH_DEVICE_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_with_device_body: Bytes,
-    /// The request body of [`APPCOMMAND0300_COMMANDS`].
+    /// The request body of [`appcommand0300_commands`].
     appcommand0300_body: Bytes,
     /// Reads that the receiver does not answer.
     missing: Arc<Missing>,
-    /// The last [`Avr::update_signal_and_audyssey`] read the signal and the
+    /// The last [`Avr::update_signal_and_settings`] read the signal and the
     /// channels with `AppCommand0300.xml`.
     signal_from_appcommand: AtomicBool,
     channels: Channels,
@@ -1157,8 +1177,10 @@ impl Avr {
         .await
     }
 
-    /// Reads the video and audio signal, the channels and the Audyssey
-    /// settings from the receiver with one request to `AppCommand0300.xml`.
+    /// Reads the video and audio signal, the channels, the Audyssey settings
+    /// and the HDMI output from the receiver with one request to
+    /// `AppCommand0300.xml`. The HDMI output is read only if
+    /// [`Info::hdmi_output_over_http`] is true.
     ///
     /// This is faster than the pages of the web interface and the telnet
     /// queries for the same values. It gives the
@@ -1168,7 +1190,8 @@ impl Avr {
     /// the FRL rate are not in it: [`Avr::refresh_signal`] reads them from
     /// the web interface. The values are in
     /// [`DeviceState::signal`](denon_marantz_proto::DeviceState::signal) and,
-    /// for Audyssey, in the fields of [`DeviceState`](denon_marantz_proto::DeviceState).
+    /// for Audyssey and the HDMI output, in the fields of
+    /// [`DeviceState`](denon_marantz_proto::DeviceState).
     ///
     /// Receivers that are read with `AppCommand` are asked. The result is
     /// [`PageStatus::NotFound`] for another receiver and for a receiver that
@@ -1184,37 +1207,39 @@ impl Avr {
     ///
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
-    pub async fn update_signal_and_audyssey(&self) -> Result<PageStatus, Error> {
+    pub async fn update_signal_and_settings(&self) -> Result<PageStatus, Error> {
         if self.info.update_method != UpdateMethod::AppCommand
             || self.missing.appcommand0300.load(Ordering::Relaxed)
         {
             return Ok(PageStatus::NotFound);
         }
-        // Telnet reports the Audyssey values, so a blank one must not clear them.
+        // Telnet reports the Audyssey values and the HDMI output, so a blank
+        // one must not clear them.
         #[cfg(feature = "telnet")]
-        let keep_audyssey = *self.telnet.watch_status().borrow() == TelnetStatus::Connected;
+        let telnet_open = *self.telnet.watch_status().borrow() == TelnetStatus::Connected;
         #[cfg(not(feature = "telnet"))]
-        let keep_audyssey = false;
+        let telnet_open = false;
         let result = self
             .http
             .post_parsed(
                 Endpoint::AppCommand0300.path(),
                 self.appcommand0300_body.clone(),
                 |body| {
-                    let response = Response::parse(body, APPCOMMAND0300_COMMANDS.len())?;
+                    let commands = appcommand0300_commands(&self.info);
+                    let response = Response::parse(body, commands.len())?;
                     let mut complete = true;
                     self.channels.modify(|state, notify| {
-                        for (definition, item) in
-                            APPCOMMAND0300_COMMANDS.iter().zip(response.items())
-                        {
+                        for (definition, item) in commands.iter().zip(response.items()) {
                             // An error item has no values, and must not clear
-                            // what the state has.
+                            // what the state has. The HDMI output is not part
+                            // of the signal.
                             if item.is_error() {
-                                complete = false;
+                                complete &= *definition == appcommand::GET_OUTPUT_SETTINGS;
                                 continue;
                             }
-                            let keep_known =
-                                keep_audyssey && *definition == appcommand::GET_AUDYSSEY;
+                            let keep_known = telnet_open
+                                && (*definition == appcommand::GET_AUDYSSEY
+                                    || *definition == appcommand::GET_OUTPUT_SETTINGS);
                             definition.extract(&item, Zone::Main, &mut |field, value| {
                                 if value.is_some() || !keep_known {
                                     notify(state.apply_field(Zone::Main, field, value));
@@ -1511,6 +1536,7 @@ impl AvrBuilder {
             dirac_live: device_info.dirac_live,
             tuner: device_info.tuner,
             quick_select_count: device_info.quick_select_count,
+            hdmi_output_over_http: device_info.output_settings,
             zones: Zone::ALL[..zone_count].to_vec(),
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
@@ -1519,6 +1545,9 @@ impl AvrBuilder {
         let channels = Channels::new(State::new(single_zone));
         let missing = Arc::new(Missing::new(receiver_type));
         let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
+        let appcommand0300_cmds = APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd);
+        let appcommand0300_body =
+            request_body(&appcommand0300_cmds[..appcommand0300_commands(&info).len()])?;
         #[cfg(feature = "telnet")]
         let telnet = Telnet::new(self.telnet, self.background_pause, brand, single_zone);
         let follow_up = FollowUp::start(
@@ -1549,9 +1578,7 @@ impl AvrBuilder {
             http_only_with_device_body: request_body(
                 &HTTP_ONLY_WITH_DEVICE_COMMANDS.map(|definition| definition.cmd),
             )?,
-            appcommand0300_body: request_body(
-                &APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd),
-            )?,
+            appcommand0300_body,
             missing,
             signal_from_appcommand: AtomicBool::new(false),
             channels,

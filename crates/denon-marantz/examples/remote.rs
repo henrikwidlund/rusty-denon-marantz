@@ -691,7 +691,7 @@ async fn video_command(
             video.set_processing_mode(mode).await?;
         }
         "hdmi-output" => {
-            let output = HdmiOutput::from_code(need()?).ok_or_else(|| unknown("output"))?;
+            let output = HdmiOutput::from_telnet(need()?).ok_or_else(|| unknown("output"))?;
             video.set_hdmi_output(output).await?;
         }
         "hdmi-audio" => {

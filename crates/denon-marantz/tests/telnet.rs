@@ -7,9 +7,10 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    AVR_X_DIRAC_INFO, AVR_X_INFO, FakeTelnet, appcommand0300_answer, avr_x_receiver,
-    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, quick_follow_up,
-    receiver_with_audyssey, wait_until,
+    AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, FakeTelnet, Reply,
+    appcommand0300_answer, avr_x_receiver, avr_x_receiver_with_info, avr_x_receiver_with_pages,
+    builder, output_settings_item, quick_follow_up, receiver_with_audyssey,
+    receiver_with_info_and_signal_answers, wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
@@ -322,7 +323,7 @@ async fn blank_audyssey_values_over_http_keep_the_telnet_values() {
     .await;
 
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     let state = avr.snapshot();
@@ -334,6 +335,37 @@ async fn blank_audyssey_values_over_http_keep_the_telnet_values() {
         Some(ReferenceLevelOffset::Db0)
     );
     assert_eq!(device.dynamic_volume, Some(DynamicVolume::Off));
+}
+
+#[tokio::test]
+async fn a_blank_hdmi_output_over_http_keeps_the_telnet_value() {
+    let telnet = FakeTelnet::start().await;
+    let answer = appcommand0300_answer("").replace("</rx>", &(output_settings_item("") + "</rx>"));
+    let http = receiver_with_info_and_signal_answers(AVR_X_OUTPUT_SETTINGS_INFO, true, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = builder(&http, ReceiverType::AvrX2016)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    telnet.send(b"VSMONI2\r");
+    wait_until("the event", || {
+        avr.snapshot().device().video_settings.hdmi_output.is_some()
+    })
+    .await;
+
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    assert_eq!(
+        avr.snapshot().device().video_settings.hdmi_output,
+        Some(HdmiOutput::Hdmi2)
+    );
 }
 
 #[tokio::test]
@@ -1952,9 +1984,9 @@ const CHANNEL_LEVELS_PAGE: &[u8] = include_bytes!(
 async fn the_channel_level_page_is_not_asked_for_while_dirac_art_is_active() {
     let receiver = avr_x_receiver().await;
     let web_interface = common::Fake::start(|seen| match seen.path.as_str() {
-        "/ajax/speakers/get_config?type=4" => common::Reply::Body(DISTANCES_PAGE.to_vec()),
-        "/ajax/option/get_config?type=3" => common::Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
-        _ => common::Reply::Status(404),
+        "/ajax/speakers/get_config?type=4" => Reply::Body(DISTANCES_PAGE.to_vec()),
+        "/ajax/option/get_config?type=3" => Reply::Body(CHANNEL_LEVELS_PAGE.to_vec()),
+        _ => Reply::Status(404),
     })
     .await;
     let telnet = FakeTelnet::start().await;
@@ -2509,12 +2541,12 @@ async fn a_signal_change_asks_for_the_colorimetry_again() {
 async fn a_page_does_not_hide_the_next_telnet_event_with_the_old_value() {
     let telnet = FakeTelnet::start().await;
     let web = common::Fake::start(|seen| match seen.path.as_str() {
-        VIDEO_PATH => common::Reply::Body(
+        VIDEO_PATH => Reply::Body(
             b"<Video><Resolution><Input>1080p60</Input><Output>1080p60</Output></Resolution></Video>"
                 .to_vec(),
         ),
-        CHANNELS_PATH => common::Reply::Body(CHANNELS_PAGE.to_vec()),
-        _ => common::Reply::Status(404),
+        CHANNELS_PATH => Reply::Body(CHANNELS_PAGE.to_vec()),
+        _ => Reply::Status(404),
     })
     .await;
     let http = avr_x_receiver().await;

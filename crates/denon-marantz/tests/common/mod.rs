@@ -169,6 +169,19 @@ pub(crate) const DESCRIPTION: &[u8] =
 pub(crate) const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
     <DeviceZones>2</DeviceZones><MacAddress>0123456789AB</MacAddress></Device_Info>";
+/// The device information of a receiver that answers `GetOutputSettings`.
+pub(crate) const AVR_X_OUTPUT_SETTINGS_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
+    <DeviceZones>2</DeviceZones><Commands><GetOutputSettings ver=\"2\">1</GetOutputSettings>\
+    </Commands></Device_Info>";
+/// The item of an `AppCommand0300.xml` answer to `GetOutputSettings`, with
+/// `value` as the HDMI output. `2` is HDMI 2.
+pub(crate) fn output_settings_item(value: &str) -> String {
+    format!(
+        "<cmd><name>GetOutputSettings</name><list>\
+        <param name=\"videoout\" control=\"2\">{value}</param></list></cmd>"
+    )
+}
 /// The device information of a receiver that supports Dirac Live.
 pub(crate) const AVR_X_DIRAC_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
@@ -385,10 +398,19 @@ pub(crate) async fn receiver_with_signal_answers(
     tone: bool,
     answer: impl Fn(usize) -> Reply + Send + Sync + 'static,
 ) -> Fake {
+    receiver_with_info_and_signal_answers(AVR_X_INFO, tone, answer).await
+}
+
+/// Like [`receiver_with_signal_answers`], with this device information.
+pub(crate) async fn receiver_with_info_and_signal_answers(
+    info: &'static [u8],
+    tone: bool,
+    answer: impl Fn(usize) -> Reply + Send + Sync + 'static,
+) -> Fake {
     let asked = AtomicUsize::new(0);
     Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
-            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
             ("POST", "/goform/AppCommand0300.xml") => answer(asked.fetch_add(1, Ordering::Relaxed)),
             ("POST", _) if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("X"))

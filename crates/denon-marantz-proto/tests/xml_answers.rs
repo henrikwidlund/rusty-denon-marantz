@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
 use denon_marantz_proto::{
-    Brand, DeviceDescription, DeviceInfo, Error, NowPlaying, TunerBand, TunerInfo, TunerPage, Zone,
+    Brand, DeviceDescription, DeviceInfo, Error, HdmiOutput, NowPlaying, State, TunerBand,
+    TunerInfo, TunerPage, Zone,
 };
 
 const DEFINITIONS: [(&str, Definition); 10] = [
@@ -127,6 +128,42 @@ fn wrong_item_count_is_an_error() {
 }
 
 #[test]
+fn output_settings_answer_has_the_hdmi_output() {
+    let body = read_bytes("xml/AVC-A10H-AppCommand0300-outputsettings.xml");
+    let response = Response::parse(&body, 1).unwrap();
+    let mut values = Vec::new();
+    response.extract(&[ac::GET_OUTPUT_SETTINGS], Zone::Main, |field, value| {
+        values.push((field, value.map(str::to_owned)));
+    });
+    assert_eq!(values, [(ac::Field::HdmiOutput, Some("1".to_owned()))]);
+}
+
+#[test]
+fn signal_answer_with_output_settings_has_all_items() {
+    // The request had two `tx` elements, five commands and one. The receiver
+    // answers all six in one `rx`.
+    let body = read_bytes("xml/AVC-A10H-AppCommand0300-answer-output.xml");
+    let definitions = [
+        ac::GET_AUDYSSEY,
+        ac::GET_VIDEO_INFO,
+        ac::GET_AUDIO_INFO,
+        ac::GET_INPUT_SIGNAL,
+        ac::GET_ACTIVE_SPEAKER,
+        ac::GET_OUTPUT_SETTINGS,
+    ];
+    let response = Response::parse(&body, definitions.len()).unwrap();
+    let mut state = State::new(false);
+    response.extract(&definitions, Zone::Main, |field, value| {
+        state.apply_field(Zone::Main, field, value);
+    });
+    let device = state.device();
+    assert_eq!(device.video_settings.hdmi_output, Some(HdmiOutput::Hdmi1));
+    assert_eq!(device.signal.audio_sound.as_deref(), Some("AURO-3D"));
+    assert_eq!(device.signal.video.input, None);
+    assert_eq!(device.dynamic_eq, None);
+}
+
+#[test]
 fn device_info_has_the_expected_values() {
     let golden = read_data("deviceinfo_golden.tsv");
     let (mut ok, mut html) = (0, 0);
@@ -206,6 +243,22 @@ fn device_info_tells_the_quick_select_count() {
         let body = read_bytes(&format!("xml/{name}"));
         let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(info.quick_select_count, expected, "{name}");
+    }
+}
+
+#[test]
+fn device_info_tells_if_the_receiver_answers_output_settings() {
+    for (name, expected) in [
+        ("AVC-A10H-Deviceinfo-8080.xml", true),
+        ("AVR-X4300H-Deviceinfo-8080.xml", true),
+        ("SR6011-Deviceinfo.xml", true),
+        // Lists other `AppCommand0300.xml` queries, but not this one.
+        ("AVR-X4100W-Deviceinfo.xml", false),
+        ("AVR-X2000-Deviceinfo.xml", false),
+    ] {
+        let body = read_bytes(&format!("xml/{name}"));
+        let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(info.output_settings, expected, "{name}");
     }
 }
 

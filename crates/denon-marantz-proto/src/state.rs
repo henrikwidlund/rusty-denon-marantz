@@ -38,9 +38,9 @@ use crate::video_menu::{VideoMenu, VideoMenuPart};
 use crate::zone_settings::MAX_QUICK_SELECT;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
-    DimmerMode, DiracFilter, DynamicVolume, EcoMode, Illumination, InputMode, MultiEq, MuteLevel,
-    PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset, ToneLevel,
-    Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    DimmerMode, DiracFilter, DynamicVolume, EcoMode, HdmiOutput, Illumination, InputMode, MultiEq,
+    MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset,
+    ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -802,6 +802,12 @@ impl State {
                 let mode = value.map(normalize_sound_mode);
                 self.zone_change(zone, Setting::SoundMode, |z| {
                     set_optional_text(&mut z.sound_mode, mode.as_deref())
+                })
+            }
+            Field::HdmiOutput => {
+                let output = value.map(str::trim).and_then(HdmiOutput::from_appcommand);
+                self.device_change(Setting::VideoSettings, |d| {
+                    set(&mut d.video_settings.hdmi_output, output)
                 })
             }
             Field::Dimmer => {
@@ -2690,6 +2696,32 @@ mod tests {
     }
 
     #[test]
+    fn hdmi_output_from_an_answer() {
+        let mut state = State::new(false);
+        let main = Zone::Main;
+        let changed = || change(None, Setting::VideoSettings);
+        assert_eq!(
+            state.apply_field(main, Field::HdmiOutput, Some("1")),
+            changed()
+        );
+        assert_eq!(state.apply_field(main, Field::HdmiOutput, Some("1")), None);
+        assert_eq!(
+            state.apply_field(main, Field::HdmiOutput, Some(" 3 ")),
+            changed()
+        );
+        assert_eq!(
+            state.device().video_settings.hdmi_output,
+            Some(HdmiOutput::Auto)
+        );
+        // A blank or unknown value is unknown.
+        assert_eq!(state.apply_field(main, Field::HdmiOutput, None), changed());
+        assert_eq!(state.device().video_settings.hdmi_output, None);
+        state.apply_field(main, Field::HdmiOutput, Some("2"));
+        state.apply_field(main, Field::HdmiOutput, Some("MONI1"));
+        assert_eq!(state.device().video_settings.hdmi_output, None);
+    }
+
+    #[test]
     fn video_settings_follow_events() {
         let mut state = State::new(false);
         let changed = || change(None, Setting::VideoSettings);
@@ -2703,7 +2735,7 @@ mod tests {
             video.processing_mode,
             Some(crate::VideoProcessingMode::Bypass)
         );
-        assert_eq!(video.hdmi_output, Some(crate::HdmiOutput::Hdmi1));
+        assert_eq!(video.hdmi_output, Some(HdmiOutput::Hdmi1));
         assert_eq!(video.hdmi_audio, Some(crate::HdmiAudioDecode::Amp));
         assert_eq!(video.hdmi_upscaler, Some(crate::HdmiUpscaler::Off));
         for line in ["VSVPM ?", "VSXYZ", "VSVPMXX"] {

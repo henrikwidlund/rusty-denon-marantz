@@ -224,11 +224,25 @@ code_enum! {
 }
 
 code_enum! {
-    /// HDMI monitor output.
+    /// Highest resolution that the TV and the cables allow, from the HDMI
+    /// diagnostics of the receiver.
+    pub enum MaxHdmiResolution {
+        NoLimit = "NO", "No Limit";
+        K4Gbps18 = "4K18G", "4K18Gbps";
+        K4Gbps9 = "4K9G", "4K9Gbps";
+        P1080 = "1080P", "1080p";
+        P720 = "720P", "720p";
+        P480 = "480P", "480p";
+    }
+}
+
+dual_code_enum! {
+    /// HDMI monitor output. The `AppCommand` codes are those of
+    /// `GetOutputSettings`.
     pub enum HdmiOutput {
-        Auto = "MONIAUTO", "Auto";
-        Hdmi1 = "MONI1", "HDMI1";
-        Hdmi2 = "MONI2", "HDMI2";
+        Auto = "MONIAUTO", Some("3"), "Auto";
+        Hdmi1 = "MONI1", Some("1"), "HDMI1";
+        Hdmi2 = "MONI2", Some("2"), "HDMI2";
     }
 }
 
@@ -546,7 +560,7 @@ mod tests {
             Drc,
             EffectSpeakerSelection,
             HdmiAudioDecode,
-            HdmiOutput,
+            MaxHdmiResolution,
             FrontSpeakers,
             Illumination,
             InputMode,
@@ -571,6 +585,7 @@ mod tests {
             DimmerMode,
             DynamicVolume,
             EcoMode,
+            HdmiOutput,
             MultiEq,
             ReferenceLevelOffset,
         );
@@ -579,8 +594,6 @@ mod tests {
     #[test]
     fn single_code_known_answers() {
         assert_eq!(AudioRestorer::from_code("MED"), Some(AudioRestorer::Medium));
-        assert_eq!(HdmiOutput::from_code("MONIAUTO"), Some(HdmiOutput::Auto));
-        assert_eq!(HdmiOutput::Hdmi2.label(), "HDMI2");
         assert_eq!(PictureMode::IsfNight.code(), "NGT");
         assert_eq!(DiracFilter::Slot3.code(), "3");
         assert_eq!(ColorSpace::from_code("9"), None);
@@ -598,6 +611,9 @@ mod tests {
         assert_eq!(DimmerMode::from_telnet("DAR"), Some(DimmerMode::Dark));
         assert_eq!(DimmerMode::from_appcommand("3"), Some(DimmerMode::Bright));
         assert_eq!(DimmerMode::from_appcommand("DAR"), None);
+        assert_eq!(HdmiOutput::from_telnet("MONIAUTO"), Some(HdmiOutput::Auto));
+        assert_eq!(HdmiOutput::from_appcommand("3"), Some(HdmiOutput::Auto));
+        assert_eq!(HdmiOutput::Hdmi2.label(), "HDMI2");
         assert_eq!(
             AutoStandby::from_appcommand("120"),
             Some(AutoStandby::Hours2)

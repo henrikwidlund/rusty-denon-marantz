@@ -17,7 +17,7 @@ use super::{
     Info, Missing, UpdateMethod, playing_kind, read_appcommand, read_status_pages, request_body,
 };
 use crate::channels::Channels;
-use crate::command::Reads;
+use crate::command::{ReadBits, Reads};
 use crate::error::Error;
 use crate::http::HttpClient;
 #[cfg(feature = "telnet")]
@@ -84,6 +84,7 @@ const DEVICE: [Definition; 3] = [
 ];
 const TONE: [Definition; 1] = [appcommand::GET_TONE_CONTROL];
 const AUDYSSEY: [Definition; 1] = [appcommand::GET_AUDYSSEY];
+const HDMI_OUTPUT: [Definition; 1] = [appcommand::GET_OUTPUT_SETTINGS];
 
 /// What the worker needs to read.
 struct Reader {
@@ -91,6 +92,8 @@ struct Reader {
     channels: Channels,
     zones: Box<[Zone]>,
     method: UpdateMethod,
+    /// The receiver answers the HDMI output, see `Info::hdmi_output_over_http`.
+    hdmi_output: bool,
     missing: Arc<Missing>,
     #[cfg(feature = "telnet")]
     telnet: watch::Receiver<TelnetStatus>,
@@ -148,6 +151,7 @@ impl Request {
             Reads::Audyssey => {
                 !reader.missing.appcommand0300.load(Ordering::Relaxed) && !reader.telnet_open()
             }
+            Reads::HdmiOutput => !reader.missing.appcommand0300.load(Ordering::Relaxed),
             _ => true,
         }
     }
@@ -156,7 +160,7 @@ impl Request {
 /// Collects what commands over HTTP changed.
 #[derive(Debug)]
 pub(super) struct FollowUp {
-    wanted: mpsc::UnboundedSender<u8>,
+    wanted: mpsc::UnboundedSender<ReadBits>,
 }
 
 impl FollowUp {
@@ -180,6 +184,7 @@ impl FollowUp {
             channels: channels.clone(),
             zones: info.zones.clone().into_boxed_slice(),
             method: info.update_method,
+            hdmi_output: info.hdmi_output_over_http,
             missing: Arc::clone(missing),
             #[cfg(feature = "telnet")]
             telnet,
@@ -190,15 +195,26 @@ impl FollowUp {
     fn spawn(config: FollowUpRead, reader: Reader) -> Result<Self, Error> {
         config.check()?;
         let requests = match reader.method {
-            UpdateMethod::AppCommand => vec![
-                Request::new(Reads::Power, &POWER)?,
-                Request::new(Reads::Volume, &VOLUME)?,
-                Request::new(Reads::Source, &SOURCE)?,
-                Request::new(Reads::SoundMode, &SOUND_MODE)?,
-                Request::new(Reads::Device, &DEVICE)?,
-                Request::new(Reads::Tone, &TONE)?,
-                Request::on(Endpoint::AppCommand0300, Reads::Audyssey, &AUDYSSEY)?,
-            ],
+            UpdateMethod::AppCommand => {
+                let mut requests = vec![
+                    Request::new(Reads::Power, &POWER)?,
+                    Request::new(Reads::Volume, &VOLUME)?,
+                    Request::new(Reads::Source, &SOURCE)?,
+                    Request::new(Reads::SoundMode, &SOUND_MODE)?,
+                    Request::new(Reads::Device, &DEVICE)?,
+                    Request::new(Reads::Tone, &TONE)?,
+                    Request::on(Endpoint::AppCommand0300, Reads::Audyssey, &AUDYSSEY)?,
+                ];
+                // A receiver can fail a request with a query that it does not know.
+                if reader.hdmi_output {
+                    requests.push(Request::on(
+                        Endpoint::AppCommand0300,
+                        Reads::HdmiOutput,
+                        &HDMI_OUTPUT,
+                    )?);
+                }
+                requests
+            }
             UpdateMethod::StatusPages => Vec::new(),
         };
         let (wanted, queue) = mpsc::unbounded_channel();
@@ -216,7 +232,7 @@ impl FollowUp {
 /// The values that a later read still looks for.
 struct Retry {
     at: Instant,
-    wanted: u8,
+    wanted: ReadBits,
     left: u8,
 }
 
@@ -224,7 +240,7 @@ async fn run(
     config: FollowUpRead,
     reader: Reader,
     requests: Vec<Request>,
-    mut queue: mpsc::UnboundedReceiver<u8>,
+    mut queue: mpsc::UnboundedReceiver<ReadBits>,
 ) {
     let mut retry: Option<Retry> = None;
     loop {
@@ -276,14 +292,14 @@ async fn run(
 /// The values that a later read still looks for. `old` was looked for before.
 /// `wanted` was read now, and `unseen` is the part of it that did not change.
 /// A value that this read showed is not looked for again.
-const fn pending_after(old: u8, wanted: u8, unseen: u8) -> u8 {
+const fn pending_after(old: ReadBits, wanted: ReadBits, unseen: ReadBits) -> ReadBits {
     let seen = wanted & !unseen;
     (old & !seen) | (unseen & Reads::SLOW)
 }
 
 /// Reads, and returns the part of `wanted` that the read did not change. A
 /// read of values that are not late counts as seen.
-async fn read_until_seen(reader: &Reader, requests: &[Request], wanted: u8) -> u8 {
+async fn read_until_seen(reader: &Reader, requests: &[Request], wanted: ReadBits) -> ReadBits {
     let mut changes = reader.channels.subscribe_changes();
     if let Err(error) = read(reader, requests, wanted).await {
         tracing::debug!(%error, "the read after a command failed");
@@ -293,17 +309,21 @@ async fn read_until_seen(reader: &Reader, requests: &[Request], wanted: u8) -> u
     loop {
         match changes.try_recv() {
             Ok(change) => seen |= Reads::of_setting(change.setting),
-            Err(broadcast::error::TryRecvError::Lagged(_)) => seen = u8::MAX,
+            Err(broadcast::error::TryRecvError::Lagged(_)) => seen = ReadBits::MAX,
             Err(_) => break,
         }
     }
     wanted & !seen
 }
 
-async fn read(reader: &Reader, requests: &[Request], wanted: u8) -> Result<(), Error> {
+async fn read(reader: &Reader, requests: &[Request], wanted: ReadBits) -> Result<(), Error> {
     let mut result = Ok(());
     if reader.method == UpdateMethod::StatusPages {
-        if wanted & !(Reads::Tone.bit() | Reads::Audyssey.bit() | Reads::Tuner.bit()) != 0 {
+        let not_on_pages = Reads::Tone.bit()
+            | Reads::Audyssey.bit()
+            | Reads::Tuner.bit()
+            | Reads::HdmiOutput.bit();
+        if wanted & !not_on_pages != 0 {
             result = read_status_pages(&reader.http, &reader.channels, &reader.zones).await;
         }
     } else {
@@ -341,7 +361,9 @@ async fn read(reader: &Reader, requests: &[Request], wanted: u8) -> Result<(), E
 fn note_missing(missing: &Missing, reads: Reads, error: &Error) {
     match reads {
         // Only a missing file means that the receiver does not have it.
-        Reads::Audyssey if matches!(error, Error::Status { status: 404, .. }) => {
+        Reads::Audyssey | Reads::HdmiOutput
+            if matches!(error, Error::Status { status: 404, .. }) =>
+        {
             missing.appcommand0300.store(true, Ordering::Relaxed);
         }
         Reads::Tone if missing.may_lack_tone_control(error) => {

@@ -31,6 +31,9 @@ pub struct DeviceInfo<'a> {
     /// lists. `0` if it says that there are none, `None` if it does not say.
     /// A receiver can accept more than it lists.
     pub quick_select_count: Option<u8>,
+    /// The file lists `GetOutputSettings`, so the receiver answers it in
+    /// `AppCommand0300.xml`.
+    pub output_settings: bool,
 }
 
 /// What `Deviceinfo.xml` says about a tuner.
@@ -204,6 +207,11 @@ impl<'a> DeviceInfo<'a> {
             mac_address: text("MacAddress"),
             tuner: TunerInfo::parse(root),
             quick_select_count: quick_select_count(root),
+            output_settings: root
+                .descendants("GetOutputSettings")
+                .next()
+                .and_then(|command| command.node().text())
+                .is_some_and(|text| text.trim() == "1"),
         })
     }
 
@@ -219,6 +227,7 @@ impl<'a> DeviceInfo<'a> {
             mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
             tuner: self.tuner,
             quick_select_count: self.quick_select_count,
+            output_settings: self.output_settings,
         }
     }
 
@@ -294,6 +303,7 @@ mod tests {
         assert!(!info.dirac_live);
         assert_eq!(info.tuner, TunerInfo::Unknown);
         assert_eq!(info.quick_select_count, None);
+        assert!(!info.output_settings);
         assert!(!info.is_avr_x());
     }
 

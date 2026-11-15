@@ -36,6 +36,8 @@ state again.
   band and frequency of the tuner, and the address of the picture. A receiver
   that uses HEOS for network audio does not give this.
 - How many quick selects the receiver lists (`Info::quick_select_count`).
+- Whether the receiver answers the HDMI output over HTTP
+  (`Info::hdmi_output_over_http`). Receivers from about 2016 do.
 - Whether the receiver has a tuner and which bands it has (`Info::tuner`).
   Receivers older than about 2013 do not say, and newer receivers do not list
   the bands.
@@ -135,7 +137,7 @@ avr.update_speaker_details().await?;
 avr.update_source_details().await?;
 avr.update_settings_availability().await?;
 avr.update_detailed_availability().await?; // surround parameters, HDMI setup, video output
-avr.update_signal_and_audyssey().await?; // signal, channels and Audyssey in one fast request
+avr.update_signal_and_settings().await?; // signal, channels, Audyssey and HDMI output in one request
 avr.update_video_details().await?; // on-screen display, TV format, HDCP, 4K/8K per input
 avr.update_general_settings().await?; // language, firmware update, triggers
 avr.update_system_settings().await?;
@@ -147,7 +149,7 @@ HTTP. Your code does not choose.
 
 To see the video and audio signal now, call `avr.refresh_signal().await?`. It
 reads the resolution, the audio signal and the channels with one fast request
-(`update_signal_and_audyssey`) if the receiver has it, the HDR and color values
+(`update_signal_and_settings`) if the receiver has it, the HDR and color values
 from the web interface, and asks telnet for the rest if it is open. Your code
 does not choose.
 
@@ -207,7 +209,7 @@ A program that does not want telnet never opens it: use
   pause with `AvrBuilder::background_pause`. It is the same pause that telnet
   queries wait after a telnet command.
 - Settings that no read after a command covers change in the state when you
-  read them, for example with `update_signal_and_audyssey()`.
+  read them, for example with `update_signal_and_settings()`.
 - The list of sound modes of the receiver needs telnet. Without it, select a
   mode by its name, for example `select_sound_mode("MOVIE")`.
 

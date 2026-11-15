@@ -8,10 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    AVR_X_INFO, Fake, Reply, avr_x_receiver_with_pages, bodies_after, builder, config,
-    friendly_name_answer, is_friendly_name_request, quick_follow_up, update_answer_for, wait_until,
+    AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, avr_x_receiver_with_pages, bodies_after,
+    builder, config, friendly_name_answer, is_friendly_name_request, output_settings_item,
+    quick_follow_up, update_answer_for, wait_until,
 };
-use denon_marantz::proto::{TUNER_STATUS_PATH, TunerCommand};
+use denon_marantz::proto::{HdmiOutput, TUNER_STATUS_PATH, TunerCommand};
 use denon_marantz::{
     Avr, Command, Error, FollowUpRead, HttpConfig, Pacing, ReceiverType, Volume, Zone,
 };
@@ -477,6 +478,63 @@ async fn a_failed_tone_read_of_an_older_receiver_is_not_sent_again() {
     avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(tone_reads(), 1);
+}
+
+/// A receiver that answers the HDMI output in `AppCommand0300.xml` if `info`
+/// lists it.
+async fn output_settings_receiver(info: &'static [u8]) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
+            ("GET", path) if path.starts_with(COMMAND) => Reply::Body(Vec::new()),
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
+                Reply::Body(friendly_name_answer("X"))
+            }
+            ("POST", "/goform/AppCommand0300.xml") => {
+                Reply::Body(format!("<rx>{}</rx>", output_settings_item("2")).into_bytes())
+            }
+            ("POST", "/goform/AppCommand.xml") => Reply::Body(update_answer_for(&seen.body)),
+            _ => Reply::Status(404),
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn an_hdmi_output_command_reads_the_hdmi_output() {
+    let fake = output_settings_receiver(AVR_X_OUTPUT_SETTINGS_INFO).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    // The receiver answers HDMI 2, so the value comes from the read.
+    avr.video()
+        .set_hdmi_output(HdmiOutput::Hdmi1)
+        .await
+        .unwrap();
+    wait_until("the HDMI output", || {
+        avr.snapshot().device().video_settings.hdmi_output == Some(HdmiOutput::Hdmi2)
+    })
+    .await;
+    let reads = bodies_to(&fake, known, "/goform/AppCommand0300.xml");
+    assert_eq!(reads.len(), 1, "{reads:?}");
+    assert!(reads[0].contains("GetOutputSettings"), "{}", reads[0]);
+    assert!(!reads[0].contains("GetVideoInfo"), "{}", reads[0]);
+}
+
+#[tokio::test]
+async fn an_hdmi_output_command_reads_nothing_without_the_output_settings() {
+    let fake = output_settings_receiver(AVR_X_INFO).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    avr.video()
+        .set_hdmi_output(HdmiOutput::Hdmi2)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(commands(&fake).last().map(String::as_str), Some("VSMONI2"));
+    assert_eq!(
+        bodies_to(&fake, known, "/goform/AppCommand0300.xml").len(),
+        0
+    );
 }
 
 /// A receiver whose main zone plays the tuner.

@@ -69,6 +69,8 @@ pub enum Field {
     AudioSound,
     /// Sampling rate of the audio signal, for example `48 kHz`.
     SamplingRate,
+    /// HDMI monitor output.
+    HdmiOutput,
 }
 
 /// One step on the way to a value. A step selects a child element.

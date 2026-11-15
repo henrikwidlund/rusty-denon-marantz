@@ -159,7 +159,7 @@ fn xml_parsing_allocates_little() {
     // Each search of the whole file costs about 10. The file is read once at
     // connect.
     assert!(
-        info.count_total < 60,
+        info.count_total < 70,
         "device info used {} allocations",
         info.count_total
     );

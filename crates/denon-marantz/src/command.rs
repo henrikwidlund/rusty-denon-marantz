@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, Setting, TunerCommand, Zone};
+use denon_marantz_proto::{Brand, Setting, TunerCommand, VideoSettingValue, Zone};
 
 use crate::error::Error;
 
@@ -41,6 +41,9 @@ pub(crate) fn http_path(line: &str) -> String {
     path
 }
 
+/// A set of [`Reads`], one bit for each.
+pub(crate) type ReadBits = u16;
+
 /// What a command changes that the receiver reports over HTTP.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reads {
@@ -55,6 +58,8 @@ pub(crate) enum Reads {
     Audyssey,
     /// The band and the frequency of the tuner.
     Tuner,
+    /// The HDMI output.
+    HdmiOutput,
 }
 
 impl Reads {
@@ -95,21 +100,23 @@ impl Reads {
             // Tuning mode and storing a preset leave band and frequency as they are.
             Command::Tuner(TunerCommand::Mode(_) | TunerCommand::StorePreset(_)) => None,
             Command::Tuner(_) => Some(Self::Tuner),
+            Command::SetVideoSetting(VideoSettingValue::HdmiOutput(_)) => Some(Self::HdmiOutput),
             _ => None,
         }
     }
 
-    pub(crate) const fn bit(self) -> u8 {
-        1 << self as u8
+    pub(crate) const fn bit(self) -> ReadBits {
+        1 << self as ReadBits
     }
 
     /// The values that the receiver shows late: power, the source and the
     /// sound mode.
-    pub(crate) const SLOW: u8 = Self::Power.bit() | Self::Source.bit() | Self::SoundMode.bit();
+    pub(crate) const SLOW: ReadBits =
+        Self::Power.bit() | Self::Source.bit() | Self::SoundMode.bit();
 
     /// The bit of the values that a change of this setting shows. 0 if the
     /// setting is not one of the late values.
-    pub(crate) const fn of_setting(setting: Setting) -> u8 {
+    pub(crate) const fn of_setting(setting: Setting) -> ReadBits {
         match setting {
             Setting::Power => Self::Power.bit(),
             Setting::Source => Self::Source.bit(),
@@ -121,6 +128,8 @@ impl Reads {
 
 #[cfg(test)]
 mod tests {
+    use denon_marantz_proto::HdmiOutput;
+
     use super::*;
 
     #[test]
@@ -167,6 +176,12 @@ mod tests {
         );
         assert_eq!(main(Command::Tuner(TunerCommand::StorePreset(1))), None);
         assert_eq!(main(Command::Play), None);
+        assert_eq!(
+            main(Command::SetVideoSetting(VideoSettingValue::HdmiOutput(
+                HdmiOutput::Hdmi1
+            ))),
+            Some(Reads::HdmiOutput)
+        );
         // The reads of tone control and Audyssey have the main zone only.
         assert_eq!(Reads::after(Zone::Zone2, &Command::BassUp), None);
         assert_eq!(Reads::after(Zone::Zone2, &Command::DynamicEq(true)), None);
@@ -174,7 +189,7 @@ mod tests {
             Reads::after(Zone::Zone2, &Command::VolumeUp),
             Some(Reads::Volume)
         );
-        let bits: Vec<u8> = [
+        let bits: Vec<ReadBits> = [
             Reads::Power,
             Reads::Volume,
             Reads::Source,
@@ -183,10 +198,11 @@ mod tests {
             Reads::Tone,
             Reads::Audyssey,
             Reads::Tuner,
+            Reads::HdmiOutput,
         ]
         .iter()
         .map(|reads| reads.bit())
         .collect();
-        assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128]);
+        assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256]);
     }
 }

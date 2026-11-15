@@ -5,14 +5,15 @@
 mod common;
 
 use common::{
-    AVR_X_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer, avr_x_receiver, builder, config,
-    friendly_name_answer, is_friendly_name_request, receiver_with_audyssey,
+    AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer,
+    avr_x_receiver, builder, config, friendly_name_answer, is_friendly_name_request,
+    output_settings_item, receiver_with_audyssey, receiver_with_info_and_signal_answers,
     receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
-    AutoStandby, Availability, Brand, DimmerMode, EcoMode, NetworkControl, Power, ReceiverType,
-    SettingsGroup, ToneLevel, Volume, Zone,
+    AutoStandby, Availability, Brand, DimmerMode, EcoMode, HdmiOutput, NetworkControl, Power,
+    ReceiverType, SettingsGroup, ToneLevel, Volume, Zone,
 };
 
 const OLD_STATUS: &[u8] = include_bytes!(
@@ -932,7 +933,7 @@ async fn update_of_a_2016_receiver_reads_the_audyssey_settings() {
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     let state = avr.snapshot();
@@ -950,7 +951,7 @@ async fn update_of_a_2016_receiver_reads_the_signal() {
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     let state = avr.snapshot();
@@ -981,7 +982,7 @@ async fn blank_audyssey_values_are_unknown() {
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     let state = avr.snapshot();
@@ -995,11 +996,11 @@ async fn a_receiver_without_the_audyssey_query_is_asked_once() {
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     // The missing query is not an error, and it is not asked again.
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::NotFound
     );
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::NotFound
     );
     assert_eq!(audyssey_requests(&fake), 1);
@@ -1018,17 +1019,83 @@ async fn an_error_item_keeps_the_channels_that_the_state_has() {
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     let state = avr.snapshot();
     let signal = &state.device().signal;
     assert_eq!(signal.channels.input.unwrap().to_string(), "2.0");
     assert_eq!(signal.channels.output.unwrap().to_string(), "2.1.1");
+}
+
+/// The bodies of the requests to `AppCommand0300.xml`.
+fn signal_requests(fake: &Fake) -> Vec<String> {
+    fake.requests()
+        .into_iter()
+        .filter(|seen| seen.path == "/goform/AppCommand0300.xml")
+        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_receiver_without_the_output_settings_is_not_asked_for_them() {
+    let answer: &'static str = Box::leak(appcommand0300_answer("").into_boxed_str());
+    let fake = receiver_with_audyssey(Some(answer), true).await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert!(!avr.info().hdmi_output_over_http);
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    let bodies = signal_requests(&fake);
+    assert!(
+        bodies
+            .iter()
+            .all(|body| !body.contains("GetOutputSettings")),
+        "{bodies:?}"
+    );
+}
+
+#[tokio::test]
+async fn update_of_a_receiver_with_the_output_settings_reads_the_hdmi_output() {
+    let answer = appcommand0300_answer("").replace("</rx>", &(output_settings_item("2") + "</rx>"));
+    let fake = receiver_with_info_and_signal_answers(AVR_X_OUTPUT_SETTINGS_INFO, true, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert!(avr.info().hdmi_output_over_http);
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    let state = avr.snapshot();
+    assert_eq!(
+        state.device().video_settings.hdmi_output,
+        Some(HdmiOutput::Hdmi2)
+    );
+    assert_eq!(state.device().signal.video.input.as_deref(), Some("4K50"));
+}
+
+#[tokio::test]
+async fn an_error_item_for_the_output_settings_keeps_the_signal() {
+    let answer = appcommand0300_answer("").replace("</rx>", "<error>2</error></rx>");
+    let fake = receiver_with_info_and_signal_answers(AVR_X_OUTPUT_SETTINGS_INFO, true, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    let state = avr.snapshot();
+    assert_eq!(state.device().video_settings.hdmi_output, None);
+    assert_eq!(state.device().signal.video.input.as_deref(), Some("4K50"));
 }
 
 #[tokio::test]
@@ -1044,11 +1111,11 @@ async fn a_refusal_that_is_not_a_404_does_not_stop_the_asking() {
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Refused(503)
     );
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     assert_eq!(audyssey_requests(&fake), 2);
@@ -1059,7 +1126,7 @@ async fn a_receiver_with_status_pages_is_not_asked_for_audyssey() {
     let fake = old_receiver().await;
     let avr = connect(&fake, ReceiverType::Avr).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::NotFound
     );
     assert_eq!(audyssey_requests(&fake), 0);
@@ -1073,7 +1140,7 @@ async fn an_older_receiver_with_appcommand_is_asked_for_audyssey() {
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
     assert_eq!(
-        avr.update_signal_and_audyssey().await.unwrap(),
+        avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
     assert_eq!(avr.snapshot().device().dynamic_eq, Some(true));

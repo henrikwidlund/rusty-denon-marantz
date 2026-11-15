@@ -6,7 +6,7 @@ use std::fmt;
 use crate::appcommand::{Field, Item};
 use crate::reading::Sides;
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
-use crate::values::{ColorSpace, PixelDepth};
+use crate::values::{ColorSpace, MaxHdmiResolution, PixelDepth};
 
 /// The channels of an audio signal, as they are usually written: `5.1` or
 /// `7.1.4`.
@@ -211,9 +211,8 @@ pub struct SignalState {
     /// The signal uses the BT.2020 color range. See
     /// [`SignalState::video_color`].
     pub bt2020: InOut<bool>,
-    /// Highest resolution that the TV and the cables allow, as the receiver
-    /// writes it, for example `NO` for no limit or `8G`.
-    pub max_hdmi_resolution: Option<String>,
+    /// Highest resolution that the TV and the cables allow.
+    pub max_hdmi_resolution: Option<MaxHdmiResolution>,
     /// Kind of audio signal that the receiver gets, for example `PCM`.
     pub audio_signal: Option<String>,
     /// Kind of audio that the receiver plays, for example `Stereo`.
@@ -360,10 +359,10 @@ impl SignalState {
         } else if let Some(rest) = parameter.strip_prefix("SMI") {
             set_text(&mut self.audio_sound, audio_text(rest))
         } else if let Some(rest) = parameter.strip_prefix("HDMIDIAGMAXRES") {
-            set_text(
-                &mut self.max_hdmi_resolution,
-                Some(rest.trim()).filter(|v| !v.is_empty()),
-            )
+            let value = MaxHdmiResolution::from_code(rest.trim());
+            let changed = self.max_hdmi_resolution != value;
+            self.max_hdmi_resolution = value;
+            changed
         } else {
             false
         }
@@ -813,7 +812,21 @@ mod tests {
         assert!(signal.apply_sy("SDA Unknown"));
         assert_eq!(signal.audio_signal, None);
         assert!(signal.apply_sy("HDMIDIAGMAXRES NO"));
-        assert_eq!(signal.max_hdmi_resolution.as_deref(), Some("NO"));
+        assert_eq!(signal.max_hdmi_resolution, Some(MaxHdmiResolution::NoLimit));
+        assert!(!signal.apply_sy("HDMIDIAGMAXRES NO"));
+        assert!(signal.apply_sy("HDMIDIAGMAXRES 4K18G"));
+        assert_eq!(
+            signal.max_hdmi_resolution,
+            Some(MaxHdmiResolution::K4Gbps18)
+        );
+        assert!(signal.apply_sy("HDMIDIAGMAXRES 1080P"));
+        assert_eq!(
+            signal.max_hdmi_resolution.map(MaxHdmiResolution::label),
+            Some("1080p")
+        );
+        // A code that this library does not know clears the value.
+        assert!(signal.apply_sy("HDMIDIAGMAXRES 8K40G"));
+        assert_eq!(signal.max_hdmi_resolution, None);
     }
 
     #[test]

@@ -210,6 +210,22 @@ pub const GET_AUDIO_INFO: Definition = Definition {
     ],
 };
 
+const VIDEO_OUT: &str = "videoout";
+
+/// The HDMI monitor output. This is a query for `AppCommand0300.xml`. Only
+/// receivers whose `Deviceinfo.xml` lists it answer it.
+pub const GET_OUTPUT_SETTINGS: Definition = Definition {
+    cmd: Cmd {
+        endpoint: Endpoint::AppCommand0300,
+        text: None,
+        name: Some("GetOutputSettings"),
+        params: Some(&[blank_param(VIDEO_OUT)]),
+        set: None,
+    },
+    blank_is_unknown: true,
+    patterns: &[Pattern::text(Field::HdmiOutput, &param_steps(VIDEO_OUT))],
+};
+
 /// The channels of the audio signal that the receiver gets, as a grid. Read
 /// the answer with [`Item::params`](super::Item::params) and
 /// `ChannelLayout::from_grid`. This is a query for `AppCommand0300.xml`.
