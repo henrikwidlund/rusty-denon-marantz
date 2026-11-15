@@ -1,7 +1,7 @@
 //! The XML status pages of a zone.
 #![no_main]
 
-use denon_marantz_proto::status_page::{Page, extract, friendly_name};
+use denon_marantz_proto::status_page::{Page, extract, friendly_name, sources};
 use denon_marantz_proto::{State, Zone};
 use libfuzzer_sys::fuzz_target;
 
@@ -24,4 +24,14 @@ fuzz_target!(|data: &[u8]| {
             },
         );
     }
+    sources(
+        status.as_ref(),
+        zone_page.as_ref(),
+        |name, rename, in_use| {
+            state.apply_renamed_source(name, rename);
+            if let Some(in_use) = in_use {
+                state.apply_source_in_use(name, in_use);
+            }
+        },
+    );
 });

@@ -164,6 +164,15 @@ async fn connects_to_an_older_receiver_with_status_pages() {
     assert_eq!(main.sound_mode.as_deref(), Some("PLII CINEMA"));
     assert_eq!(state.zone(Zone::Zone2).power, Some(Power::Off));
     assert_eq!(state.zone(Zone::Zone2).volume.map(Volume::db), Some(-58.0));
+    // The source lists of the status page.
+    let sources = &state.device().sources;
+    assert_eq!(sources.name("SAT/CBL"), Some("CBL/SAT"));
+    assert_eq!(sources.name("MPLAY"), Some("MEDIA PLAYER"));
+    assert_eq!(
+        sources.get("BD").and_then(|source| source.in_use),
+        Some(true)
+    );
+    assert_eq!(sources.as_slice().len(), 13);
 }
 
 #[tokio::test]

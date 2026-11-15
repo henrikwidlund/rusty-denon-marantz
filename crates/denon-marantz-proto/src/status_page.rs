@@ -148,6 +148,84 @@ pub fn extract(
     }
 }
 
+/// Names in the source lists that are not inputs. `SOURCE` makes a zone play
+/// the source of the main zone.
+const NOT_SOURCES: [&str; 1] = ["SOURCE"];
+
+/// Calls `on_source` for each source in the lists of the main zone: its name
+/// in the XML, the name that the user gave, and if it is in use.
+///
+/// `InputFuncList` has the names, `RenameSource` the names that the user gave
+/// and `SourceDelete` `USE` or `DEL`, in the same order. Some receivers have
+/// the lists on the status page, others on the zone page, and some status
+/// pages have no `SourceDelete`. The page with all three lists is used, else
+/// the first page with names. The name that the user gave is `None` if it is
+/// empty. In use is `None` if the page does not say.
+pub fn sources(
+    status: Option<&Page<'_>>,
+    zone_page: Option<&Page<'_>>,
+    mut on_source: impl FnMut(&str, Option<&str>, Option<bool>),
+) {
+    let complete = |[names, _, uses]: &[Option<Node<'_>>; 3]| names.is_some() && uses.is_some();
+    // The zone page is read only if the status page lacks a list.
+    let first = status.map(source_lists);
+    let lists = match first {
+        Some(lists) if complete(&lists) => Some(lists),
+        _ => match zone_page.map(source_lists) {
+            Some(second) if complete(&second) => Some(second),
+            second => first.filter(|[names, ..]| names.is_some()).or(second),
+        },
+    };
+    let Some([Some(names), renames, uses]) = lists else {
+        return;
+    };
+    let mut renames = renames.map(Node::children);
+    let mut uses = uses.map(Node::children);
+    for entry in names.children() {
+        let rename = renames.as_mut().and_then(Iterator::next);
+        let in_use = uses.as_mut().and_then(Iterator::next);
+        let Some(name) = entry.node().text() else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || NOT_SOURCES.contains(&name) {
+            continue;
+        }
+        // The new name is the text of the entry, or of a `value` inside it.
+        let rename = rename.and_then(|rename| {
+            let node = rename.node();
+            node.text()
+                .filter(|text| !text.trim().is_empty())
+                .or_else(|| node.child("value").and_then(|inner| inner.node().text()))
+        });
+        let in_use = in_use
+            .and_then(|value| value.node().text())
+            .and_then(|value| match value.trim() {
+                "USE" => Some(true),
+                "DEL" => Some(false),
+                _ => None,
+            });
+        on_source(
+            name,
+            rename
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty()),
+            in_use,
+        );
+    }
+}
+
+/// `InputFuncList`, `RenameSource` and `SourceDelete` of a page.
+fn source_lists<'a>(page: &Page<'a>) -> [Option<Node<'a>>; 3] {
+    let list = |tag: &str| page.root.child(tag).map(|child| child.node());
+    [
+        list("InputFuncList"),
+        list("RenameSource"),
+        list("SourceDelete"),
+    ]
+}
+
 /// Passes the first element found on the pages as `field`.
 ///
 /// An element without text is a value (`None`), unless `skip_blank` is set.

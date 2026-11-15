@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use denon_marantz_proto::Zone;
-use denon_marantz_proto::status_page::{Page, extract, status_path, zone_path};
+use denon_marantz_proto::status_page::{Page, extract, sources, status_path, zone_path};
 
 type Values = Vec<(String, Option<String>)>;
 
@@ -95,4 +95,45 @@ fn status_pages_have_the_expected_values() {
         "{} {compared} {html_pages}",
         cases.len()
     );
+}
+
+type Source = (String, Option<String>, Option<bool>);
+
+/// The sources of the main zone pages of a model.
+fn sources_of(model: &str) -> Vec<Source> {
+    let read = |path| fs::read(data(&file(model, path))).ok();
+    let (status, zone_page) = (read(status_path(Zone::Main)), read(zone_path(Zone::Main)));
+    let mut html_pages = 0;
+    let status = parse(status.as_deref(), &mut html_pages);
+    let zone_page = parse(zone_page.as_deref(), &mut html_pages);
+    let mut found = Vec::new();
+    sources(
+        status.as_ref(),
+        zone_page.as_ref(),
+        |name, rename, in_use| {
+            found.push((name.to_owned(), rename.map(str::to_owned), in_use));
+        },
+    );
+    found
+}
+
+fn source(name: &str, rename: Option<&str>, in_use: Option<bool>) -> Source {
+    (name.to_owned(), rename.map(str::to_owned), in_use)
+}
+
+#[test]
+fn source_lists_are_read() {
+    // Names inside a second `value` element, on the status page.
+    let x1100w = sources_of("AVR-X1100W");
+    assert_eq!(x1100w.len(), 11);
+    assert_eq!(x1100w[0], source("CBL/SAT", Some("Kodi TV"), Some(true)));
+    assert_eq!(x1100w[3], source("GAME", Some("Game"), Some(false)));
+    // The status page has no `SourceDelete`, so the zone page is used.
+    // `SOURCE` is not an input.
+    let avr3311 = sources_of("AVR-3311CI");
+    assert_eq!(avr3311.len(), 14);
+    assert_eq!(avr3311[0], source("TUNER", None, Some(false)));
+    assert_eq!(avr3311[2], source("CD", Some("SqzBox"), Some(true)));
+    // A model without the lists.
+    assert_eq!(sources_of("DRA-N4"), []);
 }

@@ -741,8 +741,9 @@ impl State {
         })
     }
 
-    /// Applies one entry of the `AppCommand` answer to `GetRenameSource`: the
-    /// name of the source in the XML, and its new name. `None` is no new name.
+    /// Applies one entry of the `AppCommand` answer to `GetRenameSource`, or of
+    /// the source lists of a status page: the name of the source in the XML,
+    /// and its new name. `None` is no new name.
     pub fn apply_renamed_source(&mut self, name: &str, rename: Option<&str>) -> Option<Change> {
         let code = xml_to_telnet_source(name);
         let changed = self.device.sources.set_name(code, rename);
@@ -757,6 +758,12 @@ impl State {
     /// value is ignored.
     pub fn apply_source_use(&mut self, name: &str, value: Option<&str>) -> Option<Change> {
         let in_use = value.and_then(on_off_digit)?;
+        self.apply_source_in_use(name, in_use)
+    }
+
+    /// Sets if the source with this name in the XML is in use, for example
+    /// from [`status_page::sources`](crate::status_page::sources).
+    pub fn apply_source_in_use(&mut self, name: &str, in_use: bool) -> Option<Change> {
         let code = xml_to_telnet_source(name);
         let changed = self.device.sources.set_in_use(code, in_use);
         changed.then_some(Change {

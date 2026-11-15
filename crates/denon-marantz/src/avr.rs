@@ -1438,6 +1438,19 @@ async fn read_status_pages(
                     notify(state.apply_field(zone, field, value));
                 },
             );
+            // The source lists are for the whole receiver.
+            if zone == Zone::Main {
+                status_page::sources(
+                    status.as_ref(),
+                    zone_page.as_ref(),
+                    |name, rename, in_use| {
+                        notify(state.apply_renamed_source(name, rename));
+                        if let Some(in_use) = in_use {
+                            notify(state.apply_source_in_use(name, in_use));
+                        }
+                    },
+                );
+            }
         });
     }
     Ok(())
