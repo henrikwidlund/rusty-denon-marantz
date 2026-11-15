@@ -6,9 +6,9 @@ mod common;
 
 use common::{
     AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer,
-    avr_x_receiver, builder, config, friendly_name_answer, is_friendly_name_request,
-    output_settings_item, receiver_with_audyssey, receiver_with_info_and_signal_answers,
-    receiver_with_signal_answers, web_interface_with_pages,
+    appcommand0300_item, avr_x_receiver, builder, config, friendly_name_answer,
+    is_friendly_name_request, output_settings_item, receiver_with_audyssey,
+    receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
@@ -1009,10 +1009,7 @@ async fn a_receiver_without_the_audyssey_query_is_asked_once() {
 #[tokio::test]
 async fn an_error_item_keeps_the_channels_that_the_state_has() {
     let good = appcommand0300_answer("");
-    let start = good.find("<cmd><name>GetInputSignal</name>").unwrap();
-    let end = start + good[start..].find("</cmd>").unwrap() + "</cmd>".len();
-    let mut bad = good.clone();
-    bad.replace_range(start..end, "<error>2</error>");
+    let bad = good.replace(&appcommand0300_item("GetInputSignal"), "<error>2</error>");
     let fake = receiver_with_signal_answers(true, move |asked| {
         Reply::Body(if asked == 0 { &good } else { &bad }.clone().into_bytes())
     })
@@ -1096,6 +1093,30 @@ async fn an_error_item_for_the_output_settings_keeps_the_signal() {
     let state = avr.snapshot();
     assert_eq!(state.device().video_settings.hdmi_output, None);
     assert_eq!(state.device().signal.video.input.as_deref(), Some("4K50"));
+}
+
+#[tokio::test]
+async fn a_short_answer_gives_the_items_that_it_has() {
+    let good = appcommand0300_answer("");
+    // A busy receiver answers only the video item, with another resolution.
+    let short =
+        format!("<rx>{}</rx>", appcommand0300_item("GetVideoInfo")).replace("4K50", "1080p60");
+    let fake = receiver_with_signal_answers(true, move |asked| {
+        Reply::Body(if asked == 0 { &good } else { &short }.clone().into_bytes())
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            avr.update_signal_and_settings().await.unwrap(),
+            PageStatus::Read
+        );
+    }
+    let state = avr.snapshot();
+    let signal = &state.device().signal;
+    assert_eq!(signal.video.input.as_deref(), Some("1080p60"));
+    assert_eq!(signal.audio_sound.as_deref(), Some("Stereo"));
+    assert_eq!(signal.channels.input.unwrap().to_string(), "2.0");
 }
 
 #[tokio::test]

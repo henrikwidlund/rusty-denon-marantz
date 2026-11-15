@@ -91,6 +91,9 @@ const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
     appcommand::GET_OUTPUT_SETTINGS,
 ];
 
+// `Avr::update_signal_and_settings` keeps one bit for each command in a `u8`.
+const _: () = assert!(APPCOMMAND0300_COMMANDS.len() <= 8);
+
 /// [`APPCOMMAND0300_COMMANDS`] without the HDMI output.
 const APPCOMMAND0300_COMMANDS_WITHOUT_OUTPUT: &[Definition] =
     APPCOMMAND0300_COMMANDS.split_last().unwrap().1;
@@ -1198,7 +1201,9 @@ impl Avr {
     /// answers 404, and then it is not asked again. Another refusal or an
     /// answer that cannot be read gives [`PageStatus::Refused`] or
     /// [`PageStatus::Unreadable`], and the next call asks again. An item of the
-    /// answer with an error leaves its values as they are. A receiver that is
+    /// answer with an error leaves its values as they are. A busy receiver can
+    /// leave items out of the answer: the items that are there are used, and
+    /// the values of the others stay as they are. A receiver that is
     /// not calibrated with Audyssey answers with blank Audyssey values, which
     /// count as unknown. While telnet is open, a blank value does not clear
     /// a value that telnet reported.
@@ -1226,17 +1231,19 @@ impl Avr {
                 self.appcommand0300_body.clone(),
                 |body| {
                     let commands = appcommand0300_commands(&self.info);
-                    let response = Response::parse(body, commands.len())?;
-                    let mut complete = true;
+                    // A busy receiver can leave items out.
+                    let response = Response::parse_at_most(body, commands.len())?;
+                    // One bit for each command with values in the answer.
+                    let mut answered = 0_u8;
                     self.channels.modify(|state, notify| {
-                        for (definition, item) in commands.iter().zip(response.items()) {
+                        for (index, item) in response.matched(commands) {
                             // An error item has no values, and must not clear
-                            // what the state has. The HDMI output is not part
-                            // of the signal.
+                            // what the state has.
                             if item.is_error() {
-                                complete &= *definition == appcommand::GET_OUTPUT_SETTINGS;
                                 continue;
                             }
+                            answered |= 1 << index;
+                            let definition = &commands[index];
                             let keep_known = telnet_open
                                 && (*definition == appcommand::GET_AUDYSSEY
                                     || *definition == appcommand::GET_OUTPUT_SETTINGS);
@@ -1252,6 +1259,18 @@ impl Avr {
                             }
                         }
                     });
+                    // The HDMI output is not part of the signal.
+                    let complete = commands.iter().enumerate().all(|(index, definition)| {
+                        answered & 1 << index != 0 || *definition == appcommand::GET_OUTPUT_SETTINGS
+                    });
+                    if answered.count_ones() as usize != commands.len() {
+                        tracing::debug!(
+                            host = %self.info.host,
+                            answered = answered.count_ones(),
+                            asked = commands.len(),
+                            "AppCommand0300 answer has no values for some commands"
+                        );
+                    }
                     Ok(complete)
                 },
             )

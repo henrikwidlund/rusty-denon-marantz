@@ -392,6 +392,15 @@ pub(crate) fn appcommand0300_answer(audyssey: &str) -> String {
     )
 }
 
+/// The item of the command `name` in [`appcommand0300_answer`] with no
+/// Audyssey parameters.
+pub(crate) fn appcommand0300_item(name: &str) -> String {
+    let answer = appcommand0300_answer("");
+    let start = answer.find(&format!("<cmd><name>{name}</name>")).unwrap();
+    let end = start + answer[start..].find("</cmd>").unwrap() + "</cmd>".len();
+    answer[start..end].to_owned()
+}
+
 /// A fake 2016 receiver. `answer` gives the reply to each request of
 /// `AppCommand0300.xml`, with the number of the request, from 0.
 pub(crate) async fn receiver_with_signal_answers(

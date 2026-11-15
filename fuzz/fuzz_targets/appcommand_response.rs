@@ -35,6 +35,12 @@ fuzz_target!(|data: &[u8]| {
     ];
     // The first byte sets how many commands the answer must have.
     let expected = usize::from(first) % (definitions.len() + 1);
+    if let Ok(response) = Response::parse_at_most(body, expected) {
+        for (index, item) in response.matched(&definitions[..expected]) {
+            assert!(index < expected);
+            let _ = item.name();
+        }
+    }
     let Ok(response) = Response::parse(body, expected) else {
         return;
     };

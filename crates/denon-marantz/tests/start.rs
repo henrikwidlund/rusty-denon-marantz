@@ -962,6 +962,18 @@ async fn a_receiver_with_appcommand_is_not_asked_for_the_audio_values_over_telne
 }
 
 #[tokio::test]
+async fn a_short_appcommand_answer_gets_the_audio_queries_later() {
+    // A busy receiver answers only the video item.
+    let short = format!("<rx>{}</rx>", common::appcommand0300_item("GetVideoInfo"));
+    let telnet = start_2016_receiver(Some(Box::leak(short.into_boxed_str()))).await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    for query in ["SYSDA ?", "SYSMI ?", "SSINFAISFSV ?"] {
+        assert!(sent.contains(&query), "{query}");
+    }
+}
+
+#[tokio::test]
 async fn a_receiver_that_does_not_answer_appcommand_gets_the_audio_queries_later() {
     let telnet = start_2016_receiver(None).await;
     let received = telnet.received();
