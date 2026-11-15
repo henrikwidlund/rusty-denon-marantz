@@ -23,7 +23,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
-tokio = { workspace = true, features = ["signal"] }
+tokio = { workspace = true, features = ["signal", "test-util"] }
 
 [lints]
 workspace = true

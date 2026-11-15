@@ -25,6 +25,12 @@ use crate::state::{Change, HeosStatus, Shared};
 /// Bytes read at once.
 const READ_BUFFER: usize = 4096;
 
+/// Highest position or length that is used (`i32::MAX`). After `AirPlay`
+/// starts, the device can send a negative position as a 32-bit number without
+/// a sign, for example 4294937296 for -30000. A length like that was not seen,
+/// but is checked the same way.
+const MAX_PROGRESS_MS: u64 = 2_147_483_647;
+
 const GET_PLAYERS: &str = Command::GetPlayers.name();
 const GET_PLAY_STATE: &str = Command::GetPlayState { pid: PlayerId(0) }.name();
 const GET_NOW_PLAYING: &str = Command::GetNowPlayingMedia { pid: PlayerId(0) }.name();
@@ -317,15 +323,18 @@ impl<'a> Session<'a> {
     ) -> End {
         let mut register = String::new();
         let _ = Command::RegisterForChangeEvents { enable: true }.write(&mut register);
-        if let Err(error) = self.write(&mut connections.events, &register).await {
-            return End::Failed(error);
+        if let Err(end) = self
+            .write(&mut connections.events, &register, shutdown)
+            .await
+        {
+            return end;
         }
         let mut command_decoder = LineDecoder::new();
         let mut event_decoder = LineDecoder::new();
         let mut command_buffer = [0_u8; READ_BUFFER];
         let mut event_buffer = [0_u8; READ_BUFFER];
         loop {
-            if let Err(end) = self.write_next(&mut connections.commands).await {
+            if let Err(end) = self.write_next(&mut connections.commands, shutdown).await {
                 return end;
             }
             let wake = self.next_wake();
@@ -365,8 +374,8 @@ impl<'a> Session<'a> {
                         let mut line = String::new();
                         let _ = Command::HeartBeat.write(&mut line);
                         tracing::trace!(host = %self.worker.host, "HEOS event connection idle, sending a heartbeat");
-                        if let Err(error) = self.write(&mut connections.events, &line).await {
-                            return End::Failed(error);
+                        if let Err(end) = self.write(&mut connections.events, &line, shutdown).await {
+                            return end;
                         }
                     }
                     Err(end) => return end,
@@ -376,7 +385,11 @@ impl<'a> Session<'a> {
     }
 
     /// Writes the next command if none waits for its answer.
-    async fn write_next(&mut self, stream: &mut TcpStream) -> Result<(), End> {
+    async fn write_next(
+        &mut self,
+        stream: &mut TcpStream,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> Result<(), End> {
         while self.pending.is_none() {
             let Some(job) = self.queue.pop_front() else {
                 return Ok(());
@@ -393,11 +406,11 @@ impl<'a> Session<'a> {
                 Job::Command { line, name, reply } => (line, name, reply),
             };
             tracing::trace!(command = name, "HEOS command");
-            if let Err(error) = self.write(stream, &line).await {
+            if let Err(end) = self.write(stream, &line, shutdown).await {
                 if let Some(reply) = reply {
                     let _ = reply.send(Err(Error::NotConnected));
                 }
-                return Err(End::Failed(error));
+                return Err(end);
             }
             let now = Instant::now();
             self.command_active = now;
@@ -410,13 +423,23 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
-    async fn write(&self, stream: &mut TcpStream, line: &str) -> std::io::Result<()> {
-        tokio::time::timeout(
+    /// Writes a line. A stop of the task ends the write.
+    async fn write(
+        &self,
+        stream: &mut TcpStream,
+        line: &str,
+        shutdown: &mut watch::Receiver<bool>,
+    ) -> Result<(), End> {
+        let write = tokio::time::timeout(
             self.config().write_timeout,
             stream.write_all(line.as_bytes()),
-        )
-        .await
-        .unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()))
+        );
+        match until_stopped(shutdown, write).await {
+            None => Err(End::Shutdown),
+            Some(Ok(Ok(()))) => Ok(()),
+            Some(Ok(Err(error))) => Err(End::Failed(error)),
+            Some(Err(_)) => Err(End::Failed(std::io::ErrorKind::TimedOut.into())),
+        }
     }
 
     /// The next time that a timer is due.
@@ -569,7 +592,11 @@ impl<'a> Session<'a> {
                 }
             }
             GET_NOW_PLAYING => match (pid(), response.now_playing()) {
-                (Some(pid), Ok(media)) => self.shared().set_now_playing(pid, media),
+                // An item without any text means that the title is not known
+                // yet, for example when AirPlay starts.
+                (Some(pid), Ok(media)) => self
+                    .shared()
+                    .set_now_playing(pid, media.filter(|media| !media.is_empty())),
                 (_, Err(error)) => tracing::debug!(%error, "HEOS now playing not valid"),
                 (None, Ok(_)) => {}
             },
@@ -613,7 +640,18 @@ impl<'a> Session<'a> {
                     self.now_playing_due.push((*pid, due));
                 }
             }
-            Event::NowPlayingProgress { pid, progress } => shared.set_progress(*pid, *progress),
+            Event::NowPlayingProgress { pid, progress } => {
+                if progress.position_ms > MAX_PROGRESS_MS || progress.duration_ms > MAX_PROGRESS_MS
+                {
+                    tracing::debug!(
+                        position_ms = progress.position_ms,
+                        duration_ms = progress.duration_ms,
+                        "HEOS progress not valid, skipped"
+                    );
+                } else {
+                    shared.set_progress(*pid, *progress);
+                }
+            }
             Event::PlaybackError { pid, error } => shared.publish(Change::PlaybackError {
                 pid: *pid,
                 error: error.as_ref().into(),

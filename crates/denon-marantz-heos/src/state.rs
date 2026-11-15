@@ -6,6 +6,7 @@ use denon_marantz_heos_proto::{
     Controls, Event, NowPlaying, PlayState, Player, PlayerId, Progress,
 };
 use tokio::sync::{broadcast, watch};
+use tokio::time::Instant;
 
 /// Changes that a slow subscriber can fall behind before it loses some.
 const CHANGE_CAPACITY: usize = 256;
@@ -34,14 +35,24 @@ pub struct PlayerState {
     pub player: Arc<Player<'static>>,
     /// Play state. `None` until it is read.
     pub play_state: Option<PlayState>,
-    /// What plays. `None` if nothing plays, or until it is read.
+    /// What plays. `None` until it is read, when the device reports no item,
+    /// and while the item has no text: `AirPlay` sends such an item when it
+    /// starts, before the title.
     ///
     /// A stopped player keeps its last item, also after the receiver changed
     /// to a source that is not HEOS. [`PlayerState::current_media`] hides it.
     pub now_playing: Option<Arc<NowPlaying<'static>>>,
     /// Position in what plays, from the last progress event. `None` until
     /// the first event, after what plays changed, and after a stop.
+    ///
+    /// In the first seconds after `AirPlay` starts, the position can jump.
+    /// A progress event with a position or length that is not valid (a
+    /// negative number that the device sends without a sign) is skipped.
     pub progress: Option<Progress>,
+    /// When [`PlayerState::progress`] last changed. The device sends the
+    /// position every few seconds: while the player plays, add the time since
+    /// then to the position.
+    pub progress_at: Option<Instant>,
 }
 
 impl PlayerState {
@@ -51,7 +62,14 @@ impl PlayerState {
             play_state: None,
             now_playing: None,
             progress: None,
+            progress_at: None,
         }
+    }
+
+    /// Clears the progress and its time. Returns true if there was one.
+    const fn clear_progress(&mut self) -> bool {
+        self.progress_at = None;
+        self.progress.take().is_some()
     }
 
     /// Player id.
@@ -70,8 +88,13 @@ impl PlayerState {
         }
     }
 
-    /// Transport controls that work for what plays. All controls if nothing
-    /// plays.
+    /// Transport controls that work for [`PlayerState::now_playing`]. All
+    /// controls if there is no item.
+    ///
+    /// While the player is stopped, they are the controls of the item that
+    /// play would start, which can be another item than the one that played
+    /// last. For example, after `AirPlay` stops, the item is the last queue
+    /// item, such as a radio station.
     #[must_use]
     pub fn controls(&self) -> Controls {
         self.now_playing.as_deref().map_or(Controls::ALL, |media| {
@@ -203,7 +226,7 @@ impl Shared {
     /// event for it.
     pub(crate) fn set_play_state(&self, pid: PlayerId, play_state: PlayState) {
         self.update(pid, |state| {
-            let cleared = play_state == PlayState::Stop && state.progress.take().is_some();
+            let cleared = play_state == PlayState::Stop && state.clear_progress();
             let changed = set(&mut state.play_state, Some(play_state));
             [
                 changed.then_some(Change::PlayState(pid)),
@@ -219,7 +242,7 @@ impl Shared {
                 return [None, None];
             }
             state.now_playing = media.map(|media| Arc::new(media.into_owned()));
-            let cleared = state.progress.take().is_some();
+            let cleared = state.clear_progress();
             [
                 Some(Change::NowPlaying(pid)),
                 cleared.then_some(Change::Progress(pid)),
@@ -229,10 +252,11 @@ impl Shared {
 
     pub(crate) fn set_progress(&self, pid: PlayerId, progress: Progress) {
         self.update(pid, |state| {
-            [
-                set(&mut state.progress, Some(progress)).then_some(Change::Progress(pid)),
-                None,
-            ]
+            let changed = set(&mut state.progress, Some(progress));
+            if changed {
+                state.progress_at = Some(Instant::now());
+            }
+            [changed.then_some(Change::Progress(pid)), None]
         });
     }
 
@@ -278,6 +302,8 @@ fn set<T: PartialEq>(slot: &mut T, value: T) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use denon_marantz_heos_proto::{MediaType, SourceId};
 
     use super::*;
@@ -425,6 +451,32 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn progress_has_the_time_of_its_last_change() {
+        let shared = Shared::new();
+        let pid = PlayerId(1);
+        shared.set_players(vec![player(1, "A")]);
+        let at = |position_ms| Progress {
+            position_ms,
+            duration_ms: 5000,
+        };
+        let time = || shared.read(|states| states[0].progress_at);
+        let start = Instant::now();
+        shared.set_progress(pid, at(1000));
+        assert_eq!(time(), Some(start));
+        // The same position again keeps the time.
+        tokio::time::advance(Duration::from_secs(3)).await;
+        shared.set_progress(pid, at(1000));
+        assert_eq!(time(), Some(start));
+        shared.set_progress(pid, at(4000));
+        assert_eq!(time(), Some(start + Duration::from_secs(3)));
+        shared.set_play_state(pid, PlayState::Stop);
+        assert_eq!(time(), None);
+        shared.set_progress(pid, at(0));
+        shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "B")));
+        assert_eq!(time(), None);
+    }
+
     #[test]
     fn stopped_player_hides_its_media() {
         let shared = Shared::new();
@@ -438,5 +490,22 @@ mod tests {
         });
         shared.set_play_state(pid, PlayState::Pause);
         shared.read(|states| assert!(states[0].current_media().is_some()));
+    }
+
+    #[test]
+    fn stopped_player_has_the_controls_of_the_item_that_play_starts() {
+        let shared = Shared::new();
+        let pid = PlayerId(1);
+        shared.set_players(vec![player(1, "A")]);
+        // After AirPlay stops, the item is the last queue item.
+        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "Radio")));
+        shared.read(|states| {
+            assert_eq!(states[0].current_media(), None);
+            assert_eq!(
+                states[0].controls(),
+                Controls::for_media(Some(SourceId::TUNEIN), MediaType::Station)
+            );
+        });
     }
 }

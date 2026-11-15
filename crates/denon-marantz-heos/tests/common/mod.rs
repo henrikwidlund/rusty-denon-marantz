@@ -47,6 +47,22 @@ pub(crate) fn answer(command: &str) -> String {
         .to_owned()
 }
 
+/// The answer from [`DATA`] to `get_now_playing_media` with this song. An
+/// empty song gives the `AirPlay` item without text.
+pub(crate) fn now_playing(song: &str) -> String {
+    let needle = format!("\"song\": \"{song}\"");
+    DATA.lines()
+        .find(|line| line.contains("get_now_playing_media") && line.contains(&needle))
+        .unwrap_or_else(|| panic!("no now playing with {song:?}"))
+        .to_owned()
+}
+
+/// Counts the calls of the returned function. The first call gives 0.
+pub(crate) fn counter() -> impl Fn() -> usize + Send + Sync {
+    let count = AtomicUsize::new(0);
+    move || count.fetch_add(1, Ordering::SeqCst)
+}
+
 /// An event line.
 pub(crate) fn event(name: &str, message: &str) -> String {
     format!(r#"{{"heos": {{"command": "event/{name}", "message": "{message}"}}}}"#)

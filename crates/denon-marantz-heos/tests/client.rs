@@ -2,11 +2,12 @@
 
 mod common;
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use common::{Fake, IP, PID, Reply, answer, config, event, failure, from_data, name, wait_until};
+use common::{
+    Fake, IP, PID, Reply, answer, config, counter, event, failure, from_data, name, now_playing,
+    wait_until,
+};
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
     Change, Command, Error, Event, Heos, HeosConfig, HeosStatus, PlayState, PlayerId, Progress,
@@ -127,23 +128,18 @@ async fn events_change_the_state() {
 
 #[tokio::test]
 async fn a_burst_of_now_playing_events_gives_one_read() {
-    let reads = Arc::new(AtomicUsize::new(0));
-    let counter = reads.clone();
+    let reads = counter();
     let fake = Fake::start(move |line| {
         if name(line) != "player/get_now_playing_media" {
             return from_data(line);
         }
         // The first read gives the first item, later reads another one.
-        let song = if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+        let song = if reads() == 0 {
             "Track 2.wav"
         } else {
             "Song A"
         };
-        let line = common::DATA
-            .lines()
-            .find(|line| line.contains("get_now_playing_media") && line.contains(song))
-            .unwrap();
-        Reply::Lines(vec![line.to_owned()])
+        Reply::Lines(vec![now_playing(song)])
     })
     .await;
     let heos = connect(&fake).await;
@@ -356,11 +352,10 @@ async fn connect_fails_if_the_device_refuses_the_players() {
 
 #[tokio::test]
 async fn refresh_fails_if_the_players_are_not_valid() {
-    let reads = Arc::new(AtomicUsize::new(0));
-    let counter = reads.clone();
+    let reads = counter();
     let fake = Fake::start(move |line| {
         // The second read of the players gives a player without an id.
-        if name(line) == "player/get_players" && counter.fetch_add(1, Ordering::SeqCst) == 1 {
+        if name(line) == "player/get_players" && reads() == 1 {
             return Reply::Lines(vec![
                 r#"{"heos": {"command": "player/get_players", "result": "success", "message": ""}, "payload": [{"name": "A"}]}"#.to_owned(),
             ]);
@@ -384,4 +379,65 @@ async fn refresh_fails_if_the_players_are_not_valid() {
     );
     // The players stay as they were.
     assert_eq!(heos.players().len(), 1);
+}
+
+#[tokio::test]
+async fn an_item_without_text_is_no_media() {
+    let reads = counter();
+    let fake = Fake::start(move |line| {
+        if name(line) != "player/get_now_playing_media" {
+            return from_data(line);
+        }
+        // The first read gives a track, the second the AirPlay item without
+        // text.
+        let song = if reads() == 0 { "Track 2.wav" } else { "" };
+        Reply::Lines(vec![now_playing(song)])
+    })
+    .await;
+    let heos = connect(&fake).await;
+    assert!(heos.player(PID).unwrap().now_playing.is_some());
+    let mut changes = heos.changes();
+    fake.push(event("player_now_playing_changed", "pid=1234567"));
+    assert_eq!(next_change(&mut changes).await, Change::NowPlaying(PID));
+    assert_eq!(heos.player(PID).unwrap().now_playing, None);
+}
+
+#[tokio::test]
+async fn a_negative_position_or_length_is_skipped() {
+    let fake = Fake::start(from_data).await;
+    let heos = connect(&fake).await;
+    let mut changes = heos.changes();
+    let mut events = heos.events();
+    let progress_of = |position: u64, duration: u64| {
+        event(
+            "player_now_playing_progress",
+            &format!("pid=1234567&cur_pos={position}&duration={duration}"),
+        )
+    };
+    let progress = |position| progress_of(position, 413_000);
+    let position = || {
+        heos.player(PID)
+            .unwrap()
+            .progress
+            .map(|progress| progress.position_ms)
+    };
+    fake.push(progress(2_000));
+    assert_eq!(next_change(&mut changes).await, Change::Progress(PID));
+    // -30000 as the device sends it, as the position and as the length,
+    // then a valid position.
+    fake.push(progress(4_294_937_296));
+    fake.push(progress_of(3_000, 4_294_937_296));
+    fake.push(progress(7_000));
+    wait_until(|| position() == Some(7_000)).await;
+    // Only the valid position changed the state.
+    let received: Vec<_> = std::iter::from_fn(|| changes.try_recv().ok()).collect();
+    assert_eq!(received, [Change::Progress(PID)]);
+    // Subscribers of the events still get it as the device sent it.
+    let positions: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+        .filter_map(|event| match event {
+            Event::NowPlayingProgress { progress, .. } => Some(progress.position_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(positions, [2_000, 4_294_937_296, 3_000, 7_000]);
 }

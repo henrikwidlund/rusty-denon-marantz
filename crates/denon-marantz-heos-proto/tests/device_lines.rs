@@ -4,8 +4,8 @@
 //! placeholders.
 
 use denon_marantz_heos_proto::{
-    Controls, Event, LineDecoder, MediaType, PlayState, Player, PlayerId, Progress, QueueId,
-    QuickSelect, Response, SourceId, Status,
+    Controls, Event, LineDecoder, MediaType, NowPlaying, PlayState, Player, PlayerId, Progress,
+    QueueId, QuickSelect, Response, SourceId, Status,
 };
 
 const DATA: &str = include_str!("data/a10h.jsonl");
@@ -68,6 +68,18 @@ fn players() {
 }
 
 #[test]
+fn airplay_start_sends_an_empty_item() {
+    let empty: Vec<_> = find("player/get_now_playing_media")
+        .map(|response| response.now_playing().unwrap().unwrap())
+        .filter(NowPlaying::is_empty)
+        .collect();
+    assert_eq!(empty.len(), 1);
+    // The item is there, only without text.
+    assert_eq!(empty[0].media_type, MediaType::Station);
+    assert_eq!(empty[0].sid, Some(SourceId::LOCAL_MUSIC));
+}
+
+#[test]
 fn now_playing_station_and_song() {
     let all: Vec<_> = find("player/get_now_playing_media")
         .map(|response| response.now_playing().unwrap().unwrap().into_owned())
@@ -97,7 +109,11 @@ fn now_playing_station_and_song() {
     // AirPlay: a station of the local music source with a numeric media id.
     let airplay = all
         .iter()
-        .find(|now| now.sid == Some(SourceId::LOCAL_MUSIC) && now.media_type == MediaType::Station)
+        .find(|now| {
+            now.sid == Some(SourceId::LOCAL_MUSIC)
+                && now.media_type == MediaType::Station
+                && !now.is_empty()
+        })
         .unwrap();
     assert_eq!(airplay.song, airplay.station.as_deref().unwrap());
     assert!(

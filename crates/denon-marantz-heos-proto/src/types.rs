@@ -277,6 +277,19 @@ pub struct NowPlaying<'a> {
 }
 
 impl NowPlaying<'_> {
+    /// Returns true if song, station, album, artist and image URL are all
+    /// empty or only spaces. `AirPlay` sends such an item when it starts,
+    /// before the title.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        let blank = |text: &str| text.trim().is_empty();
+        blank(&self.song)
+            && self.station.as_deref().is_none_or(blank)
+            && blank(&self.album)
+            && blank(&self.artist)
+            && blank(&self.image_url)
+    }
+
     /// Copies the borrowed text.
     #[must_use]
     pub fn into_owned(self) -> NowPlaying<'static> {
@@ -342,6 +355,22 @@ mod tests {
             (player.gid, player.lineout, player.control),
             (None, None, None)
         );
+    }
+
+    #[test]
+    fn empty_now_playing() {
+        let parse = |line| serde_json::from_str::<NowPlaying<'_>>(line).unwrap();
+        assert!(parse(r#"{"type":"station","song":"","station":" ","sid":1024}"#).is_empty());
+        assert!(parse(r#"{"type":"song"}"#).is_empty());
+        for line in [
+            r#"{"type":"station","station":"A"}"#,
+            r#"{"type":"song","song":"A"}"#,
+            r#"{"type":"song","album":"A"}"#,
+            r#"{"type":"song","artist":"A"}"#,
+            r#"{"type":"song","image_url":"http://a"}"#,
+        ] {
+            assert!(!parse(line).is_empty(), "{line}");
+        }
     }
 
     #[test]
