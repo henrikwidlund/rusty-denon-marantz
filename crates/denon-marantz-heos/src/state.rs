@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use denon_marantz_heos_proto::{
-    Controls, Event, NowPlaying, PlayState, Player, PlayerId, Progress,
+    Controls, Event, NowPlaying, PlayMode, PlayState, Player, PlayerId, Progress, RepeatMode,
 };
 use tokio::sync::{broadcast, watch};
 use tokio::time::Instant;
@@ -53,6 +53,10 @@ pub struct PlayerState {
     /// position every few seconds: while the player plays, add the time since
     /// then to the position.
     pub progress_at: Option<Instant>,
+    /// Repeat mode. `None` until it is read.
+    pub repeat: Option<RepeatMode>,
+    /// Shuffle is on. `None` until it is read.
+    pub shuffle: Option<bool>,
 }
 
 impl PlayerState {
@@ -63,6 +67,8 @@ impl PlayerState {
             now_playing: None,
             progress: None,
             progress_at: None,
+            repeat: None,
+            shuffle: None,
         }
     }
 
@@ -76,6 +82,15 @@ impl PlayerState {
     #[must_use]
     pub fn pid(&self) -> PlayerId {
         self.player.pid
+    }
+
+    /// Repeat and shuffle modes, or `None` until both are read.
+    #[must_use]
+    pub fn play_mode(&self) -> Option<PlayMode> {
+        Some(PlayMode {
+            repeat: self.repeat?,
+            shuffle: self.shuffle?,
+        })
     }
 
     /// What plays, or `None` while the player is stopped.
@@ -118,6 +133,12 @@ pub enum Change {
     NowPlaying(PlayerId),
     /// The position in what a player plays changed.
     Progress(PlayerId),
+    /// The repeat or shuffle mode of a player changed.
+    PlayMode(PlayerId),
+    /// The queue of a player changed, or may have changed while there was no
+    /// connection. The state does not keep the queue: read it again with
+    /// [`Heos::queue`](crate::Heos::queue).
+    Queue(PlayerId),
     /// Playback failed. The state does not keep this.
     PlaybackError {
         /// Player.
@@ -257,6 +278,25 @@ impl Shared {
                 state.progress_at = Some(Instant::now());
             }
             [changed.then_some(Change::Progress(pid)), None]
+        });
+    }
+
+    /// Sets the repeat mode, the shuffle mode, or both.
+    pub(crate) fn set_play_mode(
+        &self,
+        pid: PlayerId,
+        repeat: Option<RepeatMode>,
+        shuffle: Option<bool>,
+    ) {
+        self.update(pid, |state| {
+            let mut changed = false;
+            if let Some(repeat) = repeat {
+                changed |= set(&mut state.repeat, Some(repeat));
+            }
+            if let Some(shuffle) = shuffle {
+                changed |= set(&mut state.shuffle, Some(shuffle));
+            }
+            [changed.then_some(Change::PlayMode(pid)), None]
         });
     }
 
@@ -475,6 +515,31 @@ mod tests {
         shared.set_progress(pid, at(0));
         shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "B")));
         assert_eq!(time(), None);
+    }
+
+    #[test]
+    fn play_mode_needs_both_values() {
+        let shared = Shared::new();
+        let pid = PlayerId(1);
+        shared.set_players(vec![player(1, "A")]);
+        let mut receiver = shared.subscribe_changes();
+        shared.set_play_mode(pid, Some(RepeatMode::OnAll), None);
+        shared.read(|states| assert_eq!(states[0].play_mode(), None));
+        shared.set_play_mode(pid, None, Some(true));
+        shared.set_play_mode(pid, Some(RepeatMode::OnAll), Some(true));
+        shared.read(|states| {
+            assert_eq!(
+                states[0].play_mode(),
+                Some(PlayMode {
+                    repeat: RepeatMode::OnAll,
+                    shuffle: true,
+                })
+            );
+        });
+        assert_eq!(
+            changes(&mut receiver),
+            [Change::PlayMode(pid), Change::PlayMode(pid)]
+        );
     }
 
     #[test]

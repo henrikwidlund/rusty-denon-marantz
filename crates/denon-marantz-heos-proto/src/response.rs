@@ -10,7 +10,7 @@ use crate::de;
 use crate::error::Error;
 use crate::event::Event;
 use crate::message::Message;
-use crate::types::NowPlaying;
+use crate::types::{NowPlaying, PlayMode, RepeatMode};
 
 /// Prefix of the command name of an event.
 const EVENT_PREFIX: &str = "event/";
@@ -117,6 +117,24 @@ impl<'a> Response<'a> {
     pub fn payload<T: Deserialize<'a>>(&self) -> Result<T, Error> {
         let payload = self.raw_payload().ok_or(Error::NoPayload)?;
         Ok(serde_json::from_str(payload)?)
+    }
+
+    /// Total number of items from the `count` field of `get_queue` and
+    /// `browse`, or `None` if it is missing or not valid. For `browse`, 0 can
+    /// mean that the number is not known.
+    #[must_use]
+    pub fn count(&self) -> Option<u32> {
+        self.message().parse("count").ok()
+    }
+
+    /// Repeat and shuffle modes from the message of `get_play_mode` and
+    /// `set_play_mode`.
+    pub fn play_mode(&self) -> Result<PlayMode, Error> {
+        let message = self.message();
+        Ok(PlayMode {
+            repeat: message.parse_with("repeat", RepeatMode::from_name)?,
+            shuffle: message.on_off("shuffle")?,
+        })
     }
 
     /// Parses the payload of `get_now_playing_media`.
@@ -339,6 +357,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response.status(), Status::UnderProcess);
+    }
+
+    #[test]
+    fn play_mode_and_count() {
+        let response = Response::parse(
+            r#"{"heos":{"command":"player/set_play_mode","result":"success","message":"pid=1&repeat=on_one&shuffle=on"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            response.play_mode(),
+            Ok(PlayMode {
+                repeat: RepeatMode::OnOne,
+                shuffle: true,
+            })
+        );
+        assert_eq!(response.count(), None);
+        let bad = Response::parse(
+            r#"{"heos":{"command":"player/get_play_mode","result":"success","message":"pid=1&repeat=all&shuffle=off&count=x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            bad.play_mode(),
+            Err(Error::InvalidValue { field: "repeat" })
+        );
+        assert_eq!(bad.count(), None);
+        let page = Response::parse(
+            r#"{"heos":{"command":"browse/browse","result":"success","message":"sid=1028&returned=2&count= 7 "}}"#,
+        )
+        .unwrap();
+        assert_eq!(page.count(), Some(7));
+        assert_eq!(
+            page.play_mode(),
+            Err(Error::MissingField { field: "repeat" })
+        );
     }
 
     #[test]

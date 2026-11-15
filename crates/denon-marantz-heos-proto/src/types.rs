@@ -330,6 +330,98 @@ impl QuickSelect<'_> {
     }
 }
 
+/// Repeat and shuffle modes of a player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlayMode {
+    /// Repeat mode.
+    pub repeat: RepeatMode,
+    /// Shuffle is on.
+    pub shuffle: bool,
+}
+
+/// An item of the queue, from `get_queue`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct QueueItem<'a> {
+    /// Queue id.
+    pub qid: QueueId,
+    /// Track title.
+    #[serde(default, borrow, deserialize_with = "de::text")]
+    pub song: Cow<'a, str>,
+    /// Album.
+    #[serde(default, borrow, deserialize_with = "de::text")]
+    pub album: Cow<'a, str>,
+    /// Artist.
+    #[serde(default, borrow, deserialize_with = "de::text")]
+    pub artist: Cow<'a, str>,
+    /// URL of the cover image. It can be empty.
+    #[serde(default, borrow, deserialize_with = "de::text")]
+    pub image_url: Cow<'a, str>,
+    /// Media id.
+    #[serde(default, borrow, deserialize_with = "de::option_text")]
+    pub mid: Option<Cow<'a, str>>,
+    /// Album id.
+    #[serde(default, borrow, deserialize_with = "de::option_text")]
+    pub album_id: Option<Cow<'a, str>>,
+}
+
+impl QueueItem<'_> {
+    /// Copies the borrowed text.
+    #[must_use]
+    pub fn into_owned(self) -> QueueItem<'static> {
+        QueueItem {
+            qid: self.qid,
+            song: owned(self.song),
+            album: owned(self.album),
+            artist: owned(self.artist),
+            image_url: owned(self.image_url),
+            mid: self.mid.map(owned),
+            album_id: self.album_id.map(owned),
+        }
+    }
+}
+
+/// An item from `browse`, for example a HEOS Favorite.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct BrowseItem<'a> {
+    /// Name.
+    #[serde(borrow, deserialize_with = "de::text")]
+    pub name: Cow<'a, str>,
+    /// Media type. HEOS Favorites are stations.
+    #[serde(rename = "type")]
+    pub media_type: MediaType,
+    /// URL of the image. It can be empty.
+    #[serde(default, borrow, deserialize_with = "de::text")]
+    pub image_url: Cow<'a, str>,
+    /// Media id.
+    #[serde(default, borrow, deserialize_with = "de::option_text")]
+    pub mid: Option<Cow<'a, str>>,
+    /// Container id, if the item is a container.
+    #[serde(default, borrow, deserialize_with = "de::option_text")]
+    pub cid: Option<Cow<'a, str>>,
+    /// The item has other items. Only `yes` is true.
+    #[serde(default, deserialize_with = "de::yes")]
+    pub container: bool,
+    /// The item can be played. Only `yes` is true.
+    #[serde(default, deserialize_with = "de::yes")]
+    pub playable: bool,
+}
+
+impl BrowseItem<'_> {
+    /// Copies the borrowed text.
+    #[must_use]
+    pub fn into_owned(self) -> BrowseItem<'static> {
+        BrowseItem {
+            name: owned(self.name),
+            media_type: self.media_type,
+            image_url: owned(self.image_url),
+            mid: self.mid.map(owned),
+            cid: self.cid.map(owned),
+            container: self.container,
+            playable: self.playable,
+        }
+    }
+}
+
 pub(crate) fn owned(text: Cow<'_, str>) -> Cow<'static, str> {
     Cow::Owned(text.into_owned())
 }
@@ -384,6 +476,27 @@ mod tests {
             assert!(serde_json::from_str::<Player<'_>>(line).is_err(), "{line}");
         }
         assert!(serde_json::from_str::<QuickSelect<'_>>(r#"{"id":256,"name":"A"}"#).is_err());
+    }
+
+    #[test]
+    fn browse_item_flags() {
+        let parse = |line| serde_json::from_str::<BrowseItem<'_>>(line).unwrap();
+        let item = parse(r#"{"name":"A","type":"station","container":" yes ","playable":"no"}"#);
+        assert_eq!((item.container, item.playable), (true, false));
+        assert_eq!((item.mid, item.cid), (None, None));
+        let item = parse(r#"{"name":"A","type":"album","container":1,"playable":null}"#);
+        assert_eq!((item.container, item.playable), (false, false));
+        assert_eq!(item.media_type, MediaType::Other);
+        assert!(serde_json::from_str::<BrowseItem<'_>>(r#"{"type":"station"}"#).is_err());
+    }
+
+    #[test]
+    fn queue_item_needs_a_queue_id() {
+        let item: QueueItem<'_> = serde_json::from_str(r#"{"qid":"3","song":"A"}"#).unwrap();
+        assert_eq!(item.qid, QueueId(3));
+        assert_eq!(item.album, "");
+        assert!(serde_json::from_str::<QueueItem<'_>>(r#"{"song":"A"}"#).is_err());
+        assert!(serde_json::from_str::<QueueItem<'_>>(r#"{"qid":"","song":"A"}"#).is_err());
     }
 
     #[test]

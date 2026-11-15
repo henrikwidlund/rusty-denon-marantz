@@ -24,7 +24,7 @@ pub enum Error {
         /// Column of the problem, starting at 1. It is 0 if not known.
         column: usize,
     },
-    /// The message of an event has no such field.
+    /// The message has no such field.
     #[error("the message has no {field} field")]
     MissingField {
         /// Name of the field.

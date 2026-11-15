@@ -111,6 +111,15 @@ where
     deserializer.deserialize_any(TextVisitor)
 }
 
+/// True for the text `yes`. Spaces around it are ignored. Any other text or
+/// number gives false. A JSON `true` or `false` is an error.
+pub(crate) fn yes<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(option_text(deserializer)?.is_some_and(|text| text.trim() == "yes"))
+}
+
 /// Optional text, see [`text`]. `null` gives `None`.
 pub(crate) fn option_text<'de, D>(deserializer: D) -> Result<Option<Cow<'de, str>>, D::Error>
 where

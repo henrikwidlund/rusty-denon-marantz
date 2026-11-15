@@ -2,16 +2,17 @@
 //! for events.
 //!
 //! Commands go one at a time. The task waits for the answer, also through
-//! "command under process", before it writes the next one. Answers to reads
-//! of the state also change the state. When a connection is idle, the task
-//! sends a heartbeat. When a connection is lost, both are opened again, and
+//! "command under process" up to a limit, before it writes the next one.
+//! Answers to reads of the state, and to `set_play_mode`, also change the
+//! state. When a connection is idle, the task sends a heartbeat. When a connection is lost, both are opened again, and
 //! the players and their state are read again.
 
 use std::collections::VecDeque;
 use std::future::Future;
+use std::time::Duration;
 
 use denon_marantz_heos_proto::{
-    Command, Event, Failure, LineDecoder, PlayState, Player, PlayerId, Response, Status,
+    Command, Event, Failure, LineDecoder, PlayState, Player, PlayerId, RepeatMode, Response, Status,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -34,6 +35,13 @@ const MAX_PROGRESS_MS: u64 = 2_147_483_647;
 const GET_PLAYERS: &str = Command::GetPlayers.name();
 const GET_PLAY_STATE: &str = Command::GetPlayState { pid: PlayerId(0) }.name();
 const GET_NOW_PLAYING: &str = Command::GetNowPlayingMedia { pid: PlayerId(0) }.name();
+const GET_PLAY_MODE: &str = Command::GetPlayMode { pid: PlayerId(0) }.name();
+const SET_PLAY_MODE: &str = Command::SetPlayMode {
+    pid: PlayerId(0),
+    repeat: RepeatMode::Off,
+    shuffle: false,
+}
+.name();
 
 pub(crate) type AnswerSender = oneshot::Sender<Result<Answer, Error>>;
 pub(crate) type DoneSender = oneshot::Sender<Result<(), Error>>;
@@ -118,7 +126,15 @@ impl PlayersError {
 struct Pending {
     name: &'static str,
     reply: Option<AnswerSender>,
+    sent: Instant,
     deadline: Instant,
+}
+
+impl Pending {
+    /// The time that was allowed when the deadline passed.
+    fn limit(&self) -> Duration {
+        self.deadline - self.sent
+    }
 }
 
 /// The two connections to the device.
@@ -140,7 +156,10 @@ enum End {
     Closed,
     Failed(std::io::Error),
     Silent,
-    Timeout(&'static str),
+    Timeout {
+        command: &'static str,
+        limit: Duration,
+    },
 }
 
 impl std::fmt::Display for End {
@@ -150,7 +169,7 @@ impl std::fmt::Display for End {
             Self::Closed => f.write_str("closed by the device"),
             Self::Failed(error) => write!(f, "read or write failed: {error}"),
             Self::Silent => f.write_str("no answer to the heartbeat on the event connection"),
-            Self::Timeout(command) => write!(f, "no answer to {command}"),
+            Self::Timeout { command, .. } => write!(f, "no answer to {command}"),
         }
     }
 }
@@ -183,6 +202,7 @@ impl Worker {
         let _guard = StatusGuard(self.shared.clone());
         let mut connections = Some(first);
         let mut synced = Some(synced);
+        let mut reconnected = false;
         loop {
             let connections = if let Some(connections) = connections.take() {
                 connections
@@ -196,13 +216,14 @@ impl Worker {
             };
             self.shared.set_status(HeosStatus::Connected);
             tracing::debug!(host = %self.host, "HEOS connected");
-            let end = Session::new(&self, synced.take())
+            let end = Session::new(&self, synced.take(), reconnected)
                 .run(connections, &mut requests, &mut shutdown)
                 .await;
             self.shared.set_status(HeosStatus::Disconnected);
             if matches!(end, End::Shutdown) {
                 return;
             }
+            reconnected = true;
             tracing::debug!(host = %self.host, reason = %end, "HEOS connection lost");
         }
     }
@@ -254,6 +275,9 @@ struct Session<'a> {
     /// The last read of the players did not work. A waiter for
     /// [`Job::Synced`] gets this error.
     players_error: Option<PlayersError>,
+    /// The queues may have changed while there was no connection. Subscribers
+    /// are told after the players are read.
+    queues_unknown: bool,
 }
 
 /// What a timer asks the session to do.
@@ -263,7 +287,7 @@ enum Due {
 }
 
 impl<'a> Session<'a> {
-    fn new(worker: &'a Worker, synced: Option<DoneSender>) -> Self {
+    fn new(worker: &'a Worker, synced: Option<DoneSender>, reconnected: bool) -> Self {
         let now = Instant::now();
         let mut queue = VecDeque::from([Job::internal(Command::GetPlayers)]);
         queue.extend(synced.map(Job::Synced));
@@ -276,6 +300,7 @@ impl<'a> Session<'a> {
             event_read: now,
             event_asked: false,
             players_error: None,
+            queues_unknown: reconnected,
         }
     }
 
@@ -294,9 +319,8 @@ impl<'a> Session<'a> {
         shutdown: &mut watch::Receiver<bool>,
     ) -> End {
         let end = self.serve(&mut connections, requests, shutdown).await;
-        let limit = self.config().command_timeout;
         let error = || match end {
-            End::Timeout(command) => Error::Timeout {
+            End::Timeout { command, limit } => Error::Timeout {
                 request: command.to_owned(),
                 limit,
             },
@@ -417,6 +441,7 @@ impl<'a> Session<'a> {
             self.pending = Some(Pending {
                 name,
                 reply,
+                sent: now,
                 deadline: now + self.config().command_timeout,
             });
         }
@@ -460,14 +485,18 @@ impl<'a> Session<'a> {
     fn on_timer(&mut self, now: Instant) -> Result<Due, End> {
         let config = *self.config();
         if let Some(pending) = self.pending.take_if(|pending| pending.deadline <= now) {
+            let limit = pending.limit();
             if let Some(reply) = pending.reply {
                 let _ = reply.send(Err(Error::Timeout {
                     request: pending.name.to_owned(),
-                    limit: config.command_timeout,
+                    limit,
                 }));
             }
             // A late answer would be taken for the answer to the next command.
-            return Err(End::Timeout(pending.name));
+            return Err(End::Timeout {
+                command: pending.name,
+                limit,
+            });
         }
         let mut index = 0;
         while index < self.now_playing_due.len() {
@@ -536,7 +565,10 @@ impl<'a> Session<'a> {
             return;
         }
         let result = match response.status() {
-            Status::UnderProcess => return,
+            Status::UnderProcess => {
+                self.extend_deadline();
+                return;
+            }
             Status::Success => {
                 self.apply(&response);
                 Ok(())
@@ -560,7 +592,18 @@ impl<'a> Session<'a> {
         }
     }
 
-    /// Changes the state with the answer to a read.
+    /// The device still works on the pending command: allow the command
+    /// timeout again, up to the slow command limit after it was sent.
+    fn extend_deadline(&mut self) {
+        let config = *self.config();
+        if let Some(pending) = &mut self.pending {
+            let limit = config.slow_command_limit.max(config.command_timeout);
+            pending.deadline = (Instant::now() + config.command_timeout).min(pending.sent + limit);
+        }
+    }
+
+    /// Changes the state with the answer to a read, or to a command whose
+    /// answer has the new values.
     fn apply(&mut self, response: &Response<'_>) {
         let message = response.message();
         let pid = || message.get("pid")?.parse::<PlayerId>().ok();
@@ -571,11 +614,20 @@ impl<'a> Session<'a> {
                     for player in players.iter().rev() {
                         let pid = player.pid;
                         self.queue
+                            .push_front(Job::internal(Command::GetPlayMode { pid }));
+                        self.queue
                             .push_front(Job::internal(Command::GetNowPlayingMedia { pid }));
                         self.queue
                             .push_front(Job::internal(Command::GetPlayState { pid }));
                     }
                     self.shared().set_players(players);
+                    if std::mem::take(&mut self.queues_unknown) {
+                        self.shared().read(|states| {
+                            for state in states {
+                                self.shared().publish(Change::Queue(state.pid()));
+                            }
+                        });
+                    }
                     self.players_error = None;
                 }
                 Err(error) => {
@@ -598,6 +650,14 @@ impl<'a> Session<'a> {
                     .shared()
                     .set_now_playing(pid, media.filter(|media| !media.is_empty())),
                 (_, Err(error)) => tracing::debug!(%error, "HEOS now playing not valid"),
+                (None, Ok(_)) => {}
+            },
+            GET_PLAY_MODE | SET_PLAY_MODE => match (pid(), response.play_mode()) {
+                (Some(pid), Ok(mode)) => {
+                    self.shared()
+                        .set_play_mode(pid, Some(mode.repeat), Some(mode.shuffle));
+                }
+                (_, Err(error)) => tracing::debug!(%error, "HEOS play mode not valid"),
                 (None, Ok(_)) => {}
             },
             _ => {}
@@ -656,6 +716,13 @@ impl<'a> Session<'a> {
                 pid: *pid,
                 error: error.as_ref().into(),
             }),
+            Event::RepeatModeChanged { pid, repeat } => {
+                shared.set_play_mode(*pid, Some(*repeat), None);
+            }
+            Event::ShuffleModeChanged { pid, shuffle } => {
+                shared.set_play_mode(*pid, None, Some(*shuffle));
+            }
+            Event::QueueChanged { pid } => shared.publish(Change::Queue(*pid)),
             Event::PlayersChanged => self.queue_once(Job::internal(Command::GetPlayers)),
             _ => {}
         }

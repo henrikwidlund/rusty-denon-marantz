@@ -3,7 +3,12 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use denon_marantz_heos_proto::{Command, Event, PORT, PlayState, PlayerId, Response};
+use denon_marantz_heos_proto::Error as ProtoError;
+use denon_marantz_heos_proto::{
+    BrowseItem, Command, Event, PORT, PlayMode, PlayState, PlayerId, QueueId, QueueItem,
+    QuickSelect, Response,
+};
+use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
@@ -25,8 +30,15 @@ pub struct HeosConfig {
     pub write_timeout: Duration,
     /// Time allowed for the answer to a command. Without an answer in time,
     /// the connections are opened again: a late answer would be taken for the
-    /// answer to the next command.
+    /// answer to the next command. See also
+    /// [`HeosConfig::slow_command_limit`].
     pub command_timeout: Duration,
+    /// Longest time for the answer to a command that the device is still
+    /// working on. Each "command under process" answer gives
+    /// [`HeosConfig::command_timeout`] again, up to this time after the
+    /// command was sent. Browsing HEOS Favorites sends such an answer. A
+    /// limit below [`HeosConfig::command_timeout`] gives no extra time.
+    pub slow_command_limit: Duration,
     /// Time without data after which a heartbeat is sent on a connection.
     /// On the event connection, if there is still nothing after the same time
     /// again, the connections count as lost. On the command connection, the
@@ -49,6 +61,7 @@ impl Default for HeosConfig {
             connect_timeout: Duration::from_secs(5),
             write_timeout: Duration::from_secs(5),
             command_timeout: Duration::from_secs(15),
+            slow_command_limit: Duration::from_secs(60),
             keep_alive: Duration::from_secs(30),
             reconnect_min: Duration::from_secs(1),
             reconnect_max: Duration::from_secs(600),
@@ -104,6 +117,17 @@ impl Answer {
         #[allow(clippy::missing_panics_doc)]
         Response::parse(&self.line).expect("the line was parsed before")
     }
+}
+
+/// One part of a list that the device sends in parts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Page<T> {
+    /// The items of this part.
+    pub items: Vec<T>,
+    /// Number of items in the whole list, if the device sent it. For HEOS
+    /// Favorites, 0 can mean that the number is not known.
+    pub count: Option<u32>,
 }
 
 /// Client of one HEOS device, for example an AV receiver.
@@ -225,7 +249,7 @@ impl Heos {
     /// Sends a command and waits for its answer.
     ///
     /// Answers to reads of the state, for example `get_now_playing_media`,
-    /// also change the state.
+    /// and to `set_play_mode` also change the state.
     pub async fn send(&self, command: Command<'_>) -> Result<Answer, Error> {
         let mut line = String::new();
         command.write(&mut line).map_err(Error::InvalidCommand)?;
@@ -256,6 +280,107 @@ impl Heos {
         self.send(Command::PlayPrevious { pid }).await.map(drop)
     }
 
+    /// Sets the repeat and shuffle modes. The state changes when the answer
+    /// comes.
+    pub async fn set_play_mode(&self, pid: PlayerId, mode: PlayMode) -> Result<(), Error> {
+        self.send(Command::SetPlayMode {
+            pid,
+            repeat: mode.repeat,
+            shuffle: mode.shuffle,
+        })
+        .await
+        .map(drop)
+    }
+
+    /// Reads a part of the queue. `range` is the first and last index, from
+    /// 0. Without it, the device sends the first items, at most 100.
+    ///
+    /// The queue can change between two reads. [`Change::Queue`] tells when,
+    /// also after a reconnect.
+    pub async fn queue(
+        &self,
+        pid: PlayerId,
+        range: Option<(u32, u32)>,
+    ) -> Result<Page<QueueItem<'static>>, Error> {
+        self.read(Command::GetQueue { pid, range }, |response| {
+            page(response, QueueItem::into_owned)
+        })
+        .await
+    }
+
+    /// Plays an item of the queue.
+    pub async fn play_queue_item(&self, pid: PlayerId, qid: QueueId) -> Result<(), Error> {
+        self.send(Command::PlayQueue { pid, qid }).await.map(drop)
+    }
+
+    /// Removes items from the queue. `qids` must not be empty.
+    pub async fn remove_from_queue(&self, pid: PlayerId, qids: &[QueueId]) -> Result<(), Error> {
+        self.send(Command::RemoveFromQueue { pid, qids })
+            .await
+            .map(drop)
+    }
+
+    /// Removes all items from the queue.
+    pub async fn clear_queue(&self, pid: PlayerId) -> Result<(), Error> {
+        self.send(Command::ClearQueue { pid }).await.map(drop)
+    }
+
+    /// Reads a part of the HEOS Favorites. `range` is the first and last
+    /// index, from 0. Without it, the device sends the first items, at most
+    /// 50 or 100.
+    ///
+    /// The device sends no event when the Favorites change, so read them
+    /// again when they are needed.
+    pub async fn favorites(
+        &self,
+        range: Option<(u32, u32)>,
+    ) -> Result<Page<BrowseItem<'static>>, Error> {
+        self.read(Command::GetFavorites { range }, |response| {
+            page(response, BrowseItem::into_owned)
+        })
+        .await
+    }
+
+    /// Plays a HEOS Favorite. `preset` is its position, from 1.
+    pub async fn play_preset(&self, pid: PlayerId, preset: u32) -> Result<(), Error> {
+        self.send(Command::PlayPreset { pid, preset })
+            .await
+            .map(drop)
+    }
+
+    /// Reads the names of the quick select slots.
+    pub async fn quick_selects(&self, pid: PlayerId) -> Result<Vec<QuickSelect<'static>>, Error> {
+        self.read(Command::GetQuickSelects { pid }, |response| {
+            list(response, QuickSelect::into_owned)
+        })
+        .await
+    }
+
+    /// Plays a quick select slot, from 1 to 6.
+    pub async fn play_quick_select(&self, pid: PlayerId, id: u8) -> Result<(), Error> {
+        self.send(Command::PlayQuickSelect { pid, id })
+            .await
+            .map(drop)
+    }
+
+    /// Plays a stream from an absolute URL.
+    pub async fn play_stream(&self, pid: PlayerId, url: &str) -> Result<(), Error> {
+        self.send(Command::PlayStream { pid, url }).await.map(drop)
+    }
+
+    /// Plays an input, for example `inputs/aux_in_1`. `source` is the player
+    /// that has the input, if it is another player.
+    pub async fn play_input(
+        &self,
+        pid: PlayerId,
+        source: Option<PlayerId>,
+        input: &str,
+    ) -> Result<(), Error> {
+        self.send(Command::PlayInput { pid, source, input })
+            .await
+            .map(drop)
+    }
+
     /// Reads the players and their state again. Returns when all is read.
     /// It is an error if the players cannot be read.
     pub async fn refresh(&self) -> Result<(), Error> {
@@ -272,6 +397,20 @@ impl Heos {
         }
     }
 
+    /// Sends a command and parses its answer with `parse`.
+    async fn read<T>(
+        &self,
+        command: Command<'_>,
+        parse: impl FnOnce(&Response<'_>) -> Result<T, ProtoError>,
+    ) -> Result<T, Error> {
+        let name = command.name();
+        let answer = self.send(command).await?;
+        parse(&answer.response()).map_err(|source| Error::Protocol {
+            command: name,
+            source,
+        })
+    }
+
     /// Passes a request to the task. A request is refused while there is no
     /// connection: it would be sent late, after a connect.
     async fn request(&self, request: Request) -> Result<(), Error> {
@@ -282,6 +421,30 @@ impl Heos {
             .send(request)
             .await
             .map_err(|_| Error::NotConnected)
+    }
+}
+
+/// The list in the payload and the count from the message.
+fn page<'a, T: Deserialize<'a>, U>(
+    response: &Response<'a>,
+    own: fn(T) -> U,
+) -> Result<Page<U>, ProtoError> {
+    Ok(Page {
+        items: list(response, own)?,
+        count: response.count(),
+    })
+}
+
+/// The list in the payload, with `own` applied to each item. No payload is
+/// an empty list.
+fn list<'a, T: Deserialize<'a>, U>(
+    response: &Response<'a>,
+    own: fn(T) -> U,
+) -> Result<Vec<U>, ProtoError> {
+    match response.payload::<Vec<T>>() {
+        Ok(items) => Ok(items.into_iter().map(own).collect()),
+        Err(ProtoError::NoPayload) => Ok(Vec::new()),
+        Err(error) => Err(error),
     }
 }
 

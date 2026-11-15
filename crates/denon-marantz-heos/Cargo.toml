@@ -17,6 +17,7 @@ sensitive-logs = []
 
 [dependencies]
 denon-marantz-heos-proto.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tracing.workspace = true

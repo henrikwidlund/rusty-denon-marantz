@@ -1,6 +1,9 @@
 //! The `message` text of answers and events, and the encoding of its values.
 
 use std::borrow::Cow;
+use std::str::FromStr;
+
+use crate::error::Error;
 
 /// Fields of a `message` text: `key=value` parts, separated by `&`.
 ///
@@ -48,6 +51,30 @@ impl<'a> Message<'a> {
     #[must_use]
     pub fn has(&self, key: &str) -> bool {
         self.fields().any(|(name, _)| name == key)
+    }
+
+    /// Parses a required field with [`FromStr`]. Spaces around it are ignored.
+    pub(crate) fn parse<T: FromStr>(self, key: &'static str) -> Result<T, Error> {
+        self.parse_with(key, |value| value.trim().parse().ok())
+    }
+
+    /// Parses a required `on` or `off` field.
+    pub(crate) fn on_off(self, key: &'static str) -> Result<bool, Error> {
+        self.parse_with(key, |value| match value {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        })
+    }
+
+    /// Parses a required field with `parse`.
+    pub(crate) fn parse_with<T>(
+        self,
+        key: &'static str,
+        parse: impl FnOnce(&str) -> Option<T>,
+    ) -> Result<T, Error> {
+        let value = self.get(key).ok_or(Error::MissingField { field: key })?;
+        parse(&value).ok_or(Error::InvalidValue { field: key })
     }
 }
 
