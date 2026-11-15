@@ -5,7 +5,7 @@ const MAX_LINE: usize = 8192;
 
 /// Splits bytes from the receiver into lines that end with a carriage return.
 ///
-/// Lines that are not valid UTF-8 are dropped.
+/// In a line that is not valid UTF-8, each invalid part becomes `U+FFFD`.
 #[derive(Debug, Default)]
 pub struct LineDecoder {
     pending: Vec<u8>,
@@ -62,10 +62,9 @@ impl LineDecoder {
     }
 }
 
+/// Only a line that is not valid UTF-8 is copied.
 fn emit(line: &[u8], on_line: &mut impl FnMut(&str)) {
-    if let Ok(line) = core::str::from_utf8(line) {
-        on_line(line);
-    }
+    on_line(&String::from_utf8_lossy(line));
 }
 
 #[cfg(test)]
@@ -112,11 +111,19 @@ mod tests {
     }
 
     #[test]
-    fn drops_invalid_utf8_and_continues() {
+    fn replaces_invalid_utf8_and_continues() {
         let mut decoder = LineDecoder::new();
-        assert_eq!(lines(&mut decoder, b"\xff\xfe\rPWON\r"), ["PWON"]);
+        assert_eq!(
+            lines(&mut decoder, b"\xff\xfe\rPWON\r"),
+            ["\u{fffd}\u{fffd}", "PWON"]
+        );
         assert_eq!(lines(&mut decoder, b"\xff"), NONE);
-        assert_eq!(lines(&mut decoder, b"\xfe\rMV43\r"), ["MV43"]);
+        assert_eq!(
+            lines(&mut decoder, b"\xfe\rMV43\r"),
+            ["\u{fffd}\u{fffd}", "MV43"]
+        );
+        // A Latin-1 letter in a title keeps the rest of the line.
+        assert_eq!(lines(&mut decoder, b"NSE1Bj\xf6rk\r"), ["NSE1Bj\u{fffd}rk"]);
     }
 
     #[test]
