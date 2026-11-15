@@ -359,6 +359,9 @@ mod tests {
         assert_eq!(parse("Z3OFF"), Some((EventZone::Zone3, Z3, "OFF")));
         assert_eq!(parse("Z2CD"), Some((EventZone::Zone2, Si, "CD")));
         assert_eq!(parse("Z3SAT/CBL"), Some((EventZone::Zone3, Si, "SAT/CBL")));
+        assert_eq!(parse("Z2GAME1"), Some((EventZone::Zone2, Si, "GAME1")));
+        assert_eq!(parse("Z3GAME2"), Some((EventZone::Zone3, Si, "GAME2")));
+        assert_eq!(parse("Z28K"), Some((EventZone::Zone2, Si, "8K")));
         assert_eq!(parse("Z243"), Some((EventZone::Zone2, Mv, "43")));
         assert_eq!(parse("Z3435"), Some((EventZone::Zone3, Mv, "435")));
         assert_eq!(parse("Z2MUON"), Some((EventZone::Zone2, Mu, "ON")));
