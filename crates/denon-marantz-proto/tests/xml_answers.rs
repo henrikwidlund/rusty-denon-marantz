@@ -192,6 +192,24 @@ fn device_info_tells_the_tuner() {
 }
 
 #[test]
+fn device_info_tells_the_quick_select_count() {
+    let cases = [
+        ("AVC-A10H-Deviceinfo-8080.xml", Some(4)),
+        ("AV7703-Deviceinfo-8080.xml", Some(4)),
+        ("AVR-X1100W-Deviceinfo.xml", Some(4)),
+        // `Control` 0: no quick select.
+        ("DRA-N4-Deviceinfo.xml", Some(0)),
+        // The file does not say.
+        ("NR1604-Deviceinfo.xml", None),
+    ];
+    for (name, expected) in cases {
+        let body = read_bytes(&format!("xml/{name}"));
+        let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(info.quick_select_count, expected, "{name}");
+    }
+}
+
+#[test]
 fn device_description_of_a_real_receiver() {
     let body = read_bytes("xml/AVR-X1600H-description.xml");
     let description = DeviceDescription::parse(&body).unwrap();

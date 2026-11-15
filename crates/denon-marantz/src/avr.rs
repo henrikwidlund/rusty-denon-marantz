@@ -145,6 +145,10 @@ pub struct Info {
     pub dirac_live: bool,
     /// What the device information says about a tuner.
     pub tuner: TunerInfo,
+    /// Number of quick selects (smart selects on Marantz) that the device
+    /// information lists. `0` if it says that there are none, `None` if it
+    /// does not say. A receiver can accept more than it lists.
+    pub quick_select_count: Option<u8>,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
     pub zones: Vec<Zone>,
@@ -1506,6 +1510,7 @@ impl AvrBuilder {
             mac_address: owned(device_info.mac_address.as_ref()),
             dirac_live: device_info.dirac_live,
             tuner: device_info.tuner,
+            quick_select_count: device_info.quick_select_count,
             zones: Zone::ALL[..zone_count].to_vec(),
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");

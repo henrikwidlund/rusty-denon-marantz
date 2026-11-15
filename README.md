@@ -35,6 +35,7 @@ state again.
 - What plays: title, artist, album and station of network audio and HD radio,
   band and frequency of the tuner, and the address of the picture. A receiver
   that uses HEOS for network audio does not give this.
+- How many quick selects the receiver lists (`Info::quick_select_count`).
 - Whether the receiver has a tuner and which bands it has (`Info::tuner`).
   Receivers older than about 2013 do not say, and newer receivers do not list
   the bands.

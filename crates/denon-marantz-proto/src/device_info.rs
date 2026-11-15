@@ -27,6 +27,10 @@ pub struct DeviceInfo<'a> {
     pub mac_address: Option<Cow<'a, str>>,
     /// What the file says about a tuner.
     pub tuner: TunerInfo,
+    /// Number of quick selects (smart selects on Marantz) that the file
+    /// lists. `0` if it says that there are none, `None` if it does not say.
+    /// A receiver can accept more than it lists.
+    pub quick_select_count: Option<u8>,
 }
 
 /// What `Deviceinfo.xml` says about a tuner.
@@ -150,6 +154,17 @@ impl TunerInfo {
     }
 }
 
+/// Reads `MaxQuickSelect` from the first `QuickSelect` element. Each zone has
+/// one, and in all captures they are the same. `Control` 0 means none.
+fn quick_select_count(root: Node<'_>) -> Option<u8> {
+    let block = root.descendants("QuickSelect").next()?.node();
+    let text = |name: &str| block.child(name).and_then(|child| child.node().text());
+    if text("Control").as_deref().map(str::trim) == Some("0") {
+        return Some(0);
+    }
+    text("MaxQuickSelect").and_then(|count| count.trim().parse().ok())
+}
+
 /// Versions of the communication API that AVR-X receivers report.
 const AVR_X_COMM_API_VERSIONS: [&str; 5] = ["0210", "0220", "0250", "0300", "0301"];
 
@@ -188,6 +203,7 @@ impl<'a> DeviceInfo<'a> {
             category: text("CategoryName"),
             mac_address: text("MacAddress"),
             tuner: TunerInfo::parse(root),
+            quick_select_count: quick_select_count(root),
         })
     }
 
@@ -202,6 +218,7 @@ impl<'a> DeviceInfo<'a> {
             category: self.category.map(|v| Cow::Owned(v.into_owned())),
             mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
             tuner: self.tuner,
+            quick_select_count: self.quick_select_count,
         }
     }
 
@@ -276,6 +293,7 @@ mod tests {
         assert_eq!(info.device_zones, None);
         assert!(!info.dirac_live);
         assert_eq!(info.tuner, TunerInfo::Unknown);
+        assert_eq!(info.quick_select_count, None);
         assert!(!info.is_avr_x());
     }
 
@@ -308,6 +326,24 @@ mod tests {
                        <Source><RelatedFunc>TunerOperation</RelatedFunc></Source></Device_Info>";
         let linked = DeviceInfo::parse(linked).unwrap().tuner;
         assert_eq!(linked, TunerInfo::Present(TunerBands::default()));
+    }
+
+    #[test]
+    fn quick_select_count_from_the_block() {
+        let count = |block: &str| {
+            let xml = format!("<Device_Info><QuickSelect>{block}</QuickSelect></Device_Info>");
+            DeviceInfo::parse(xml.as_bytes())
+                .unwrap()
+                .quick_select_count
+        };
+        assert_eq!(
+            count("<Control>1</Control><MaxQuickSelect> 5 </MaxQuickSelect>"),
+            Some(5)
+        );
+        assert_eq!(count("<Control>0</Control>"), Some(0));
+        assert_eq!(count("<Control>1</Control>"), None);
+        assert_eq!(count("<MaxQuickSelect>x</MaxQuickSelect>"), None);
+        assert_eq!(count("<MaxQuickSelect>300</MaxQuickSelect>"), None);
     }
 
     #[test]

@@ -150,6 +150,8 @@ impl<'a> ZoneControl<'a> {
 
     /// Calls quick select 1 to 6 of the zone. A Marantz receiver calls it
     /// smart select. Some models have only 5.
+    /// [`Info::quick_select_count`](crate::Info::quick_select_count) says how
+    /// many the receiver lists.
     ///
     /// # Errors
     ///
