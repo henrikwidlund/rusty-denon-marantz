@@ -1,0 +1,29 @@
+[package]
+name = "denon-marantz-heos"
+description = "Async client for the HEOS CLI of Denon and Marantz products: what plays, play state and transport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["denon", "marantz", "heos", "home-automation"]
+categories = ["network-programming", "api-bindings"]
+exclude = ["/tests"]
+
+[features]
+# Full lines in trace logs. Can contain personal data.
+sensitive-logs = []
+
+[dependencies]
+denon-marantz-heos-proto.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+
+[lints]
+workspace = true

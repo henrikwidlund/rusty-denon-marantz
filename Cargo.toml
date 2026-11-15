@@ -13,8 +13,11 @@ repository = "https://github.com/henrikwidlund/rusty-denon-marantz"
 [workspace.dependencies]
 denon-marantz-proto = { path = "crates/denon-marantz-proto", version = "0.1.0" }
 denon-marantz-discovery = { path = "crates/denon-marantz-discovery", version = "0.1.0" }
+denon-marantz-heos-proto = { path = "crates/denon-marantz-heos-proto", version = "0.1.0" }
 thiserror = "2"
 quick-xml = "0.42"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
 proptest = "1"
 socket2 = "0.6"
 allocation-counter = "0.8"
