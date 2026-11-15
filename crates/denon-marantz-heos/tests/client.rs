@@ -314,7 +314,13 @@ async fn connect_fails_without_a_device() {
     let error = Heos::connect_with("127.0.0.1", config(port))
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::Network { .. }), "{error:?}");
+    // Windows reports a refused connection after about two seconds, so the
+    // short timeout of the test can come first.
+    assert!(
+        matches!(error, Error::Network { .. })
+            || (cfg!(windows) && matches!(error, Error::Timeout { .. })),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
