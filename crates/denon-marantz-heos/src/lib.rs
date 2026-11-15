@@ -1,7 +1,9 @@
 //! Async client for the HEOS CLI of Denon and Marantz products.
 //!
-//! It reads what plays, the play state and the position, and it controls the
-//! transport. Volume and mute are not here: on an AV receiver, HEOS mixes the
+//! It reads what plays, the play state, the position and the repeat and
+//! shuffle modes, and it controls the transport. It also reads and plays the
+//! queue, HEOS Favorites and quick selects, and plays streams and inputs.
+//! Volume and mute are not here: on an AV receiver, HEOS mixes the
 //! volume of the zones, so use telnet or HTTP for them.
 //!
 //! The protocol is in the `denon-marantz-heos-proto` crate, also as
@@ -40,11 +42,11 @@ mod error;
 mod state;
 mod worker;
 
-pub use client::{Answer, Heos, HeosConfig};
+pub use client::{Answer, Heos, HeosConfig, Page};
 pub use denon_marantz_heos_proto as proto;
 pub use denon_marantz_heos_proto::{
-    Command, Controls, Event, MediaType, NowPlaying, PlayState, Player, PlayerId, Progress,
-    SourceId,
+    BrowseItem, Command, Controls, Event, MediaType, NowPlaying, PlayMode, PlayState, Player,
+    PlayerId, Progress, QueueId, QueueItem, QuickSelect, RepeatMode, SourceId,
 };
 pub use error::Error;
 pub use state::{Change, HeosStatus, PlayerState};

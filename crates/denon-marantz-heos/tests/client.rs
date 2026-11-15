@@ -5,28 +5,14 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    Fake, IP, PID, Reply, answer, config, counter, event, failure, from_data, name, now_playing,
-    wait_until,
+    Fake, IP, PID, Reply, answer, config, connect, counter, event, failure, from_data, name,
+    next_change, now_playing, wait_until,
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
     Change, Command, Error, Event, Heos, HeosConfig, HeosStatus, PlayState, PlayerId, Progress,
+    RepeatMode,
 };
-use tokio::sync::broadcast;
-
-async fn connect(fake: &Fake) -> Heos {
-    Heos::connect_with("127.0.0.1", config(fake.port))
-        .await
-        .unwrap()
-}
-
-/// Waits for the next change. Panics after two seconds.
-async fn next_change(changes: &mut broadcast::Receiver<Change>) -> Change {
-    tokio::time::timeout(Duration::from_secs(2), changes.recv())
-        .await
-        .expect("no change")
-        .unwrap()
-}
 
 #[tokio::test]
 async fn connect_reads_the_players_and_their_state() {
@@ -60,8 +46,11 @@ async fn connect_reads_the_players_and_their_state() {
             "heos://player/get_players",
             "heos://player/get_play_state?pid=1234567",
             "heos://player/get_now_playing_media?pid=1234567",
+            "heos://player/get_play_mode?pid=1234567",
         ]
     );
+    assert_eq!(state.repeat, Some(RepeatMode::Off));
+    assert_eq!(state.shuffle, Some(false));
     assert_eq!(fake.connections(), 2);
     heos.close().await;
 }

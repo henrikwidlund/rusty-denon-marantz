@@ -22,8 +22,8 @@ pub use event::Event;
 pub use message::{Message, decode};
 pub use response::{ErrorCode, Failure, Response, Status};
 pub use types::{
-    MediaType, NowPlaying, PlayState, Player, PlayerId, Progress, QueueId, QuickSelect, RepeatMode,
-    SourceId,
+    BrowseItem, MediaType, NowPlaying, PlayMode, PlayState, Player, PlayerId, Progress, QueueId,
+    QueueItem, QuickSelect, RepeatMode, SourceId,
 };
 
 /// TCP port of the HEOS CLI.

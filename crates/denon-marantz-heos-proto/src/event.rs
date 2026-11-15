@@ -1,7 +1,6 @@
 //! Change events.
 
 use std::borrow::Cow;
-use std::str::FromStr;
 
 use crate::error::Error;
 use crate::message::Message;
@@ -82,21 +81,21 @@ impl<'a> Event<'a> {
     /// Parses an event from its name without the `event/` prefix and its
     /// message.
     pub fn parse(name: &'a str, message: Message<'a>) -> Result<Self, Error> {
-        let pid = || field::<PlayerId>(message, "pid");
+        let pid = || message.parse::<PlayerId>("pid");
         Ok(match name {
             "sources_changed" => Self::SourcesChanged,
             "players_changed" => Self::PlayersChanged,
             "groups_changed" => Self::GroupsChanged,
             "player_state_changed" => Self::PlayerStateChanged {
                 pid: pid()?,
-                state: named(message, "state", PlayState::from_name)?,
+                state: message.parse_with("state", PlayState::from_name)?,
             },
             "player_now_playing_changed" => Self::NowPlayingChanged { pid: pid()? },
             "player_now_playing_progress" => Self::NowPlayingProgress {
                 pid: pid()?,
                 progress: Progress {
-                    position_ms: field(message, "cur_pos")?,
-                    duration_ms: field(message, "duration")?,
+                    position_ms: message.parse("cur_pos")?,
+                    duration_ms: message.parse("duration")?,
                 },
             },
             "player_playback_error" => Self::PlaybackError {
@@ -106,11 +105,11 @@ impl<'a> Event<'a> {
             "player_queue_changed" => Self::QueueChanged { pid: pid()? },
             "repeat_mode_changed" => Self::RepeatModeChanged {
                 pid: pid()?,
-                repeat: named(message, "repeat", RepeatMode::from_name)?,
+                repeat: message.parse_with("repeat", RepeatMode::from_name)?,
             },
             "shuffle_mode_changed" => Self::ShuffleModeChanged {
                 pid: pid()?,
-                shuffle: on_off(message, "shuffle")?,
+                shuffle: message.on_off("shuffle")?,
             },
             "user_changed" => Self::UserChanged {
                 user: if message.has("signed_in") {
@@ -169,27 +168,6 @@ impl<'a> Event<'a> {
             },
         }
     }
-}
-
-fn field<T: FromStr>(message: Message<'_>, key: &'static str) -> Result<T, Error> {
-    named(message, key, |value| value.trim().parse().ok())
-}
-
-fn on_off(message: Message<'_>, key: &'static str) -> Result<bool, Error> {
-    named(message, key, |value| match value {
-        "on" => Some(true),
-        "off" => Some(false),
-        _ => None,
-    })
-}
-
-fn named<T>(
-    message: Message<'_>,
-    key: &'static str,
-    parse: impl FnOnce(&str) -> Option<T>,
-) -> Result<T, Error> {
-    let value = message.get(key).ok_or(Error::MissingField { field: key })?;
-    parse(&value).ok_or(Error::InvalidValue { field: key })
 }
 
 #[cfg(test)]

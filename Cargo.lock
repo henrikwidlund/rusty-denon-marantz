@@ -282,6 +282,7 @@ name = "denon-marantz-heos"
 version = "0.1.0"
 dependencies = [
  "denon-marantz-heos-proto",
+ "serde",
  "thiserror",
  "tokio",
  "tracing",

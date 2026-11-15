@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use denon_marantz_heos::{HeosConfig, PlayerId};
+use denon_marantz_heos::{Change, Heos, HeosConfig, PlayerId};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::broadcast;
@@ -30,6 +30,7 @@ pub(crate) const fn config(port: u16) -> HeosConfig {
         connect_timeout: Duration::from_millis(500),
         write_timeout: Duration::from_millis(500),
         command_timeout: Duration::from_millis(500),
+        slow_command_limit: Duration::from_millis(1200),
         keep_alive: Duration::from_secs(10),
         reconnect_min: Duration::from_millis(50),
         reconnect_max: Duration::from_millis(200),
@@ -38,13 +39,23 @@ pub(crate) const fn config(port: u16) -> HeosConfig {
 }
 
 /// The first answer in [`DATA`] to a command, for example
-/// `player/get_play_state`.
+/// `player/get_play_state`. "Command under process" lines are skipped.
 pub(crate) fn answer(command: &str) -> String {
+    answer_lines(command).pop().unwrap()
+}
+
+/// The lines from [`DATA`] up to the first answer to a command: "command
+/// under process" lines, then the answer.
+pub(crate) fn answer_lines(command: &str) -> Vec<String> {
     let needle = format!("\"command\": \"{command}\"");
-    DATA.lines()
-        .find(|line| line.contains(&needle))
-        .unwrap_or_else(|| panic!("no answer to {command}"))
-        .to_owned()
+    let mut lines = Vec::new();
+    for line in DATA.lines().filter(|line| line.contains(&needle)) {
+        lines.push(line.to_owned());
+        if !line.contains("command under process") {
+            return lines;
+        }
+    }
+    panic!("no answer to {command}");
 }
 
 /// The answer from [`DATA`] to `get_now_playing_media` with this song. An
@@ -68,6 +79,23 @@ pub(crate) fn event(name: &str, message: &str) -> String {
     format!(r#"{{"heos": {{"command": "event/{name}", "message": "{message}"}}}}"#)
 }
 
+/// A success answer that repeats the arguments of the command line in its
+/// message, as the device does.
+pub(crate) fn echo(line: &str) -> String {
+    let message = line.split_once('?').map_or("", |(_, arguments)| arguments);
+    format!(
+        r#"{{"heos": {{"command": "{}", "result": "success", "message": "{message}"}}}}"#,
+        name(line)
+    )
+}
+
+/// A "command under process" answer.
+pub(crate) fn under_process(command: &str) -> String {
+    format!(
+        r#"{{"heos": {{"command": "{command}", "result": "success", "message": "command under process"}}}}"#
+    )
+}
+
 /// A failed answer.
 pub(crate) fn failure(command: &str, message: &str) -> String {
     format!(r#"{{"heos": {{"command": "{command}", "result": "fail", "message": "{message}"}}}}"#)
@@ -83,13 +111,15 @@ pub(crate) fn name(line: &str) -> &str {
 pub(crate) enum Reply {
     /// Send these lines.
     Lines(Vec<String>),
+    /// Send these lines, with a pause before each one.
+    Paced(Duration, Vec<String>),
     /// Never answer.
     Hang,
 }
 
 /// The answer from [`DATA`] to every command.
 pub(crate) fn from_data(line: &str) -> Reply {
-    Reply::Lines(vec![answer(name(line))])
+    Reply::Lines(answer_lines(name(line)))
 }
 
 pub(crate) struct Fake {
@@ -178,6 +208,7 @@ async fn serve(
             }
         };
         let mut register = false;
+        let mut pause = Duration::ZERO;
         let out = tokio::select! {
             _ = close.recv() => return,
             line = lines.next_line() => {
@@ -192,6 +223,10 @@ async fn serve(
                 } else {
                     match handler(&line) {
                         Reply::Lines(lines) => lines,
+                        Reply::Paced(wait, lines) => {
+                            pause = wait;
+                            lines
+                        }
                         Reply::Hang => Vec::new(),
                     }
                 }
@@ -202,6 +237,7 @@ async fn serve(
             registered = Some(events.subscribe());
         }
         for line in out {
+            tokio::time::sleep(pause).await;
             if write
                 .write_all(format!("{line}\r\n").as_bytes())
                 .await
@@ -211,6 +247,21 @@ async fn serve(
             }
         }
     }
+}
+
+/// Connects to the fake device with [`config`].
+pub(crate) async fn connect(fake: &Fake) -> Heos {
+    Heos::connect_with("127.0.0.1", config(fake.port))
+        .await
+        .unwrap()
+}
+
+/// Waits for the next change. Panics after two seconds.
+pub(crate) async fn next_change(changes: &mut broadcast::Receiver<Change>) -> Change {
+    tokio::time::timeout(Duration::from_secs(2), changes.recv())
+        .await
+        .expect("no change")
+        .unwrap()
 }
 
 /// Waits until `done` is true. Panics after two seconds.

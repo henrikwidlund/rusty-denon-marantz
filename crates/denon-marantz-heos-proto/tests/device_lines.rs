@@ -4,8 +4,8 @@
 //! placeholders.
 
 use denon_marantz_heos_proto::{
-    Controls, Event, LineDecoder, MediaType, NowPlaying, PlayState, Player, PlayerId, Progress,
-    QueueId, QuickSelect, Response, SourceId, Status,
+    BrowseItem, Controls, Event, LineDecoder, MediaType, NowPlaying, PlayMode, PlayState, Player,
+    PlayerId, Progress, QueueId, QueueItem, QuickSelect, RepeatMode, Response, SourceId, Status,
 };
 
 const DATA: &str = include_str!("data/a10h.jsonl");
@@ -29,7 +29,10 @@ fn every_line_parses() {
                 assert_eq!(event.pid(), Some(PID), "{line}");
                 events += 1;
             }
-            None => assert_eq!(response.status(), Status::Success, "{line}"),
+            None => assert!(
+                matches!(response.status(), Status::Success | Status::UnderProcess),
+                "{line}"
+            ),
         }
     }
     assert!(events > 5);
@@ -162,4 +165,71 @@ fn playback_error_text() {
         panic!("not a playback error");
     };
     assert_eq!(error, "Playback error. Could not decode the audio stream");
+}
+
+#[test]
+fn queue() {
+    let response = find("player/get_queue").next().unwrap();
+    let items: Vec<QueueItem<'_>> = response.payload().unwrap();
+    assert_eq!(response.count(), Some(3));
+    assert_eq!(items.len(), 3);
+    let first = items[0].clone().into_owned();
+    assert_eq!(first.qid, QueueId(1));
+    assert_eq!(first.song, "Track 2.wav");
+    assert_eq!(first.artist, "");
+    assert!(first.mid.is_some() && first.album_id.is_some());
+}
+
+#[test]
+fn play_mode() {
+    let read = find("player/get_play_mode").next().unwrap();
+    assert_eq!(
+        read.play_mode(),
+        Ok(PlayMode {
+            repeat: RepeatMode::Off,
+            shuffle: false,
+        })
+    );
+    let set = find("player/set_play_mode").next().unwrap();
+    assert_eq!(
+        set.play_mode(),
+        Ok(PlayMode {
+            repeat: RepeatMode::OnOne,
+            shuffle: true,
+        })
+    );
+    let repeat = find("event/repeat_mode_changed").next().unwrap();
+    assert_eq!(
+        repeat.event().unwrap(),
+        Some(Event::RepeatModeChanged {
+            pid: PID,
+            repeat: RepeatMode::OnOne,
+        })
+    );
+    let shuffle = find("event/shuffle_mode_changed").next().unwrap();
+    assert_eq!(
+        shuffle.event().unwrap(),
+        Some(Event::ShuffleModeChanged {
+            pid: PID,
+            shuffle: true,
+        })
+    );
+}
+
+#[test]
+fn favorites_come_after_under_process() {
+    let mut lines = find("browse/browse");
+    assert_eq!(lines.next().unwrap().status(), Status::UnderProcess);
+    let response = lines.next().unwrap();
+    assert_eq!(response.status(), Status::Success);
+    assert_eq!(response.count(), Some(2));
+    let items: Vec<BrowseItem<'_>> = response.payload().unwrap();
+    let names: Vec<_> = items.iter().map(|item| &*item.name).collect();
+    assert_eq!(names, ["Radio A", "Radio B"]);
+    let second = items[1].clone().into_owned();
+    assert_eq!(second.media_type, MediaType::Station);
+    assert_eq!(second.mid.as_deref(), Some("s2000"));
+    assert_eq!(second.image_url, "");
+    assert_eq!(second.cid, None);
+    assert!(second.playable && !second.container);
 }

@@ -1,7 +1,7 @@
 //! Bytes from a HEOS connection in chunks: decoder, lines, events and payloads.
 #![no_main]
 
-use denon_marantz_heos_proto::{LineDecoder, Player, QuickSelect, Response};
+use denon_marantz_heos_proto::{BrowseItem, LineDecoder, Player, QueueItem, QuickSelect, Response};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -25,6 +25,14 @@ fuzz_target!(|data: &[u8]| {
             let _ = response.payload::<Vec<Player<'_>>>();
             let _ = response.payload::<Player<'_>>();
             let _ = response.payload::<Vec<QuickSelect<'_>>>();
+            let _ = response.payload::<Vec<QueueItem<'_>>>().map(|items| {
+                items.into_iter().map(QueueItem::into_owned).count()
+            });
+            let _ = response.payload::<Vec<BrowseItem<'_>>>().map(|items| {
+                items.into_iter().map(BrowseItem::into_owned).count()
+            });
+            let _ = response.play_mode();
+            let _ = response.count();
         });
     }
 });
