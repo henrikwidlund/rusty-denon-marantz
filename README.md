@@ -237,7 +237,9 @@ have not run on a receiver:
 - Receivers without `AppCommand`, which are read over the status pages. They
   are tested with captured pages and fake receivers.
 - Tone control and `AppCommand0300.xml` on receivers older than the 2016
-  models. They are asked as on newer models. If a request with tone control
+  models. A receiver from about 2015 lists in `Deviceinfo.xml` which of these
+  queries it answers, and only those are sent. Older receivers do not list
+  them, so they are asked as on newer models. If a request with tone control
   fails on such a receiver and works without it, tone control is not asked
   again.
 - The tuner status page while the tuner plays. All captured pages are from

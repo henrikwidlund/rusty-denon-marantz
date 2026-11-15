@@ -31,9 +31,103 @@ pub struct DeviceInfo<'a> {
     /// lists. `0` if it says that there are none, `None` if it does not say.
     /// A receiver can accept more than it lists.
     pub quick_select_count: Option<u8>,
-    /// The file lists `GetOutputSettings`, so the receiver answers it in
-    /// `AppCommand0300.xml`.
+    /// The queries that the file lists. `None` if it has no list, as on
+    /// receivers older than about 2015.
+    pub queries: Option<ListedQueries>,
+}
+
+/// The `AppCommand` queries that `Deviceinfo.xml` lists as supported. Each
+/// field is true if the file lists the query with the value 1.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+#[expect(clippy::struct_excessive_bools, reason = "each field is one query")]
+pub struct ListedQueries {
+    /// `GetToneControl`.
+    pub tone_control: bool,
+    /// `GetAudyssey` in `AppCommand0300.xml`.
+    pub audyssey: bool,
+    /// `GetVideoInfo` in `AppCommand0300.xml`.
+    pub video_info: bool,
+    /// `GetAudioInfo` in `AppCommand0300.xml`.
+    pub audio_info: bool,
+    /// `GetInputSignal` in `AppCommand0300.xml`.
+    pub input_signal: bool,
+    /// `GetActiveSpeaker` in `AppCommand0300.xml`.
+    pub active_speaker: bool,
+    /// `GetOutputSettings` in `AppCommand0300.xml`.
     pub output_settings: bool,
+}
+
+/// Names of the queries of [`ListedQueries`].
+const QUERY_NAMES: [&str; 7] = [
+    "GetToneControl",
+    "GetAudyssey",
+    "GetVideoInfo",
+    "GetAudioInfo",
+    "GetInputSignal",
+    "GetActiveSpeaker",
+    "GetOutputSettings",
+];
+
+impl ListedQueries {
+    /// Returns true if the file lists the query with this name, for example
+    /// `GetVideoInfo`. False for a name that this type does not know.
+    #[must_use]
+    pub fn lists(&self, name: &str) -> bool {
+        let mut copy = *self;
+        copy.field_mut(name).is_some_and(|listed| *listed)
+    }
+
+    fn field_mut(&mut self, name: &str) -> Option<&mut bool> {
+        Some(match name {
+            "GetToneControl" => &mut self.tone_control,
+            "GetAudyssey" => &mut self.audyssey,
+            "GetVideoInfo" => &mut self.video_info,
+            "GetAudioInfo" => &mut self.audio_info,
+            "GetInputSignal" => &mut self.input_signal,
+            "GetActiveSpeaker" => &mut self.active_speaker,
+            "GetOutputSettings" => &mut self.output_settings,
+            _ => return None,
+        })
+    }
+
+    /// Reads the `Commands` of the blocks under `DeviceCapabilities/Setup`.
+    /// The list counts only if it has `StatusInfo`: older files have some of
+    /// the blocks, but do not list the queries. Tone control is listed for the
+    /// receiver or, on some models, only for a zone, so the whole file is
+    /// searched for it.
+    fn parse(root: Node<'_>) -> Option<Self> {
+        let setup = root.child("DeviceCapabilities")?.node().child("Setup")?;
+        let mut queries = Self::default();
+        let mut has_status_info = false;
+        for block in setup.node().children() {
+            has_status_info |= block.is("StatusInfo");
+            if !["StatusInfo", "Audyssey", "OutputSettings"]
+                .iter()
+                .any(|name| block.is(name))
+            {
+                continue;
+            }
+            let Some(list) = block.node().child("Commands") else {
+                continue;
+            };
+            for query in list.node().children() {
+                let Some(name) = QUERY_NAMES.iter().find(|name| query.is(name)) else {
+                    continue;
+                };
+                if let Some(listed) = queries.field_mut(name) {
+                    *listed = query.node().text().is_some_and(|text| text.trim() == "1");
+                }
+            }
+        }
+        if !has_status_info {
+            return None;
+        }
+        queries.tone_control = root
+            .descendants("GetToneControl")
+            .any(|query| query.node().text().is_some_and(|text| text.trim() == "1"));
+        Some(queries)
+    }
 }
 
 /// What `Deviceinfo.xml` says about a tuner.
@@ -207,11 +301,7 @@ impl<'a> DeviceInfo<'a> {
             mac_address: text("MacAddress"),
             tuner: TunerInfo::parse(root),
             quick_select_count: quick_select_count(root),
-            output_settings: root
-                .descendants("GetOutputSettings")
-                .next()
-                .and_then(|command| command.node().text())
-                .is_some_and(|text| text.trim() == "1"),
+            queries: ListedQueries::parse(root),
         })
     }
 
@@ -227,7 +317,7 @@ impl<'a> DeviceInfo<'a> {
             mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
             tuner: self.tuner,
             quick_select_count: self.quick_select_count,
-            output_settings: self.output_settings,
+            queries: self.queries,
         }
     }
 
@@ -303,7 +393,7 @@ mod tests {
         assert!(!info.dirac_live);
         assert_eq!(info.tuner, TunerInfo::Unknown);
         assert_eq!(info.quick_select_count, None);
-        assert!(!info.output_settings);
+        assert_eq!(info.queries, None);
         assert!(!info.is_avr_x());
     }
 

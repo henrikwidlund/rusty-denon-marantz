@@ -15,11 +15,11 @@ use denon_marantz_proto::telnet::QueryGroup;
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
     DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
-    InputAssignment, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch,
-    PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH,
-    SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State, SystemSettings,
-    TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT, XLR_ASSIGN_PATH,
-    XlrAssign, Zone,
+    InputAssignment, ListedQueries, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH,
+    Playback2Ch, PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH,
+    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State,
+    SystemSettings, TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT,
+    XLR_ASSIGN_PATH, XlrAssign, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -79,9 +79,9 @@ const UPDATE_COMMANDS: [Definition; 13] = [
 const UPDATE_COMMANDS_WITHOUT_TONE: &[Definition] = UPDATE_COMMANDS.split_last().unwrap().1;
 
 /// The queries of `AppCommand0300.xml` that [`Avr::update_signal_and_settings`]
-/// sends: the Audyssey settings, the video and audio signal, the channels of
-/// the signal and of the speakers, and the HDMI output. The last one only if
-/// the receiver lists it, see [`appcommand0300_commands`].
+/// can send: the Audyssey settings, the video and audio signal, the channels
+/// of the signal and of the speakers, and the HDMI output. See
+/// [`appcommand0300_commands`] for those that a receiver gets.
 const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
     appcommand::GET_AUDYSSEY,
     appcommand::GET_VIDEO_INFO,
@@ -94,18 +94,20 @@ const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
 // `Avr::update_signal_and_settings` keeps one bit for each command in a `u8`.
 const _: () = assert!(APPCOMMAND0300_COMMANDS.len() <= 8);
 
-/// [`APPCOMMAND0300_COMMANDS`] without the HDMI output.
-const APPCOMMAND0300_COMMANDS_WITHOUT_OUTPUT: &[Definition] =
-    APPCOMMAND0300_COMMANDS.split_last().unwrap().1;
-
 /// The queries of [`APPCOMMAND0300_COMMANDS`] that the receiver answers. A
 /// receiver can fail the whole request for a query that it does not know.
-const fn appcommand0300_commands(info: &Info) -> &'static [Definition] {
-    if info.hdmi_output_over_http {
-        &APPCOMMAND0300_COMMANDS
-    } else {
-        APPCOMMAND0300_COMMANDS_WITHOUT_OUTPUT
-    }
+/// If `Deviceinfo.xml` lists the queries, only those are sent. If not, all
+/// but the HDMI output are sent, which only newer receivers have.
+fn appcommand0300_commands(queries: Option<&ListedQueries>) -> Box<[Definition]> {
+    APPCOMMAND0300_COMMANDS
+        .into_iter()
+        .filter(|definition| {
+            queries.map_or_else(
+                || *definition != appcommand::GET_OUTPUT_SETTINGS,
+                |queries| queries.lists(definition.cmd.name.unwrap_or_default()),
+            )
+        })
+        .collect()
 }
 
 /// The commands that read what telnet does not report. [`Avr::refresh`] sends
@@ -230,7 +232,10 @@ pub struct Avr {
     /// The request body of [`HTTP_ONLY_WITH_DEVICE_COMMANDS`].
     #[cfg(feature = "telnet")]
     http_only_with_device_body: Bytes,
-    /// The request body of [`appcommand0300_commands`].
+    /// The queries of [`Avr::update_signal_and_settings`], see
+    /// [`appcommand0300_commands`].
+    appcommand0300_commands: Box<[Definition]>,
+    /// The request body of `appcommand0300_commands`.
     appcommand0300_body: Bytes,
     /// Reads that the receiver does not answer.
     missing: Arc<Missing>,
@@ -258,16 +263,23 @@ struct Missing {
     /// A request with tone control failed, and the receiver may not have it.
     tone_control: AtomicBool,
     /// The receiver is older than the 2016 models, which all have tone
-    /// control.
+    /// control, and `Deviceinfo.xml` does not say if it has it.
     tone_control_optional: bool,
 }
 
 impl Missing {
-    fn new(receiver_type: ReceiverType) -> Self {
+    /// `queries` is what `Deviceinfo.xml` lists. If it lists nothing, tone
+    /// control is asked, and on `AvrX` receivers a failure can drop it.
+    /// `no_appcommand0300` is true if no query of that file is left to send.
+    fn new(
+        receiver_type: ReceiverType,
+        queries: Option<&ListedQueries>,
+        no_appcommand0300: bool,
+    ) -> Self {
         Self {
-            appcommand0300: AtomicBool::new(false),
-            tone_control: AtomicBool::new(false),
-            tone_control_optional: receiver_type == ReceiverType::AvrX,
+            appcommand0300: AtomicBool::new(no_appcommand0300),
+            tone_control: AtomicBool::new(queries.is_some_and(|queries| !queries.tone_control)),
+            tone_control_optional: queries.is_none() && receiver_type == ReceiverType::AvrX,
         }
     }
 
@@ -1196,11 +1208,14 @@ impl Avr {
     /// for Audyssey and the HDMI output, in the fields of
     /// [`DeviceState`](denon_marantz_proto::DeviceState).
     ///
-    /// Receivers that are read with `AppCommand` are asked. The result is
-    /// [`PageStatus::NotFound`] for another receiver and for a receiver that
-    /// answers 404, and then it is not asked again. Another refusal or an
-    /// answer that cannot be read gives [`PageStatus::Refused`] or
-    /// [`PageStatus::Unreadable`], and the next call asks again. An item of the
+    /// Receivers that are read with `AppCommand` are asked. If
+    /// `Deviceinfo.xml` lists the queries, as on receivers from about 2015,
+    /// only those are sent. The result is [`PageStatus::NotFound`] for
+    /// another receiver, for a receiver that lists none of the queries and
+    /// for a receiver that answers 404, and then it is not asked again.
+    /// Another refusal or an answer that cannot be read gives
+    /// [`PageStatus::Refused`] or [`PageStatus::Unreadable`], and the next
+    /// call asks again. An item of the
     /// answer with an error leaves its values as they are. A busy receiver can
     /// leave items out of the answer: the items that are there are used, and
     /// the values of the others stay as they are. A receiver that is
@@ -1230,7 +1245,7 @@ impl Avr {
                 Endpoint::AppCommand0300.path(),
                 self.appcommand0300_body.clone(),
                 |body| {
-                    let commands = appcommand0300_commands(&self.info);
+                    let commands = &*self.appcommand0300_commands;
                     // A busy receiver can leave items out.
                     let response = Response::parse_at_most(body, commands.len())?;
                     // One bit for each command with values in the answer.
@@ -1523,16 +1538,8 @@ impl AvrBuilder {
         let description = self.description(receiver_type).await?;
         let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
 
-        let brand = description
-            .as_ref()
-            .map_or_else(|| Brand::from_manufacturer(None), DeviceDescription::brand);
-        let friendly_name = friendly_name
-            .or_else(|| {
-                description
-                    .as_ref()
-                    .and_then(|d| owned(d.friendly_name.as_ref()))
-            })
-            .unwrap_or_else(|| format!("{} {DEFAULT_NAME}", brand.name()));
+        let (brand, friendly_name) = brand_and_name(description.as_ref(), friendly_name);
+        let appcommand0300_commands = appcommand0300_commands(device_info.queries.as_ref());
 
         let zone_count =
             usize::from(device_info.device_zones.unwrap_or(1)).clamp(1, Zone::ALL.len());
@@ -1555,18 +1562,21 @@ impl AvrBuilder {
             dirac_live: device_info.dirac_live,
             tuner: device_info.tuner,
             quick_select_count: device_info.quick_select_count,
-            hdmi_output_over_http: device_info.output_settings,
+            hdmi_output_over_http: appcommand0300_commands
+                .contains(&appcommand::GET_OUTPUT_SETTINGS),
             zones: Zone::ALL[..zone_count].to_vec(),
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
 
         let single_zone = device_info.device_zones == Some(1);
         let channels = Channels::new(State::new(single_zone));
-        let missing = Arc::new(Missing::new(receiver_type));
+        let missing = Arc::new(Missing::new(
+            receiver_type,
+            device_info.queries.as_ref(),
+            appcommand0300_commands.is_empty(),
+        ));
         let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
-        let appcommand0300_cmds = APPCOMMAND0300_COMMANDS.map(|definition| definition.cmd);
-        let appcommand0300_body =
-            request_body(&appcommand0300_cmds[..appcommand0300_commands(&info).len()])?;
+        let appcommand0300_body = definitions_body(&appcommand0300_commands)?;
         #[cfg(feature = "telnet")]
         let telnet = Telnet::new(self.telnet, self.background_pause, brand, single_zone);
         let follow_up = FollowUp::start(
@@ -1575,6 +1585,7 @@ impl AvrBuilder {
             &channels,
             &info,
             &missing,
+            &appcommand0300_commands,
             #[cfg(feature = "telnet")]
             telnet.watch_status(),
         )?;
@@ -1597,6 +1608,7 @@ impl AvrBuilder {
             http_only_with_device_body: request_body(
                 &HTTP_ONLY_WITH_DEVICE_COMMANDS.map(|definition| definition.cmd),
             )?,
+            appcommand0300_commands,
             appcommand0300_body,
             missing,
             signal_from_appcommand: AtomicBool::new(false),
@@ -1687,6 +1699,29 @@ async fn detect_update_method(
         .and_then(|body| parse_page(Some(body)))
         .and_then(|page| status_page::friendly_name(&page));
     Ok((UpdateMethod::StatusPages, name))
+}
+
+/// The brand from the description, and the name that the receiver gave, or
+/// else the one from the description, or else a name made from the brand.
+fn brand_and_name(
+    description: Option<&DeviceDescription<'_>>,
+    friendly_name: Option<String>,
+) -> (Brand, String) {
+    let brand =
+        description.map_or_else(|| Brand::from_manufacturer(None), DeviceDescription::brand);
+    let name = friendly_name
+        .or_else(|| description.and_then(|d| owned(d.friendly_name.as_ref())))
+        .unwrap_or_else(|| format!("{} {DEFAULT_NAME}", brand.name()));
+    (brand, name)
+}
+
+/// The request body of these commands.
+fn definitions_body(definitions: &[Definition]) -> Result<Bytes, Error> {
+    let cmds: Vec<_> = definitions
+        .iter()
+        .map(|definition| definition.cmd)
+        .collect();
+    request_body(&cmds)
 }
 
 /// The request body for these commands.

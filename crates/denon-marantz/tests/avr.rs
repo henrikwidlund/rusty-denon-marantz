@@ -5,9 +5,9 @@
 mod common;
 
 use common::{
-    AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER, appcommand0300_answer,
-    appcommand0300_item, avr_x_receiver, builder, config, friendly_name_answer,
-    is_friendly_name_request, output_settings_item, receiver_with_audyssey,
+    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER,
+    appcommand0300_answer, appcommand0300_item, avr_x_receiver, builder, config,
+    friendly_name_answer, is_friendly_name_request, output_settings_item, receiver_with_audyssey,
     receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
@@ -1196,17 +1196,24 @@ async fn an_update_without_the_tone_item_drops_tone_control() {
 
 /// A receiver that refuses a request with tone control.
 async fn receiver_that_refuses_tone_control() -> Fake {
-    Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
-        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-        ("POST", _) if is_friendly_name_request(&seen.body) => {
-            Reply::Body(friendly_name_answer("X"))
-        }
-        ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
-            Reply::Status(500)
-        }
-        ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
-        _ => Reply::Status(404),
-    })
+    receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await
+}
+
+/// Like [`receiver_that_refuses_tone_control`], with this device information.
+async fn receiver_with_info_that_refuses_tone_control(info: &'static [u8]) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
+                Reply::Body(friendly_name_answer("X"))
+            }
+            ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
+                Reply::Status(500)
+            }
+            ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
+            _ => Reply::Status(404),
+        },
+    )
     .await
 }
 
@@ -1227,4 +1234,64 @@ async fn a_2016_receiver_keeps_asking_for_tone_control() {
     assert!(avr.update().await.unwrap_err().is_status());
     assert!(avr.update().await.unwrap_err().is_status());
     assert_eq!(update_sizes(&fake), [13, 13]);
+}
+
+#[tokio::test]
+async fn a_receiver_that_lists_tone_control_keeps_asking_for_it() {
+    let fake = receiver_with_info_that_refuses_tone_control(AVR_X_OUTPUT_SETTINGS_INFO).await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert!(avr.update().await.unwrap_err().is_status());
+    assert!(avr.update().await.unwrap_err().is_status());
+    assert_eq!(update_sizes(&fake), [13, 13]);
+}
+
+#[tokio::test]
+async fn a_receiver_that_lists_no_tone_control_is_not_asked_for_it() {
+    let fake = receiver_with_info_that_refuses_tone_control(AUDIO_INFO_ONLY_INFO).await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    avr.update().await.unwrap();
+    assert_eq!(update_sizes(&fake), [12]);
+}
+
+#[tokio::test]
+async fn only_the_listed_signal_queries_are_sent() {
+    let answer = format!("<rx>{}</rx>", appcommand0300_item("GetAudioInfo"));
+    let fake = receiver_with_info_and_signal_answers(AUDIO_INFO_ONLY_INFO, false, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::Read
+    );
+    let bodies = signal_requests(&fake);
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].contains("GetAudioInfo"), "{}", bodies[0]);
+    for query in [
+        "GetAudyssey",
+        "GetVideoInfo",
+        "GetInputSignal",
+        "GetActiveSpeaker",
+    ] {
+        assert!(!bodies[0].contains(query), "{query}");
+    }
+    assert_eq!(
+        avr.snapshot().device().signal.audio_sound.as_deref(),
+        Some("Stereo")
+    );
+}
+
+#[tokio::test]
+async fn a_receiver_that_lists_no_signal_query_is_not_asked() {
+    const INFO: &[u8] = b"<Device_Info><CommApiVers>0300</CommApiVers>\
+        <DeviceCapabilities><Setup><StatusInfo><Commands/></StatusInfo></Setup>\
+        </DeviceCapabilities></Device_Info>";
+    let fake = receiver_with_info_and_signal_answers(INFO, false, |_| Reply::Status(500)).await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(
+        avr.update_signal_and_settings().await.unwrap(),
+        PageStatus::NotFound
+    );
+    assert_eq!(signal_requests(&fake).len(), 0);
 }

@@ -14,7 +14,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use super::{
-    Info, Missing, UpdateMethod, playing_kind, read_appcommand, read_status_pages, request_body,
+    Info, Missing, UpdateMethod, definitions_body, playing_kind, read_appcommand, read_status_pages,
 };
 use crate::channels::Channels;
 use crate::command::{ReadBits, Reads};
@@ -92,7 +92,9 @@ struct Reader {
     channels: Channels,
     zones: Box<[Zone]>,
     method: UpdateMethod,
-    /// The receiver answers the HDMI output, see `Info::hdmi_output_over_http`.
+    /// The receiver gets `GetAudyssey`, see `appcommand0300_commands`.
+    audyssey: bool,
+    /// The receiver gets `GetOutputSettings`, see `appcommand0300_commands`.
     hdmi_output: bool,
     missing: Arc<Missing>,
     #[cfg(feature = "telnet")]
@@ -132,12 +134,11 @@ impl Request {
         reads: Reads,
         commands: &'static [Definition],
     ) -> Result<Self, Error> {
-        let cmds: Vec<_> = commands.iter().map(|definition| definition.cmd).collect();
         Ok(Self {
             reads,
             endpoint,
             commands,
-            body: request_body(&cmds)?,
+            body: definitions_body(commands)?,
         })
     }
 
@@ -172,6 +173,7 @@ impl FollowUp {
         channels: &Channels,
         info: &Info,
         missing: &Arc<Missing>,
+        appcommand0300: &[Definition],
         #[cfg(feature = "telnet")] telnet: watch::Receiver<TelnetStatus>,
     ) -> Result<Option<Self>, Error> {
         let Some(config) = config else {
@@ -184,7 +186,8 @@ impl FollowUp {
             channels: channels.clone(),
             zones: info.zones.clone().into_boxed_slice(),
             method: info.update_method,
-            hdmi_output: info.hdmi_output_over_http,
+            audyssey: appcommand0300.contains(&appcommand::GET_AUDYSSEY),
+            hdmi_output: appcommand0300.contains(&appcommand::GET_OUTPUT_SETTINGS),
             missing: Arc::clone(missing),
             #[cfg(feature = "telnet")]
             telnet,
@@ -203,9 +206,15 @@ impl FollowUp {
                     Request::new(Reads::SoundMode, &SOUND_MODE)?,
                     Request::new(Reads::Device, &DEVICE)?,
                     Request::new(Reads::Tone, &TONE)?,
-                    Request::on(Endpoint::AppCommand0300, Reads::Audyssey, &AUDYSSEY)?,
                 ];
                 // A receiver can fail a request with a query that it does not know.
+                if reader.audyssey {
+                    requests.push(Request::on(
+                        Endpoint::AppCommand0300,
+                        Reads::Audyssey,
+                        &AUDYSSEY,
+                    )?);
+                }
                 if reader.hdmi_output {
                     requests.push(Request::on(
                         Endpoint::AppCommand0300,

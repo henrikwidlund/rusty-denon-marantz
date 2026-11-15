@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
 use denon_marantz_proto::{
-    Brand, DeviceDescription, DeviceInfo, Error, HdmiOutput, NowPlaying, State, TunerBand,
-    TunerInfo, TunerPage, Zone,
+    Brand, DeviceDescription, DeviceInfo, Error, HdmiOutput, ListedQueries, NowPlaying, State,
+    TunerBand, TunerInfo, TunerPage, Zone,
 };
 
 const DEFINITIONS: [(&str, Definition); 10] = [
@@ -247,19 +247,40 @@ fn device_info_tells_the_quick_select_count() {
 }
 
 #[test]
-fn device_info_tells_if_the_receiver_answers_output_settings() {
+fn device_info_lists_the_queries() {
+    let mut all = ListedQueries::default();
+    all.tone_control = true;
+    all.audyssey = true;
+    all.video_info = true;
+    all.audio_info = true;
+    all.input_signal = true;
+    all.active_speaker = true;
+    all.output_settings = true;
+    let mut without_output = all;
+    without_output.output_settings = false;
+    // A stereo receiver lists its tone control under the zone only.
+    let mut stereo = ListedQueries::default();
+    stereo.tone_control = true;
+    stereo.audio_info = true;
     for (name, expected) in [
-        ("AVC-A10H-Deviceinfo-8080.xml", true),
-        ("AVR-X4300H-Deviceinfo-8080.xml", true),
-        ("SR6011-Deviceinfo.xml", true),
-        // Lists other `AppCommand0300.xml` queries, but not this one.
-        ("AVR-X4100W-Deviceinfo.xml", false),
-        ("AVR-X2000-Deviceinfo.xml", false),
+        ("AVC-A10H-Deviceinfo-8080.xml", Some(all)),
+        ("AVR-X4300H-Deviceinfo-8080.xml", Some(all)),
+        ("SR6011-Deviceinfo.xml", Some(all)),
+        ("AVR-X4100W-Deviceinfo.xml", Some(without_output)),
+        ("AVR-X2100W-2-Deviceinfo.xml", Some(without_output)),
+        ("DRA-N4-Deviceinfo.xml", Some(stereo)),
+        // Has `DeviceCapabilities`, but no list of queries.
+        ("AVR-X1100W-Deviceinfo.xml", None),
+        ("AVR-X2000-Deviceinfo.xml", None),
+        ("AVR-3313-Deviceinfo.xml", None),
     ] {
         let body = read_bytes(&format!("xml/{name}"));
         let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(info.output_settings, expected, "{name}");
+        assert_eq!(info.queries, expected, "{name}");
     }
+    assert!(all.lists("GetVideoInfo"));
+    assert!(!stereo.lists("GetVideoInfo"));
+    assert!(!all.lists("GetOther"));
 }
 
 #[test]

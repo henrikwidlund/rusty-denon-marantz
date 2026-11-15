@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, avr_x_receiver_with_pages, bodies_after,
-    builder, config, friendly_name_answer, is_friendly_name_request, output_settings_item,
-    quick_follow_up, update_answer_for, wait_until,
+    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply,
+    avr_x_receiver_with_pages, bodies_after, builder, config, friendly_name_answer,
+    is_friendly_name_request, output_settings_item, quick_follow_up, update_answer_for, wait_until,
 };
 use denon_marantz::proto::{HdmiOutput, TUNER_STATUS_PATH, TunerCommand};
 use denon_marantz::{
@@ -531,6 +531,25 @@ async fn an_hdmi_output_command_reads_nothing_without_the_output_settings() {
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(commands(&fake).last().map(String::as_str), Some("VSMONI2"));
+    assert_eq!(
+        bodies_to(&fake, known, "/goform/AppCommand0300.xml").len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn an_audyssey_command_reads_nothing_if_the_query_is_not_listed() {
+    let fake = output_settings_receiver(AUDIO_INFO_ONLY_INFO).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let known = fake.requests().len();
+    avr.http_send(Zone::Main, Command::DynamicEq(true))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        commands(&fake).last().map(String::as_str),
+        Some("PSDYNEQ%20ON")
+    );
     assert_eq!(
         bodies_to(&fake, known, "/goform/AppCommand0300.xml").len(),
         0

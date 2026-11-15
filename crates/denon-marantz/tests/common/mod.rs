@@ -169,11 +169,25 @@ pub(crate) const DESCRIPTION: &[u8] =
 pub(crate) const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
     <DeviceZones>2</DeviceZones><MacAddress>0123456789AB</MacAddress></Device_Info>";
-/// The device information of a receiver that answers `GetOutputSettings`.
+/// The device information of a receiver that lists all queries, also
+/// `GetOutputSettings`.
 pub(crate) const AVR_X_OUTPUT_SETTINGS_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
-    <DeviceZones>2</DeviceZones><Commands><GetOutputSettings ver=\"2\">1</GetOutputSettings>\
-    </Commands></Device_Info>";
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <ToneControl><Functions><GetToneControl>1</GetToneControl></Functions></ToneControl>\
+    <Audyssey><Commands><GetAudyssey ver=\"2\">1</GetAudyssey></Commands></Audyssey>\
+    <StatusInfo><Commands><GetInputSignal ver=\"1\">1</GetInputSignal>\
+    <GetActiveSpeaker ver=\"1\">1</GetActiveSpeaker><GetVideoInfo ver=\"1\">1</GetVideoInfo>\
+    <GetAudioInfo ver=\"1\">1</GetAudioInfo></Commands></StatusInfo>\
+    <OutputSettings><Commands><GetOutputSettings ver=\"2\">1</GetOutputSettings>\
+    </Commands></OutputSettings></Setup></DeviceCapabilities></Device_Info>";
+/// The device information of a receiver that lists only `GetAudioInfo`, and
+/// no tone control.
+pub(crate) const AUDIO_INFO_ONLY_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0300</CommApiVers><ModelName>AVR-X2100W</ModelName>\
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <StatusInfo><Commands><GetAudioInfo ver=\"1\">1</GetAudioInfo></Commands></StatusInfo>\
+    </Setup></DeviceCapabilities></Device_Info>";
 /// The item of an `AppCommand0300.xml` answer to `GetOutputSettings`, with
 /// `value` as the HDMI output. `2` is HDMI 2.
 pub(crate) fn output_settings_item(value: &str) -> String {
