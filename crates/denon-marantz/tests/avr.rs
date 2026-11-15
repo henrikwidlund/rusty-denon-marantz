@@ -10,7 +10,7 @@ use common::{
     friendly_name_answer, is_friendly_name_request, output_settings_item, receiver_with_audyssey,
     receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
 };
-use denon_marantz::{Avr, Error, PageStatus, UpdateMethod};
+use denon_marantz::{Avr, Error, ListedQueries, PageStatus, UpdateMethod};
 use denon_marantz_proto::{
     AutoStandby, Availability, Brand, DimmerMode, EcoMode, HdmiOutput, NetworkControl, Power,
     ReceiverType, SettingsGroup, ToneLevel, Volume, Zone,
@@ -1044,6 +1044,7 @@ async fn a_receiver_without_the_output_settings_is_not_asked_for_them() {
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert!(!avr.info().hdmi_output_over_http);
+    assert_eq!(avr.info().queries, None);
     assert_eq!(
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
@@ -1066,6 +1067,11 @@ async fn update_of_a_receiver_with_the_output_settings_reads_the_hdmi_output() {
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
     assert!(avr.info().hdmi_output_over_http);
+    assert!(
+        avr.info()
+            .queries
+            .is_some_and(|queries| queries.output_settings)
+    );
     assert_eq!(
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
@@ -1261,6 +1267,8 @@ async fn only_the_listed_signal_queries_are_sent() {
     })
     .await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    let queries: ListedQueries = avr.info().queries.unwrap();
+    assert!(queries.audio_info && !queries.video_info && !queries.tone_control);
     assert_eq!(
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read

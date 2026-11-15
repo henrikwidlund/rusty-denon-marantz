@@ -38,6 +38,8 @@ state again.
 - How many quick selects the receiver lists (`Info::quick_select_count`).
 - Whether the receiver answers the HDMI output over HTTP
   (`Info::hdmi_output_over_http`). Receivers from about 2016 do.
+- Which `AppCommand` queries the receiver lists (`Info::queries`). Receivers
+  from about 2015 list them, and the library sends only those.
 - Whether the receiver has a tuner and which bands it has (`Info::tuner`).
   Receivers older than about 2013 do not say, and newer receivers do not list
   the bands.

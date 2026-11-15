@@ -174,6 +174,10 @@ pub struct Info {
     /// [`Avr::update_signal_and_settings`] and the read after
     /// `set_hdmi_output` over HTTP read it.
     pub hdmi_output_over_http: bool,
+    /// The `AppCommand` queries that `Deviceinfo.xml` lists. `None` if it has
+    /// no list, as on receivers older than about 2015: then the library asks
+    /// as if all but the HDMI output were there.
+    pub queries: Option<ListedQueries>,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
     pub zones: Vec<Zone>,
@@ -1564,6 +1568,7 @@ impl AvrBuilder {
             quick_select_count: device_info.quick_select_count,
             hdmi_output_over_http: appcommand0300_commands
                 .contains(&appcommand::GET_OUTPUT_SETTINGS),
+            queries: device_info.queries,
             zones: Zone::ALL[..zone_count].to_vec(),
         };
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
