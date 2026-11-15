@@ -11,6 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 denon-marantz-proto = { path = "../crates/denon-marantz-proto" }
 denon-marantz-discovery = { path = "../crates/denon-marantz-discovery" }
+denon-marantz-heos-proto = { path = "../crates/denon-marantz-heos-proto" }
 
 [workspace]
 
@@ -80,6 +81,20 @@ bench = false
 [[bin]]
 name = "sound_mode_list"
 path = "fuzz_targets/sound_mode_list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "heos_stream"
+path = "fuzz_targets/heos_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "heos_message"
+path = "fuzz_targets/heos_message.rs"
 test = false
 doc = false
 bench = false

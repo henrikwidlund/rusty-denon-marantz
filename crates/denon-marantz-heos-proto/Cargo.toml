@@ -1,0 +1,23 @@
+[package]
+name = "denon-marantz-heos-proto"
+description = "Sans-IO protocol for the HEOS CLI of Denon and Marantz products: framing, commands, answers and events"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["denon", "marantz", "heos", "protocol"]
+categories = ["network-programming", "parser-implementations"]
+exclude = ["/tests"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

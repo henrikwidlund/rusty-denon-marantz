@@ -278,6 +278,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "denon-marantz-heos"
+version = "0.1.0"
+dependencies = [
+ "denon-marantz-heos-proto",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "denon-marantz-heos-proto"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "denon-marantz-proto"
 version = "0.1.0"
 dependencies = [
