@@ -6,6 +6,28 @@ use denon_marantz_proto::Zone;
 
 type Source = Box<dyn std::error::Error + Send + Sync>;
 
+/// Shows an error and its causes, for example "client error (Connect):
+/// Connection refused (os error 61)". A cause with the same text as the one
+/// before is left out.
+struct Chain<'a>(&'a (dyn std::error::Error + 'static));
+
+impl std::fmt::Display for Chain<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut last = self.0.to_string();
+        f.write_str(&last)?;
+        let mut cause = self.0.source();
+        while let Some(error) = cause {
+            let text = error.to_string();
+            if text != last {
+                write!(f, ": {text}")?;
+                last = text;
+            }
+            cause = error.source();
+        }
+        Ok(())
+    }
+}
+
 /// What stops tone control from turning on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -38,7 +60,7 @@ pub enum Error {
         limit: Duration,
     },
     /// The connection failed.
-    #[error("{request}: network error: {source}")]
+    #[error("{request}: network error: {}", Chain(&**source))]
     Network {
         /// The request.
         request: String,
@@ -61,7 +83,7 @@ pub enum Error {
         request: String,
     },
     /// The answer is not valid HTTP.
-    #[error("{request}: invalid answer: {source}")]
+    #[error("{request}: invalid answer: {}", Chain(&**source))]
     InvalidResponse {
         /// The request.
         request: String,
@@ -343,6 +365,47 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An error with a cause, like the ones of the HTTP client.
+    #[derive(Debug, thiserror::Error)]
+    #[error("{text}")]
+    struct Outer {
+        text: &'static str,
+        #[source]
+        cause: std::io::Error,
+    }
+
+    #[test]
+    fn network_errors_show_their_causes() {
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let refused_text = refused.to_string();
+        let error = Error::Network {
+            request: "GET http://10.0.0.5/x".to_owned(),
+            source: Box::new(Outer {
+                text: "client error (Connect)",
+                cause: refused,
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            format!("GET http://10.0.0.5/x: network error: client error (Connect): {refused_text}")
+        );
+    }
+
+    #[test]
+    fn a_cause_with_the_same_text_is_left_out() {
+        let error = Error::InvalidResponse {
+            request: "GET http://10.0.0.5/x".to_owned(),
+            source: Box::new(Outer {
+                text: "closed",
+                cause: std::io::Error::other("closed"),
+            }),
+        };
+        assert_eq!(
+            error.to_string(),
+            "GET http://10.0.0.5/x: invalid answer: closed"
+        );
+    }
 
     #[test]
     fn requests_are_named_only_by_errors_of_a_request() {
