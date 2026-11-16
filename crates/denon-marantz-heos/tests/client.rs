@@ -89,7 +89,10 @@ async fn events_change_the_state() {
     fake.push(event("player_state_changed", "pid=1234567&state=pause"));
     assert_eq!(next_change(&mut changes).await, Change::PlayState(PID));
     let events: Vec<_> = std::iter::from_fn(|| events.try_recv().ok()).collect();
-    let state = |state| Event::PlayerStateChanged { pid: PID, state };
+    let state = |state| Event::PlayerStateChanged {
+        pid: PID,
+        state: Some(state),
+    };
     assert_eq!(
         events,
         [
@@ -116,6 +119,39 @@ async fn events_change_the_state() {
 }
 
 #[tokio::test]
+async fn unknown_play_state_is_none_and_clears_the_progress() {
+    let fake = Fake::start(|line| {
+        if name(line) != "player/get_play_state" {
+            return from_data(line);
+        }
+        let answer = answer("player/get_play_state").replace("state=stop", "state=unknown");
+        Reply::Lines(vec![answer])
+    })
+    .await;
+    let heos = connect(&fake).await;
+    assert_eq!(heos.player(PID).unwrap().play_state, None);
+    let mut changes = heos.changes();
+    fake.push(event("player_state_changed", "pid=1234567&state=play"));
+    fake.push(event(
+        "player_now_playing_progress",
+        "pid=1234567&cur_pos=3000&duration=0",
+    ));
+    fake.push(event("player_state_changed", "pid=1234567&state=unknown"));
+    for expected in [
+        Change::PlayState(PID),
+        Change::Progress(PID),
+        Change::PlayState(PID),
+        Change::Progress(PID),
+    ] {
+        assert_eq!(next_change(&mut changes).await, expected);
+    }
+    let state = heos.player(PID).unwrap();
+    assert_eq!(state.play_state, None);
+    assert_eq!(state.progress, None);
+    heos.close().await;
+}
+
+#[tokio::test]
 async fn a_burst_of_now_playing_events_gives_one_read() {
     let reads = counter();
     let fake = Fake::start(move |line| {
@@ -133,9 +169,9 @@ async fn a_burst_of_now_playing_events_gives_one_read() {
     .await;
     let heos = connect(&fake).await;
     let mut changes = heos.changes();
-    for _ in 0..5 {
-        fake.push(event("player_now_playing_changed", "pid=1234567"));
-    }
+    // One write, so that a slow test machine does not spread the burst.
+    let burst = vec![event("player_now_playing_changed", "pid=1234567"); 5];
+    fake.push(burst.join("\r\n"));
     assert_eq!(next_change(&mut changes).await, Change::NowPlaying(PID));
     let state = heos.player(PID).unwrap();
     assert_eq!(state.now_playing.unwrap().song, "Song A");

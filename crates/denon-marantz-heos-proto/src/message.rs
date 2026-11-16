@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::str::FromStr;
 
 use crate::error::Error;
+use crate::types::PlayState;
 
 /// Fields of a `message` text: `key=value` parts, separated by `&`.
 ///
@@ -67,6 +68,14 @@ impl<'a> Message<'a> {
         })
     }
 
+    /// Parses a required `state` field. `unknown` gives `None`.
+    pub(crate) fn play_state(self) -> Result<Option<PlayState>, Error> {
+        self.parse_with("state", |value| match value {
+            "unknown" => Some(None),
+            _ => PlayState::from_name(value).map(Some),
+        })
+    }
+
     /// Parses a required field with `parse`.
     pub(crate) fn parse_with<T>(
         self,
@@ -111,7 +120,8 @@ pub fn decode(value: &str) -> Cow<'_, str> {
 }
 
 /// Appends `value` with `&`, `=` and `%` encoded.
-pub(crate) fn push_encoded(out: &mut String, value: &str) {
+#[cfg(test)]
+fn push_encoded(out: &mut String, value: &str) {
     let mut rest = value;
     while let Some(index) = rest.find(['&', '=', '%']) {
         out.push_str(&rest[..index]);

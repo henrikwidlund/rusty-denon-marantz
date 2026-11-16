@@ -33,7 +33,8 @@ pub enum HeosStatus {
 pub struct PlayerState {
     /// The player, from `get_players`.
     pub player: Arc<Player<'static>>,
-    /// Play state. `None` until it is read.
+    /// Play state. `None` until it is read, and while the device reports it
+    /// as not known.
     pub play_state: Option<PlayState>,
     /// What plays. `None` until it is read, when the device reports no item,
     /// and while the item has no text: `AirPlay` sends such an item when it
@@ -41,9 +42,12 @@ pub struct PlayerState {
     ///
     /// A stopped player keeps its last item, also after the receiver changed
     /// to a source that is not HEOS. [`PlayerState::current_media`] hides it.
+    /// While the play state is not known, the item is shown, but it can be
+    /// old: the device also reports this state for a station that plays.
     pub now_playing: Option<Arc<NowPlaying<'static>>>,
     /// Position in what plays, from the last progress event. `None` until
-    /// the first event, after what plays changed, and after a stop.
+    /// the first event, after what plays changed, after a stop, and when the
+    /// play state becomes not known.
     ///
     /// In the first seconds after `AirPlay` starts, the position can jump.
     /// A progress event with a position or length that is not valid (a
@@ -93,7 +97,8 @@ impl PlayerState {
         })
     }
 
-    /// What plays, or `None` while the player is stopped.
+    /// What plays, or `None` while the player is stopped. While the play
+    /// state is not known, the item is shown.
     #[must_use]
     pub fn current_media(&self) -> Option<&NowPlaying<'static>> {
         if self.play_state == Some(PlayState::Stop) {
@@ -243,12 +248,13 @@ impl Shared {
         }
     }
 
-    /// A stop also clears the progress. The device sends no progress
-    /// event for it.
-    pub(crate) fn set_play_state(&self, pid: PlayerId, play_state: PlayState) {
+    /// A stop or a state that is not known (`None`) also clears the progress.
+    /// The device sends no progress event for it.
+    pub(crate) fn set_play_state(&self, pid: PlayerId, play_state: Option<PlayState>) {
         self.update(pid, |state| {
-            let cleared = play_state == PlayState::Stop && state.clear_progress();
-            let changed = set(&mut state.play_state, Some(play_state));
+            let cleared =
+                matches!(play_state, None | Some(PlayState::Stop)) && state.clear_progress();
+            let changed = set(&mut state.play_state, play_state);
             [
                 changed.then_some(Change::PlayState(pid)),
                 cleared.then_some(Change::Progress(pid)),
@@ -387,7 +393,7 @@ mod tests {
         let shared = Shared::new();
         let mut receiver = shared.subscribe_changes();
         shared.set_players(vec![player(1, "A"), player(2, "B")]);
-        shared.set_play_state(PlayerId(2), PlayState::Play);
+        shared.set_play_state(PlayerId(2), Some(PlayState::Play));
         shared.set_players(vec![player(2, "B"), player(1, "A")]);
         shared.set_players(vec![player(2, "B"), player(1, "A")]);
         shared.set_players(vec![player(2, "C")]);
@@ -422,7 +428,7 @@ mod tests {
         shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "A")));
         shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "A")));
         // A player that is not known is ignored.
-        shared.set_play_state(PlayerId(9), PlayState::Play);
+        shared.set_play_state(PlayerId(9), Some(PlayState::Play));
         // New media clears the progress.
         assert_eq!(
             changes(&mut receiver),
@@ -473,18 +479,18 @@ mod tests {
             duration_ms: 5000,
         };
         shared.set_progress(pid, progress);
-        shared.set_play_state(pid, PlayState::Pause);
+        shared.set_play_state(pid, Some(PlayState::Pause));
         shared.read(|states| assert_eq!(states[0].progress, Some(progress)));
         let mut receiver = shared.subscribe_changes();
-        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_play_state(pid, Some(PlayState::Stop));
         shared.read(|states| assert_eq!(states[0].progress, None));
         assert_eq!(
             changes(&mut receiver),
             [Change::PlayState(pid), Change::Progress(pid)]
         );
         // Without a progress, a stop is one change.
-        shared.set_play_state(pid, PlayState::Play);
-        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_play_state(pid, Some(PlayState::Play));
+        shared.set_play_state(pid, Some(PlayState::Stop));
         assert_eq!(
             changes(&mut receiver),
             [Change::PlayState(pid), Change::PlayState(pid)]
@@ -510,7 +516,7 @@ mod tests {
         assert_eq!(time(), Some(start));
         shared.set_progress(pid, at(4000));
         assert_eq!(time(), Some(start + Duration::from_secs(3)));
-        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_play_state(pid, Some(PlayState::Stop));
         assert_eq!(time(), None);
         shared.set_progress(pid, at(0));
         shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "B")));
@@ -548,12 +554,12 @@ mod tests {
         let pid = PlayerId(1);
         shared.set_players(vec![player(1, "A")]);
         shared.set_now_playing(pid, Some(media(SourceId::LOCAL_MUSIC, "A")));
-        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_play_state(pid, Some(PlayState::Stop));
         shared.read(|states| {
             assert!(states[0].now_playing.is_some());
             assert_eq!(states[0].current_media(), None);
         });
-        shared.set_play_state(pid, PlayState::Pause);
+        shared.set_play_state(pid, Some(PlayState::Pause));
         shared.read(|states| assert!(states[0].current_media().is_some()));
     }
 
@@ -563,7 +569,7 @@ mod tests {
         let pid = PlayerId(1);
         shared.set_players(vec![player(1, "A")]);
         // After AirPlay stops, the item is the last queue item.
-        shared.set_play_state(pid, PlayState::Stop);
+        shared.set_play_state(pid, Some(PlayState::Stop));
         shared.set_now_playing(pid, Some(media(SourceId::TUNEIN, "Radio")));
         shared.read(|states| {
             assert_eq!(states[0].current_media(), None);

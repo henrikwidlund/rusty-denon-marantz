@@ -1,6 +1,6 @@
 [package]
 name = "denon-marantz-heos"
-description = "Async client for the HEOS CLI of Denon and Marantz products: what plays, play state and transport"
+description = "Async client for the HEOS CLI of Denon and Marantz products: what plays, playback, queue, HEOS Favorites and quick selects"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,7 +24,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
-tokio = { workspace = true, features = ["signal", "test-util"] }
+tokio = { workspace = true, features = ["io-std", "signal", "test-util"] }
 
 [lints]
 workspace = true

@@ -20,8 +20,8 @@ pub enum Event<'a> {
     PlayerStateChanged {
         /// Player.
         pid: PlayerId,
-        /// New state.
-        state: PlayState,
+        /// New state, or `None` if the device sent `unknown`.
+        state: Option<PlayState>,
     },
     /// What plays changed. The event has no details: ask with
     /// `get_now_playing_media`. It can come several times in a row.
@@ -88,7 +88,7 @@ impl<'a> Event<'a> {
             "groups_changed" => Self::GroupsChanged,
             "player_state_changed" => Self::PlayerStateChanged {
                 pid: pid()?,
-                state: message.parse_with("state", PlayState::from_name)?,
+                state: message.play_state()?,
             },
             "player_now_playing_changed" => Self::NowPlayingChanged { pid: pid()? },
             "player_now_playing_progress" => Self::NowPlayingProgress {
@@ -190,7 +190,7 @@ mod tests {
                 "pid=-5&state=pause",
                 Event::PlayerStateChanged {
                     pid,
-                    state: PlayState::Pause,
+                    state: Some(PlayState::Pause),
                 },
             ),
             (
@@ -272,6 +272,17 @@ mod tests {
             }
         );
         assert_eq!(event.pid(), None);
+    }
+
+    #[test]
+    fn unknown_play_state_is_none() {
+        assert_eq!(
+            parse("player_state_changed", "pid=1&state=unknown"),
+            Ok(Event::PlayerStateChanged {
+                pid: PlayerId(1),
+                state: None,
+            })
+        );
     }
 
     #[test]

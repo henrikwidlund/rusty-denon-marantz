@@ -1,6 +1,7 @@
 # denon-marantz
 
 Async Rust library to monitor and control Denon and Marantz AV receivers.
+The HEOS crates read what plays on HEOS devices and control the playback.
 
 ## What it does
 
@@ -34,7 +35,8 @@ state again.
   switches each trigger output.
 - What plays: title, artist, album and station of network audio and HD radio,
   band and frequency of the tuner, and the address of the picture. A receiver
-  that uses HEOS for network audio does not give this.
+  that uses HEOS for network audio does not give this: use the
+  [HEOS crates](#heos) for it.
 - How many quick selects the receiver lists (`Info::quick_select_count`).
 - Whether the receiver answers the HDMI output over HTTP
   (`Info::hdmi_output_over_http`). Receivers from about 2016 do.
@@ -56,6 +58,8 @@ The crates are not on crates.io yet. Use the repository:
 ```toml
 [dependencies]
 denon-marantz = { git = "https://github.com/henrikwidlund/rusty-denon-marantz" }
+# What plays on HEOS, and the playback
+denon-marantz-heos = { git = "https://github.com/henrikwidlund/rusty-denon-marantz" }
 ```
 
 ## Usage
@@ -215,6 +219,67 @@ A program that does not want telnet never opens it: use
 - The list of sound modes of the receiver needs telnet. Without it, select a
   mode by its name, for example `select_sound_mode("MOVIE")`.
 
+## HEOS
+
+The `denon-marantz-heos` crate is a client for the HEOS CLI on TCP port 1255.
+It keeps the state of each player: what plays, the play state, the position
+and the repeat and shuffle modes. You read the state with `Heos::players` and
+watch it with `Heos::changes`. It also:
+
+- Controls the playback: play, pause, stop, next, previous, repeat and
+  shuffle.
+- Reads the queue, plays an item of it, removes items and clears it.
+- Reads and plays HEOS Favorites and quick selects.
+- Plays a stream from a URL, and an input of the device.
+
+Volume and mute are not in the HEOS crates. On the AVC-A10H, the HEOS volume is
+shared by the zones. Use the `denon-marantz` crate for them.
+
+```rust
+use denon_marantz_heos::Heos;
+use tokio::sync::broadcast::error::RecvError;
+
+let heos = Heos::connect("192.168.1.20").await?; // the state is read when this returns
+let pid = heos.player_by_ip("192.168.1.20".parse()?).ok_or("no player")?;
+let mut changes = heos.changes();
+heos.play_preset(pid, 1).await?; // the first HEOS Favorite
+
+loop {
+    match changes.recv().await {
+        Ok(_) | Err(RecvError::Lagged(_)) => {
+            if let Some(state) = heos.player(pid) {
+                println!("{:?}: {:?}", state.play_state, state.current_media());
+            }
+        }
+        Err(RecvError::Closed) => break,
+    }
+}
+```
+
+The client keeps two connections: one for commands and one for events. It
+sends one command at a time. It connects again after a drop, waits longer
+after each failed try, and then reads the state again. `HeosConfig` has the
+times. The `denon-marantz-heos-proto` crate has the protocol without IO.
+
+Notes about HEOS:
+
+- The AVC-A10H has one player for all its zones.
+- A stopped player keeps its last item, also after the receiver changed to a
+  source that is not HEOS. `PlayerState::current_media` hides it.
+- The device can report the play state as not known. The state is then
+  `None`, and the item can be old.
+- Pausing a station that cannot pause stops it. `PlayerState::controls` says
+  which controls work for the item.
+- The device sends no event when the HEOS Favorites change. Read them again
+  with `Heos::favorites` when they are needed.
+- `AirPlay` shows as an item from local music, with no mark that it is
+  `AirPlay`. In the first seconds after it starts, the item has no text and
+  the position can jump.
+- `Heos::play_stream` sends the URL as it is, and the device loads it. The
+  device must be able to reach the URL.
+- Reading the HEOS Favorites can take longer than other commands. The device
+  first answers that it works on the command (`HeosConfig::slow_command_limit`).
+
 ## Features of the `denon-marantz` crate
 
 | Feature | Default | Adds |
@@ -225,9 +290,12 @@ A program that does not want telnet never opens it: use
 | `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
 
+The `denon-marantz-heos` crate has one feature, `sensitive-logs` (off by
+default): full lines in trace logs. They can have personal data.
+
 ## Tested
 
-Tested on a Denon AVC-A10H.
+All crates were tested on a Denon AVC-A10H.
 
 ## Not tested
 
@@ -269,6 +337,13 @@ have not run on a receiver:
   AVC-A10H has none and answers the page with zeros.
 - Receivers without the web interface on port 11080. The library gives an error
   after one second for each page call, see `AvrBuilder::web_interface_config`.
+- HEOS: other HEOS devices, for example speakers, groups of players, and
+  playing an input of another player. The AVC-A10H has one player and no
+  groups.
+- HEOS quick selects: the receiver accepts the call, but the effect was not
+  checked.
+- HEOS: connecting again after a lost connection, and the heartbeat. They are
+  tested with a fake device.
 
 ## Notes about receivers
 
@@ -298,9 +373,12 @@ have not run on a receiver:
 | `denon-marantz` | Async client (tokio). |
 | `denon-marantz-proto` | Protocol without IO. |
 | `denon-marantz-discovery` | SSDP messages and mDNS service records, without IO. |
+| `denon-marantz-heos` | Async HEOS client (tokio). |
+| `denon-marantz-heos-proto` | HEOS protocol without IO. |
 
 The `denon-marantz` crate re-exports the types that most programs need, for
 example `Zone` and `Volume`. All others are in `denon_marantz::proto`.
+The `denon-marantz-heos` crate does the same with `denon_marantz_heos::proto`.
 
 Minimum supported Rust version: 1.100.
 
@@ -315,6 +393,8 @@ cargo run -p denon-marantz --example status -- 192.168.1.20
 cargo run -p denon-marantz --example watch -- 192.168.1.20
 cargo run -p denon-marantz --example start -- 192.168.1.20
 cargo run -p denon-marantz --example remote -- 192.168.1.20 volume -35
+cargo run -p denon-marantz-heos --example watch -- 192.168.1.20
+cargo run -p denon-marantz-heos --example remote -- 192.168.1.20
 ```
 
 `http_check` tests commands over HTTP on a real receiver. It changes settings and
@@ -324,11 +404,16 @@ can switch power, so read the header of the file before you run it.
 the output. `start` shows how long `Avr::start` takes and what it read. `remote`
 runs one command, the header of the file lists them.
 
+The HEOS `watch` prints what changes. The HEOS `remote` reads commands from
+the standard input, one per line, the header of the file lists them. Their
+output can have personal data, for example a title that plays.
+
 ## Logging
 
 The crates use `tracing`. Set `RUST_LOG=denon_marantz=debug` to see the
 connect steps and the pages that could not be read. `trace` shows each
 message. The `sensitive-logs` feature adds full message text.
+For HEOS, use `RUST_LOG=denon_marantz_heos=debug`.
 
 ## Development
 
@@ -350,6 +435,8 @@ Fuzz targets for the parsers are in `fuzz/`. Benchmarks use `criterion`.
 This is a Rust port of [denonavr](https://github.com/ol-iver/denonavr)
 (MIT), a Python library by Oliver Götz and contributors. The protocol
 knowledge and command tables come from that project.
+The HEOS crates are not a port. They follow the HEOS CLI protocol
+specification.
 
 This project is not made or supported by Denon or Marantz. Denon and Marantz
 are trademarks of their respective owners. Other names are the property of

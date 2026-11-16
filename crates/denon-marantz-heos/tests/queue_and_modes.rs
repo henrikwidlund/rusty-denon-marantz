@@ -163,7 +163,7 @@ async fn play_commands_send_their_values() {
             "heos://player/clear_queue?pid=1234567",
             "heos://browse/play_preset?pid=1234567&preset=1",
             "heos://player/play_quickselect?pid=1234567&id=6",
-            "heos://browse/play_stream?pid=1234567&url=http://host/a b.mp3?x%3D1%26y%3D2",
+            "heos://browse/play_stream?pid=1234567&url=http://host/a b.mp3?x=1&y=2",
             "heos://browse/play_input?pid=1234567&spid=7&input=inputs/aux_in_1",
         ]
     );

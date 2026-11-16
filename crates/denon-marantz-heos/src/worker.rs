@@ -12,7 +12,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use denon_marantz_heos_proto::{
-    Command, Event, Failure, LineDecoder, PlayState, Player, PlayerId, RepeatMode, Response, Status,
+    Command, Event, Failure, LineDecoder, Player, PlayerId, RepeatMode, Response, Status,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -635,14 +635,11 @@ impl<'a> Session<'a> {
                     self.players_failed(PlayersError::Invalid(error));
                 }
             },
-            GET_PLAY_STATE => {
-                let state = message
-                    .get("state")
-                    .and_then(|state| PlayState::from_name(&state));
-                if let (Some(pid), Some(state)) = (pid(), state) {
-                    self.shared().set_play_state(pid, state);
-                }
-            }
+            GET_PLAY_STATE => match (pid(), response.play_state()) {
+                (Some(pid), Ok(state)) => self.shared().set_play_state(pid, state),
+                (_, Err(error)) => tracing::debug!(%error, "HEOS play state not valid"),
+                (None, Ok(_)) => {}
+            },
             GET_NOW_PLAYING => match (pid(), response.now_playing()) {
                 // An item without any text means that the title is not known
                 // yet, for example when AirPlay starts.
