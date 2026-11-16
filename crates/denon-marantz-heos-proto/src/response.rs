@@ -10,7 +10,7 @@ use crate::de;
 use crate::error::Error;
 use crate::event::Event;
 use crate::message::Message;
-use crate::types::{NowPlaying, PlayMode, RepeatMode};
+use crate::types::{NowPlaying, PlayMode, PlayState, RepeatMode};
 
 /// Prefix of the command name of an event.
 const EVENT_PREFIX: &str = "event/";
@@ -125,6 +125,12 @@ impl<'a> Response<'a> {
     #[must_use]
     pub fn count(&self) -> Option<u32> {
         self.message().parse("count").ok()
+    }
+
+    /// Play state from the message of `get_play_state`. `None` means that
+    /// the device sent `unknown`.
+    pub fn play_state(&self) -> Result<Option<PlayState>, Error> {
+        self.message().play_state()
     }
 
     /// Repeat and shuffle modes from the message of `get_play_mode` and
@@ -357,6 +363,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(response.status(), Status::UnderProcess);
+    }
+
+    #[test]
+    fn play_state() {
+        let parse = |state: &str| {
+            let line = format!(
+                r#"{{"heos":{{"command":"player/get_play_state","result":"success","message":"pid=1&state={state}"}}}}"#
+            );
+            Response::parse(&line).unwrap().play_state()
+        };
+        assert_eq!(parse("stop"), Ok(Some(PlayState::Stop)));
+        assert_eq!(parse("unknown"), Ok(None));
+        assert_eq!(parse("rewind"), Err(Error::InvalidValue { field: "state" }));
     }
 
     #[test]

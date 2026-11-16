@@ -3,7 +3,6 @@
 use std::fmt::Write as _;
 
 use crate::error::Error;
-use crate::message::push_encoded;
 use crate::types::{PlayState, PlayerId, QueueId, RepeatMode, SourceId};
 
 /// Highest quick select slot.
@@ -126,14 +125,14 @@ pub enum Command<'a> {
         pid: PlayerId,
         /// Player that has the input, if it is another player.
         source: Option<PlayerId>,
-        /// Input name.
+        /// Input name. It is sent as it is: the device does not decode it.
         input: &'a str,
     },
     /// Plays a stream from a URL.
     PlayStream {
         /// Player.
         pid: PlayerId,
-        /// Absolute URL.
+        /// Absolute URL. It is sent as it is: the device does not decode it.
         url: &'a str,
     },
 }
@@ -260,15 +259,12 @@ impl Command<'_> {
                 if let Some(spid) = source {
                     write!(out, "&spid={spid}")?;
                 }
-                out.push_str("&input=");
-                push_encoded(out, input);
-                Ok(())
+                write!(out, "&input={input}")
             }
             Self::PlayStream { pid, url } => {
-                // The URL must be the last argument.
-                write!(out, "?pid={pid}&url=")?;
-                push_encoded(out, url);
-                Ok(())
+                // The URL must be the last argument, so that `&` and `=` in it
+                // do not end it.
+                write!(out, "?pid={pid}&url={url}")
             }
         }
     }
@@ -367,7 +363,7 @@ mod tests {
                     pid,
                     url: "http://host/a.mp3?x=1&y=50%",
                 },
-                "heos://browse/play_stream?pid=-12&url=http://host/a.mp3?x%3D1%26y%3D50%25",
+                "heos://browse/play_stream?pid=-12&url=http://host/a.mp3?x=1&y=50%",
             ),
         ];
         for (command, expected) in cases {
@@ -432,6 +428,27 @@ mod tests {
             assert_eq!(command.write(&mut out), Err(expected.clone()));
             assert_eq!(out, "kept");
             assert!(expected.is_invalid_input());
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn text_values_give_one_line_or_an_error(text in proptest::prelude::any::<String>()) {
+            let pid = PlayerId(1);
+            let commands = [
+                Command::PlayStream { pid, url: &text },
+                Command::PlayInput { pid, source: None, input: &text },
+            ];
+            for command in commands {
+                let mut out = String::new();
+                if command.write(&mut out).is_ok() {
+                    let body = out.strip_suffix("\r\n").unwrap_or_default();
+                    proptest::prop_assert!(!body.contains(['\r', '\n']), "{out:?}");
+                    proptest::prop_assert!(body.ends_with(&*text), "{out:?}");
+                } else {
+                    proptest::prop_assert!(out.is_empty());
+                }
+            }
         }
     }
 }
