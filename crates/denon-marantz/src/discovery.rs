@@ -203,7 +203,7 @@ pub async fn discover(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver
     }
     let mut receivers = Vec::new();
     while let Some(result) = fetches.join_next().await {
-        if let Ok(Some(receiver)) = result
+        if let Ok(Described::Receiver(receiver)) = result
             && !receivers
                 .iter()
                 .any(|r: &DiscoveredReceiver| r.host == receiver.host)
@@ -278,21 +278,38 @@ async fn search(
     Ok(answers)
 }
 
-/// Fetches the description at the location. Returns the receiver, or `None` if
-/// the device is not a Denon or Marantz AV receiver or cannot be read.
+/// Result of [`describe`].
+enum Described {
+    /// A Denon or Marantz AV receiver.
+    Receiver(DiscoveredReceiver),
+    /// The device information says that the device is not an AV receiver.
+    NotReceiver,
+    /// The description cannot be read or is not from a Denon or Marantz
+    /// receiver.
+    Unusable,
+}
+
+/// Fetches the description at the location and identifies the receiver.
 async fn describe(
     location: &Location,
     http: HttpConfig,
     probes: Option<&[(ReceiverType, u16)]>,
-) -> Option<DiscoveredReceiver> {
-    let client = HttpClient::new(&location.host, location.port, http).ok()?;
-    let description = client
+) -> Described {
+    let Ok(client) = HttpClient::new(&location.host, location.port, http) else {
+        return Described::Unusable;
+    };
+    let description = match client
         .get_parsed(&location.path, |body| {
             DeviceDescription::parse(body).map(DeviceDescription::into_owned)
         })
         .await
-        .inspect_err(|error| tracing::debug!(%error, "description not used"))
-        .ok()?;
+    {
+        Ok(description) => description,
+        Err(error) => {
+            tracing::debug!(%error, "description not used");
+            return Described::Unusable;
+        }
+    };
     // A device that does not answer the device information is kept: older
     // receivers have no such page.
     let identified = match probes {
@@ -308,9 +325,9 @@ async fn describe(
         .is_some_and(|device_info| !device_info.is_av_receiver())
     {
         tracing::debug!(host = %location.host, "device is not an AV receiver");
-        return None;
+        return Described::NotReceiver;
     }
-    Some(DiscoveredReceiver {
+    Described::Receiver(DiscoveredReceiver {
         host: location.host.clone(),
         brand: description.brand(),
         manufacturer: description.manufacturer.to_string(),

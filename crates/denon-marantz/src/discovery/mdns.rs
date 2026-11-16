@@ -9,11 +9,11 @@ use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent};
 use tokio::time::Instant;
 
 use super::{
-    DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local, serial,
+    Described, DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local, serial,
     sort_by_address,
 };
 use crate::error::Error;
-use crate::identify::{identify, identify_on};
+use crate::identify::{Identified, identify, identify_on};
 
 /// Most services that are used. An announcement can name any number of them.
 const MAX_SERVICES: usize = 64;
@@ -74,10 +74,11 @@ fn network_error(request: &str, source: mdns_sd::Error) -> Error {
 /// It browses for the service that receivers announce, waits for
 /// [`DiscoveryConfig::wait`], and reads the device description of each service
 /// that answered. A device that is not an AV receiver is left out. A receiver
-/// whose description cannot be read is kept if it answers the device
-/// information, and then has only the model and no friendly name. The serial
-/// number is the one in the description, or the device identifier of the
-/// announcement if the description has none. The result is sorted by address.
+/// whose description cannot be read is kept if the device information proves
+/// that it is an AV receiver, and then has only the model and no friendly
+/// name. The serial number is the one in the description, or the device
+/// identifier of the announcement if the description has none. The result is
+/// sorted by address.
 ///
 /// Only [`DiscoveryConfig::wait`], [`DiscoveryConfig::http`] and
 /// [`DiscoveryConfig::probes`] are used. [`DiscoveryConfig::interfaces`],
@@ -235,25 +236,22 @@ async fn receiver(
         port: receiver_type.description_port(),
         path: receiver_type.description_path().to_owned(),
     };
-    let locations = DESCRIPTION_TYPES.map(location);
-    let mut described = None;
-    for location in &locations {
-        described = describe(location, http, probes).await;
-        if described.is_some() {
-            break;
+    for location in DESCRIPTION_TYPES.map(location) {
+        match describe(&location, http, probes).await {
+            Described::Receiver(mut found) => {
+                found.serial_number = serial(found.serial_number).or_else(|| announced.did.clone());
+                return Some(found);
+            }
+            Described::NotReceiver => return None,
+            Described::Unusable => {}
         }
     }
-    if let Some(mut found) = described {
-        found.serial_number = serial(found.serial_number).or_else(|| announced.did.clone());
-        return Some(found);
-    }
-    // No description. A receiver that answers the device information is kept.
     let identified = match probes {
         Some(probes) => identify_on(&host, probes, http).await,
         None => identify(&host, http).await,
     }
     .ok()?;
-    if !identified.device_info.is_av_receiver() {
+    if !is_proven_receiver(&identified) {
         return None;
     }
     // The model text has the brand only on some receivers. Marantz needs its name.
@@ -285,10 +283,17 @@ async fn receiver(
     })
 }
 
+/// Returns true if a device without a description is kept: the answers must
+/// prove that it is an AV receiver. HEOS speakers announce the same service.
+fn is_proven_receiver(identified: &Identified) -> bool {
+    identified.type_proof.is_proven() && identified.device_info.is_av_receiver()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::identify::TypeProof;
+    use denon_marantz_proto::DeviceInfo;
 
     fn receiver(host: &str, name: &str) -> DiscoveredReceiver {
         DiscoveredReceiver {
@@ -445,5 +450,28 @@ mod tests {
         assert!(!found.contains_key("new"));
         store(&mut found, "0", Some(announced("192.168.1.5")));
         assert_eq!(found["0"].address, "192.168.1.5".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn a_device_without_a_description_needs_proof() {
+        let identified = |type_proof, category: Option<&'static str>| Identified {
+            receiver_type: ReceiverType::Avr,
+            port: 80,
+            device_info: DeviceInfo {
+                category: category.map(Into::into),
+                ..DeviceInfo::default()
+            },
+            type_proof,
+        };
+        assert!(is_proven_receiver(&identified(TypeProof::Read, None)));
+        assert!(is_proven_receiver(&identified(
+            TypeProof::OldModelPage,
+            None
+        )));
+        assert!(!is_proven_receiver(&identified(TypeProof::Failed, None)));
+        assert!(!is_proven_receiver(&identified(
+            TypeProof::Read,
+            Some("SOUND BAR")
+        )));
     }
 }
