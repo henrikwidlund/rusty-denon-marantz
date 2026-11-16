@@ -4,7 +4,7 @@ use std::future::{Future, poll_fn};
 use std::pin::Pin;
 use std::task::Poll;
 
-use denon_marantz_proto::{DEVICE_INFO_PATH, DeviceInfo, ReceiverType};
+use denon_marantz_proto::{DEVICE_INFO_PATH, DeviceInfo, ReceiverType, is_old_model_page};
 
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
@@ -18,6 +18,36 @@ pub struct Identified {
     pub port: u16,
     /// Values from the device information. Empty if the receiver has none.
     pub device_info: DeviceInfo<'static>,
+    /// What the receiver type is based on.
+    pub type_proof: TypeProof,
+}
+
+/// What the receiver type in [`Identified`] is based on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum TypeProof {
+    /// A port sent a usable `Deviceinfo.xml`. The type comes from it.
+    Read,
+    /// No port sent a usable `Deviceinfo.xml`, but one sent the error page of
+    /// old receivers. The type is [`ReceiverType::Avr`].
+    OldModelPage,
+    /// Nothing proves the type: the ports sent other answers or no answer.
+    /// The type is [`ReceiverType::Avr`], which can be wrong.
+    Failed,
+}
+
+impl TypeProof {
+    /// Returns true if the answers prove the type.
+    #[must_use]
+    pub const fn is_proven(self) -> bool {
+        matches!(self, Self::Read | Self::OldModelPage)
+    }
+}
+
+/// Answer of one port.
+enum Page {
+    Info(DeviceInfo<'static>),
+    OldModel,
 }
 
 /// Ports to try. For types on the same port, the first one is used.
@@ -30,8 +60,9 @@ const CANDIDATES: [(ReceiverType, u16); 3] = [
 /// Finds the type of the receiver by asking for `Deviceinfo.xml`.
 ///
 /// Newer receivers answer on port 8080, older AVR-X receivers on port 80.
-/// Receivers that are not AVR-X give an error page or no usable XML. They are
-/// reported as [`ReceiverType::Avr`] on port 80.
+/// Receivers that are not AVR-X give an error page, no usable XML, or XML
+/// without the AVR-X marks. They are reported as [`ReceiverType::Avr`] on
+/// port 80. [`Identified::type_proof`] tells if the answers prove the type.
 ///
 /// # Errors
 ///
@@ -41,7 +72,7 @@ pub async fn identify(host: &str, config: HttpConfig) -> Result<Identified, Erro
     identify_on(host, &CANDIDATES, config).await
 }
 
-type Answer = (u16, Result<DeviceInfo<'static>, Error>);
+type Answer = (u16, Result<Page, Error>);
 
 /// Like [`identify`], with your own list of types and ports to try.
 ///
@@ -66,8 +97,10 @@ pub async fn identify_on(
         let client = HttpClient::new(host, port, config)?;
         pending.push(Box::pin(async move {
             let info = client
-                .get_parsed(DEVICE_INFO_PATH, |body| {
-                    DeviceInfo::parse(body).map(DeviceInfo::into_owned)
+                .get_parsed(DEVICE_INFO_PATH, |body| match DeviceInfo::parse(body) {
+                    Ok(info) => Ok(Page::Info(info.into_owned())),
+                    Err(_) if is_old_model_page(body) => Ok(Page::OldModel),
+                    Err(error) => Err(error),
                 })
                 .await;
             (port, info)
@@ -80,6 +113,7 @@ pub async fn identify_on(
         .map_or(ReceiverType::Avr.port(), |&(_, port)| port);
     let ports = pending.len();
     let mut device_info = None;
+    let mut old_model_page = false;
     let mut last_error = None;
     let mut unreachable = 0;
     while !pending.is_empty() {
@@ -101,7 +135,12 @@ pub async fn identify_on(
             .find(|&&(_, p)| p == port)
             .map_or(ReceiverType::Avr, |&(receiver_type, _)| receiver_type);
         let info = match info {
-            Ok(info) => info,
+            Ok(Page::Info(info)) => info,
+            Ok(Page::OldModel) => {
+                tracing::debug!(host, port, "old receiver error page");
+                old_model_page = true;
+                continue;
+            }
             Err(error) if error.is_unreachable() => {
                 tracing::debug!(host, port, %error, "no answer when identifying the receiver");
                 unreachable += 1;
@@ -119,6 +158,7 @@ pub async fn identify_on(
                 receiver_type,
                 port,
                 device_info: info,
+                type_proof: TypeProof::Read,
             });
         }
         if port == avr_port || device_info.is_none() {
@@ -130,10 +170,22 @@ pub async fn identify_on(
     {
         return Err(error);
     }
-    tracing::info!(host, "identified avr receiver");
+    let type_proof = if device_info.is_some() {
+        TypeProof::Read
+    } else if old_model_page {
+        TypeProof::OldModelPage
+    } else {
+        TypeProof::Failed
+    };
+    if type_proof == TypeProof::Failed {
+        tracing::warn!(host, "nothing proves the receiver type, using avr");
+    } else {
+        tracing::info!(host, ?type_proof, "identified avr receiver");
+    }
     Ok(Identified {
         receiver_type: ReceiverType::Avr,
         port: avr_port,
         device_info: device_info.unwrap_or_default(),
+        type_proof,
     })
 }

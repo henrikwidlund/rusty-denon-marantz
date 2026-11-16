@@ -281,12 +281,14 @@ async fn receiver(
             .device_info
             .mac_address
             .map(std::borrow::Cow::into_owned),
+        type_proof: identified.type_proof,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identify::TypeProof;
 
     fn receiver(host: &str, name: &str) -> DiscoveredReceiver {
         DiscoveredReceiver {
@@ -297,6 +299,7 @@ mod tests {
             friendly_name: Some(name.to_owned()),
             serial_number: None,
             mac_address: None,
+            type_proof: TypeProof::Read,
         }
     }
 

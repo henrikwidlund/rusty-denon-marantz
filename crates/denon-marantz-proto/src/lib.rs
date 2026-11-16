@@ -55,6 +55,7 @@ pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
 pub use device_info::{
     DEVICE_INFO_PATH, DeviceInfo, ListedQueries, TunerBands, TunerInfo, is_avr_x_model,
+    is_old_model_page,
 };
 pub use device_settings::DeviceSettingValue;
 pub use error::Error;

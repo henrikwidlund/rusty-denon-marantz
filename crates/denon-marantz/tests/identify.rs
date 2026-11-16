@@ -5,16 +5,18 @@
 mod common;
 
 use common::{Fake, Reply, config};
-use denon_marantz::identify_on;
+use denon_marantz::{TypeProof, identify_on};
 use denon_marantz_proto::ReceiverType;
 
 const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
     <DeviceZones>2</DeviceZones><Caps><DiracLive/></Caps></Device_Info>";
+/// Made up: no capture has readable XML without the AVR-X marks.
 const OLD_INFO: &[u8] =
-    b"<Device_Info><CommApiVers>0100</CommApiVers><ModelName>AVR-1713</ModelName>\
+    b"<Device_Info><CommApiVers>0100</CommApiVers><ModelName>AVR-FAKE</ModelName>\
     <DeviceZones>1</DeviceZones></Device_Info>";
-const HTML: &[u8] = b"<html><body>Form Deviceinfo.xml is not defined</body></html>";
+const OLD_MODEL_PAGE: &[u8] =
+    include_bytes!("../../denon-marantz-proto/tests/data/xml/AVR-1912-Deviceinfo.xml");
 
 fn unused_port() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -38,6 +40,7 @@ async fn first_avr_x_answer_wins() {
     assert_eq!(found.device_info.model_name.as_deref(), Some("AVC-X3700H"));
     assert_eq!(found.device_info.device_zones, Some(2));
     assert!(found.device_info.dirac_live);
+    assert_eq!(found.type_proof, TypeProof::Read);
     // The silent port is not waited for.
     assert!(started.elapsed() < config().request_timeout);
 }
@@ -80,7 +83,8 @@ async fn old_receiver_on_a_shared_port_keeps_its_device_info() {
         .unwrap();
     assert_eq!(found.receiver_type, ReceiverType::Avr);
     assert_eq!(found.port, fake.port);
-    assert_eq!(found.device_info.model_name.as_deref(), Some("AVR-1713"));
+    assert_eq!(found.device_info.model_name.as_deref(), Some("AVR-FAKE"));
+    assert_eq!(found.type_proof, TypeProof::Read);
     assert_eq!(fake.requests().len(), 1);
 }
 
@@ -100,8 +104,8 @@ async fn falls_back_to_the_next_port() {
 }
 
 #[tokio::test]
-async fn error_pages_mean_avr() {
-    let fake = Fake::start(|_| Reply::Body(HTML.to_vec())).await;
+async fn old_model_page_means_avr() {
+    let fake = Fake::start(|_| Reply::Body(OLD_MODEL_PAGE.to_vec())).await;
     let candidates = [
         (ReceiverType::AvrX2016, fake.port),
         (ReceiverType::AvrX, fake.port),
@@ -112,6 +116,7 @@ async fn error_pages_mean_avr() {
     assert_eq!(found.receiver_type, ReceiverType::Avr);
     assert_eq!(found.port, 80);
     assert_eq!(found.device_info.model_name, None);
+    assert_eq!(found.type_proof, TypeProof::OldModelPage);
     // Each port is asked once.
     assert_eq!(fake.requests().len(), 1);
 }
@@ -124,6 +129,90 @@ async fn http_errors_mean_avr() {
         .await
         .unwrap();
     assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.type_proof, TypeProof::Failed);
+}
+
+#[tokio::test]
+async fn server_errors_prove_nothing() {
+    let new = Fake::start(|_| Reply::Status(500)).await;
+    let old = Fake::start(|_| Reply::Status(500)).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, new.port),
+        (ReceiverType::AvrX, old.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.type_proof, TypeProof::Failed);
+}
+
+#[tokio::test]
+async fn other_html_proves_nothing() {
+    let fake = Fake::start(|_| Reply::Body(b"<html><body>Login</body></html>".to_vec())).await;
+    let candidates = [(ReceiverType::AvrX, fake.port)];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.type_proof, TypeProof::Failed);
+}
+
+#[tokio::test]
+async fn avr_x_on_one_port_is_read_after_a_redirect_on_another() {
+    let new = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
+    let old = Fake::start(|_| Reply::Status(302)).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, new.port),
+        (ReceiverType::AvrX, old.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::AvrX2016);
+    assert_eq!(found.type_proof, TypeProof::Read);
+}
+
+#[tokio::test]
+async fn old_model_page_on_one_port_wins_over_an_error_on_another() {
+    let new = Fake::start(|_| Reply::Status(403)).await;
+    let old = Fake::start(|_| Reply::Body(OLD_MODEL_PAGE.to_vec())).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, new.port),
+        (ReceiverType::AvrX, old.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.type_proof, TypeProof::OldModelPage);
+}
+
+#[tokio::test]
+async fn old_model_page_wins_over_no_answer_on_another_port() {
+    let old = Fake::start(|_| Reply::Body(OLD_MODEL_PAGE.to_vec())).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, unused_port()),
+        (ReceiverType::AvrX, old.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.type_proof, TypeProof::OldModelPage);
+}
+
+#[tokio::test]
+async fn no_answer_on_one_port_and_an_error_on_another_proves_nothing() {
+    let old = Fake::start(|_| Reply::Status(404)).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, unused_port()),
+        (ReceiverType::AvrX, old.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.type_proof, TypeProof::Failed);
 }
 
 #[tokio::test]
@@ -134,8 +223,9 @@ async fn device_info_of_an_old_receiver_is_kept() {
         .await
         .unwrap();
     assert_eq!(found.receiver_type, ReceiverType::Avr);
-    assert_eq!(found.device_info.model_name.as_deref(), Some("AVR-1713"));
+    assert_eq!(found.device_info.model_name.as_deref(), Some("AVR-FAKE"));
     assert_eq!(found.device_info.device_zones, Some(1));
+    assert_eq!(found.type_proof, TypeProof::Read);
 }
 
 #[tokio::test]
@@ -163,4 +253,11 @@ async fn silence_is_a_timeout_error() {
         .await
         .unwrap_err();
     assert!(error.is_timeout(), "{error:?}");
+}
+
+#[test]
+fn proven_types() {
+    assert!(TypeProof::Read.is_proven());
+    assert!(TypeProof::OldModelPage.is_proven());
+    assert!(!TypeProof::Failed.is_proven());
 }

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
 use denon_marantz_proto::{
     Brand, DeviceDescription, DeviceInfo, Error, HdmiOutput, ListedQueries, NowPlaying, State,
-    TunerBand, TunerInfo, TunerPage, Zone,
+    TunerBand, TunerInfo, TunerPage, Zone, is_old_model_page,
 };
 
 const DEFINITIONS: [(&str, Definition); 10] = [
@@ -177,10 +177,12 @@ fn device_info_has_the_expected_values() {
                 Error::HtmlResponse,
                 "{name}"
             );
+            assert!(is_old_model_page(&body), "{name}");
             html += 1;
             continue;
         }
         assert_eq!(f[1], "ok", "{name}");
+        assert!(!is_old_model_page(&body), "{name}");
         let info = DeviceInfo::parse(&body).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(
             info.comm_api_version.as_deref(),

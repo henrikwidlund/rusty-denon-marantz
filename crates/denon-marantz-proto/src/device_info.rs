@@ -346,6 +346,18 @@ impl<'a> DeviceInfo<'a> {
     }
 }
 
+/// Returns true if the body is the error page that old receivers send for
+/// `Deviceinfo.xml`, for example "Form Deviceinfo.xml is not defined". Such
+/// a receiver is not an AVR-X receiver.
+#[must_use]
+pub fn is_old_model_page(body: &[u8]) -> bool {
+    const NEEDLE: &[u8] = b"is not defined";
+    body.trim_ascii_start()
+        .get(..5)
+        .is_some_and(|start| start.eq_ignore_ascii_case(b"<html"))
+        && body.windows(NEEDLE.len()).any(|part| part == NEEDLE)
+}
+
 /// Returns true if the model name belongs to an AVR-X receiver.
 #[must_use]
 pub fn is_avr_x_model(name: &str) -> bool {
@@ -516,6 +528,19 @@ mod tests {
             DeviceInfo::parse(xml).unwrap().model_name.as_deref(),
             Some("A&B A")
         );
+    }
+
+    #[test]
+    fn old_model_page() {
+        let page = b"<html><head><title>Document Error: Data follows</title></head>\
+                     <body><p>Form Deviceinfo.xml is not defined</p></body></html>";
+        assert!(is_old_model_page(page));
+        assert!(is_old_model_page(b" \n<HTML>is not defined"));
+        assert!(!is_old_model_page(b"<html><body>Not found</body></html>"));
+        assert!(!is_old_model_page(
+            b"<Device_Info>is not defined</Device_Info>"
+        ));
+        assert!(!is_old_model_page(b""));
     }
 
     #[test]

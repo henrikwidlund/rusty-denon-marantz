@@ -1,7 +1,7 @@
 //! The device information and the device description.
 #![no_main]
 
-use denon_marantz_proto::{DeviceDescription, DeviceInfo};
+use denon_marantz_proto::{DeviceDescription, DeviceInfo, is_old_model_page};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -9,6 +9,8 @@ fuzz_target!(|data: &[u8]| {
         let _ = info.is_av_receiver();
         let _ = info.is_avr_x();
         let _ = info.into_owned();
+    } else {
+        let _ = is_old_model_page(data);
     }
     if let Ok(description) = DeviceDescription::parse(data) {
         let _ = description.brand();

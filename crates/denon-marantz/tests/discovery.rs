@@ -11,7 +11,7 @@ use common::{
     AV_RECEIVER_INFO, Fake, FakeSsdp, Reply, SOUND_BAR_INFO, avr_x_receiver,
     avr_x_receiver_with_info, ssdp_answer,
 };
-use denon_marantz::{DiscoveryConfig, Error, LocationPolicy, discover};
+use denon_marantz::{DiscoveryConfig, Error, LocationPolicy, TypeProof, discover};
 use denon_marantz_proto::{Brand, ReceiverType};
 
 const LOOPBACK: Ipv4Addr = Ipv4Addr::LOCALHOST;
@@ -44,6 +44,7 @@ async fn a_receiver_that_answers_is_found() {
     assert_eq!(receiver.model_name.as_deref(), Some("Denon AVR-X1600H"));
     assert_eq!(receiver.serial_number.as_deref(), Some("XXX"));
     assert_eq!(receiver.mac_address.as_deref(), Some("0123456789AB"));
+    assert_eq!(receiver.type_proof, TypeProof::Read);
     assert!(receiver.friendly_name.is_some());
     // One search for each target.
     let requests = ssdp.requests();

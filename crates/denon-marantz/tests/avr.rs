@@ -10,7 +10,7 @@ use common::{
     friendly_name_answer, is_friendly_name_request, output_settings_item, receiver_with_audyssey,
     receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
 };
-use denon_marantz::{Avr, Error, ListedQueries, PageStatus, UpdateMethod};
+use denon_marantz::{Avr, Error, ListedQueries, PageStatus, TypeProof, UpdateMethod};
 use denon_marantz_proto::{
     AutoStandby, Availability, Brand, DimmerMode, EcoMode, HdmiOutput, NetworkControl, Power,
     ReceiverType, SettingsGroup, ToneLevel, Volume, Zone,
@@ -26,8 +26,9 @@ const OLD_ZONE2_STATUS: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVR-3313-formZone2_Zone2XmlStatus.xml"
 );
 
+/// Made up: no capture has readable XML without the AVR-X marks.
 const OLD_INFO: &[u8] =
-    b"<Device_Info><CommApiVers>0100</CommApiVers><ModelName>AVR-3313</ModelName>\
+    b"<Device_Info><CommApiVers>0100</CommApiVers><ModelName>AVR-FAKE</ModelName>\
     <DeviceZones>2</DeviceZones></Device_Info>";
 
 /// An older receiver that has status pages and an error page for the rest.
@@ -67,6 +68,7 @@ async fn connects_to_an_avr_x_receiver() {
     assert_eq!(info.serial_number.as_deref(), Some("XXX"));
     assert_eq!(info.comm_api_version.as_deref(), Some("0301"));
     assert_eq!(info.mac_address.as_deref(), Some("0123456789AB"));
+    assert_eq!(info.type_proof, TypeProof::Read);
     assert_eq!(info.zones, [Zone::Main, Zone::Zone2]);
     // Nothing is read until update.
     assert_eq!(avr.snapshot().zone(Zone::Main).power, None);

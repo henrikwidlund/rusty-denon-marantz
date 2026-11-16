@@ -34,7 +34,7 @@ use crate::device_control::{DeviceControl, ResetKeys};
 use crate::dirac::Dirac;
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
-use crate::identify::{Identified, identify, identify_on};
+use crate::identify::{Identified, TypeProof, identify, identify_on};
 use crate::pacer::Pacing;
 use crate::priority::Priority;
 use crate::sound_control::SoundControl;
@@ -145,6 +145,8 @@ pub struct Info {
     pub receiver_type: ReceiverType,
     /// HTTP port that is used for AppCommand and the status pages.
     pub port: u16,
+    /// What the receiver type is based on.
+    pub type_proof: TypeProof,
     /// How the state is read.
     pub update_method: UpdateMethod,
     /// Brand. If the receiver did not tell, the brand from
@@ -1566,6 +1568,7 @@ impl AvrBuilder {
             receiver_type,
             port,
             device_info,
+            type_proof,
         } = match &self.probes {
             Some(probes) => identify_on(&self.host, probes, self.http).await?,
             None => identify(&self.host, self.http).await?,
@@ -1585,6 +1588,7 @@ impl AvrBuilder {
             host: self.host,
             receiver_type,
             port,
+            type_proof,
             update_method,
             brand,
             manufacturer: description.as_ref().map(|d| d.manufacturer.to_string()),

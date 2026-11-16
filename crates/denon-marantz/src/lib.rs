@@ -146,7 +146,7 @@ pub use discovery::{discover_all, discover_mdns};
 #[cfg(feature = "http")]
 pub use http::{HttpClient, HttpConfig};
 #[cfg(feature = "http")]
-pub use identify::{Identified, identify, identify_on};
+pub use identify::{Identified, TypeProof, identify, identify_on};
 #[cfg(feature = "http")]
 pub use sound_control::SoundControl;
 #[cfg(feature = "http")]

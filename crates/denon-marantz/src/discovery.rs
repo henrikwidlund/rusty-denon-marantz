@@ -14,7 +14,7 @@ use tokio::time::Instant;
 
 use crate::error::Error;
 use crate::http::{HttpClient, HttpConfig};
-use crate::identify::{identify, identify_on};
+use crate::identify::{TypeProof, identify, identify_on};
 
 #[cfg(feature = "mdns")]
 mod mdns;
@@ -121,6 +121,9 @@ pub struct DiscoveredReceiver {
     /// MAC address of the wired network from the device information, as 12
     /// hexadecimal digits without separators.
     pub mac_address: Option<String>,
+    /// Whether the answers proved the receiver type. [`TypeProof::Failed`]
+    /// also if no port answered.
+    pub type_proof: TypeProof,
 }
 
 /// Looks for receivers with SSDP.
@@ -296,7 +299,10 @@ async fn describe(
         Some(probes) => identify_on(&location.host, probes, http).await,
         None => identify(&location.host, http).await,
     };
-    let device_info = identified.ok().map(|identified| identified.device_info);
+    let (device_info, type_proof) = match identified {
+        Ok(identified) => (Some(identified.device_info), identified.type_proof),
+        Err(_) => (None, TypeProof::Failed),
+    };
     if device_info
         .as_ref()
         .is_some_and(|device_info| !device_info.is_av_receiver())
@@ -312,6 +318,7 @@ async fn describe(
         friendly_name: description.friendly_name.map(|v| v.to_string()),
         serial_number: serial(description.serial_number.map(|v| v.to_string())),
         mac_address: device_info.and_then(|d| d.mac_address.map(std::borrow::Cow::into_owned)),
+        type_proof,
     })
 }
 
@@ -358,6 +365,7 @@ mod tests {
             friendly_name: None,
             serial_number: None,
             mac_address: None,
+            type_proof: TypeProof::Read,
         }
     }
 
