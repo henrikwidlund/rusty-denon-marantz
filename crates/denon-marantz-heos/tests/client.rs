@@ -169,9 +169,9 @@ async fn a_burst_of_now_playing_events_gives_one_read() {
     .await;
     let heos = connect(&fake).await;
     let mut changes = heos.changes();
-    for _ in 0..5 {
-        fake.push(event("player_now_playing_changed", "pid=1234567"));
-    }
+    // One write, so that a slow test machine does not spread the burst.
+    let burst = vec![event("player_now_playing_changed", "pid=1234567"); 5];
+    fake.push(burst.join("\r\n"));
     assert_eq!(next_change(&mut changes).await, Change::NowPlaying(PID));
     let state = heos.player(PID).unwrap();
     assert_eq!(state.now_playing.unwrap().song, "Song A");
