@@ -234,8 +234,8 @@ impl Heos {
             .read(|states| states.iter().find(|state| state.pid() == pid).cloned())
     }
 
-    /// The player with this IP address. An AV receiver has one player for
-    /// all zones.
+    /// The player with this IP address. The AVC-A10H has one player for all
+    /// its zones.
     #[must_use]
     pub fn player_by_ip(&self, ip: IpAddr) -> Option<PlayerId> {
         self.shared.read(|states| {
