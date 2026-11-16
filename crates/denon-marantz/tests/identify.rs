@@ -22,22 +22,66 @@ fn unused_port() -> u16 {
 }
 
 #[tokio::test]
-async fn newest_generation_is_tried_first() {
-    let new = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
+async fn first_avr_x_answer_wins() {
+    let silent = Fake::start(|_| Reply::Hang).await;
     let old = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
     let candidates = [
-        (ReceiverType::AvrX2016, new.port),
+        (ReceiverType::AvrX2016, silent.port),
         (ReceiverType::AvrX, old.port),
+    ];
+    let started = std::time::Instant::now();
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::AvrX);
+    assert_eq!(found.port, old.port);
+    assert_eq!(found.device_info.model_name.as_deref(), Some("AVC-X3700H"));
+    assert_eq!(found.device_info.device_zones, Some(2));
+    assert!(found.device_info.dirac_live);
+    // The silent port is not waited for.
+    assert!(started.elapsed() < config().request_timeout);
+}
+
+#[tokio::test]
+async fn first_type_on_a_port_is_used() {
+    let fake = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
+    let candidates = [
+        (ReceiverType::AvrX2016, fake.port),
+        (ReceiverType::AvrX, fake.port),
     ];
     let found = identify_on("127.0.0.1", &candidates, config())
         .await
         .unwrap();
     assert_eq!(found.receiver_type, ReceiverType::AvrX2016);
-    assert_eq!(found.port, new.port);
-    assert_eq!(found.device_info.model_name.as_deref(), Some("AVC-X3700H"));
-    assert_eq!(found.device_info.device_zones, Some(2));
-    assert!(found.device_info.dirac_live);
-    assert_eq!(old.requests().len(), 0);
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn one_probe_sends_one_request() {
+    let fake = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
+    let candidates = [(ReceiverType::AvrX2016, fake.port)];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::AvrX2016);
+    assert_eq!(found.port, fake.port);
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn old_receiver_on_a_shared_port_keeps_its_device_info() {
+    let fake = Fake::start(|_| Reply::Body(OLD_INFO.to_vec())).await;
+    let candidates = [
+        (ReceiverType::AvrX, fake.port),
+        (ReceiverType::Avr, fake.port),
+    ];
+    let found = identify_on("127.0.0.1", &candidates, config())
+        .await
+        .unwrap();
+    assert_eq!(found.receiver_type, ReceiverType::Avr);
+    assert_eq!(found.port, fake.port);
+    assert_eq!(found.device_info.model_name.as_deref(), Some("AVR-1713"));
+    assert_eq!(fake.requests().len(), 1);
 }
 
 #[tokio::test]
@@ -68,7 +112,8 @@ async fn error_pages_mean_avr() {
     assert_eq!(found.receiver_type, ReceiverType::Avr);
     assert_eq!(found.port, 80);
     assert_eq!(found.device_info.model_name, None);
-    assert_eq!(fake.requests().len(), 2);
+    // Each port is asked once.
+    assert_eq!(fake.requests().len(), 1);
 }
 
 #[tokio::test]

@@ -25,7 +25,7 @@
 //! - `--mdns-only`: search with mDNS only. Needs the `mdns` feature.
 //! - `--wait SECONDS`: time to wait for answers, default 2.5.
 //!
-//! The output has the serial number of each receiver.
+//! The output has the serial number and the MAC address of each receiver.
 
 use std::net::Ipv4Addr;
 use std::time::Duration;
@@ -106,12 +106,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for receiver in receivers {
         println!(
-            "{:<16} {} | {} | {} | {}",
+            "{:<16} {} | {} | {} | {} | {}",
             receiver.host,
             receiver.brand.name(),
             receiver.model_name.as_deref().unwrap_or("-"),
             receiver.friendly_name.as_deref().unwrap_or("-"),
             receiver.serial_number.as_deref().unwrap_or("-"),
+            receiver.mac_address.as_deref().unwrap_or("-"),
         );
     }
     Ok(())

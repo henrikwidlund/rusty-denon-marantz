@@ -269,6 +269,54 @@ async fn marantz_description_gives_the_brand() {
 }
 
 #[tokio::test]
+async fn given_brand_is_used_without_a_description() {
+    let fake = Fake::start(|seen| match seen.path.as_str() {
+        "/goform/Deviceinfo.xml" => Reply::Body(AVR_X_INFO.to_vec()),
+        "/goform/AppCommand.xml" => Reply::Body(b"<rx><cmd/></rx>".to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .brand(Brand::Marantz)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.info().brand, Brand::Marantz);
+    assert_eq!(avr.info().friendly_name, "Marantz AVR");
+}
+
+#[tokio::test]
+async fn description_brand_wins_over_the_given_one() {
+    let fake = avr_x_receiver().await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .brand(Brand::Marantz)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.info().brand, Brand::Denon);
+}
+
+#[tokio::test]
+async fn description_is_tried_again_unless_it_timed_out() {
+    for (hang, tries) in [(false, 2), (true, 1)] {
+        let fake = Fake::start(move |seen| match seen.path.as_str() {
+            "/goform/Deviceinfo.xml" => Reply::Body(AVR_X_INFO.to_vec()),
+            "/description.xml" if hang => Reply::Hang,
+            "/description.xml" => Reply::Close,
+            _ => Reply::Status(404),
+        })
+        .await;
+        connect(&fake, ReceiverType::AvrX).await.unwrap();
+        let seen = fake
+            .requests()
+            .iter()
+            .filter(|seen| seen.path == "/description.xml")
+            .count();
+        assert_eq!(seen, tries);
+    }
+}
+
+#[tokio::test]
 async fn nothing_answering_is_an_error() {
     let unused = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = unused.local_addr().unwrap().port();

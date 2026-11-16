@@ -277,6 +277,10 @@ async fn receiver(
             .or_else(|| announced.model.clone()),
         friendly_name: None,
         serial_number: announced.did.clone(),
+        mac_address: identified
+            .device_info
+            .mac_address
+            .map(std::borrow::Cow::into_owned),
     })
 }
 
@@ -292,6 +296,7 @@ mod tests {
             model_name: None,
             friendly_name: Some(name.to_owned()),
             serial_number: None,
+            mac_address: None,
         }
     }
 

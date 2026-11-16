@@ -400,9 +400,10 @@ cargo run -p denon-marantz-heos --example remote -- 192.168.1.20
 `http_check` tests commands over HTTP on a real receiver. It changes settings and
 can switch power, so read the header of the file before you run it.
 
-`status` prints the serial number of the receiver. Remove it before you share
-the output. `start` shows how long `Avr::start` takes and what it read. `remote`
-runs one command, the header of the file lists them.
+`status` prints the serial number of the receiver, and `discover` prints the
+serial number and the MAC address of each receiver. Remove them before you
+share the output. `start` shows how long `Avr::start` takes and what it read.
+`remote` runs one command, the header of the file lists them.
 
 The HEOS `watch` prints what changes. The HEOS `remote` reads commands from
 the standard input, one per line, the header of the file lists them. Their

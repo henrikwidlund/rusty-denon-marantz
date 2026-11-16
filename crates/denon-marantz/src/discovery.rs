@@ -118,6 +118,9 @@ pub struct DiscoveredReceiver {
     pub friendly_name: Option<String>,
     /// Serial number from the device description.
     pub serial_number: Option<String>,
+    /// MAC address of the wired network from the device information, as 12
+    /// hexadecimal digits without separators.
+    pub mac_address: Option<String>,
 }
 
 /// Looks for receivers with SSDP.
@@ -293,7 +296,11 @@ async fn describe(
         Some(probes) => identify_on(&location.host, probes, http).await,
         None => identify(&location.host, http).await,
     };
-    if identified.is_ok_and(|identified| !identified.device_info.is_av_receiver()) {
+    let device_info = identified.ok().map(|identified| identified.device_info);
+    if device_info
+        .as_ref()
+        .is_some_and(|device_info| !device_info.is_av_receiver())
+    {
         tracing::debug!(host = %location.host, "device is not an AV receiver");
         return None;
     }
@@ -304,6 +311,7 @@ async fn describe(
         model_name: description.model_name.map(|v| v.to_string()),
         friendly_name: description.friendly_name.map(|v| v.to_string()),
         serial_number: serial(description.serial_number.map(|v| v.to_string())),
+        mac_address: device_info.and_then(|d| d.mac_address.map(std::borrow::Cow::into_owned)),
     })
 }
 
@@ -349,6 +357,7 @@ mod tests {
             model_name: None,
             friendly_name: None,
             serial_number: None,
+            mac_address: None,
         }
     }
 
