@@ -5,9 +5,9 @@ use std::fmt::Write as _;
 
 use crate::error::Error;
 use crate::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter, DialogEnhancerLevel,
-    Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, Mdax,
-    RoomSize, SpeakerPreset, SurroundLevelCompensation,
+    AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter,
+    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, HeightGain, ImaxAudio,
+    ImaxMode, ImaxSubwooferOutput, Mdax, RoomSize, SpeakerPreset, SurroundLevelCompensation,
 };
 
 /// The name that a receiver uses for the center width: `PSCEN` in the protocol
@@ -30,6 +30,10 @@ const MAX_AUDIO_DELAY: u16 = 500;
 const MAX_DIMENSION: u16 = 6;
 const MAX_CENTER_WIDTH: u16 = 7;
 const MAX_EFFECT_LEVEL: u16 = 15;
+/// Highest dialog level in dB, above and below 0 dB.
+const MAX_DIALOG_LEVEL_DB: i8 = 12;
+/// Highest stage width and stage height in dB, above and below 0 dB.
+const MAX_STAGE_DB: i8 = 10;
 /// Center image and center gain go from 0.0 to 1.0 in steps of 0.1.
 const MAX_TENTHS: u16 = 10;
 /// Values of the IMAX filters in Hz.
@@ -385,6 +389,21 @@ pub enum SoundSettingValue {
     DelayTime(u16),
     /// Audio delay in ms, from 0 to 500.
     AudioDelay(u16),
+    /// Dialog Level Adjust on (`true`) or off (`false`). Older receivers
+    /// only.
+    DialogLevelAdjust(bool),
+    /// Dialog level in dB, from -12 to +12. Older receivers only.
+    DialogLevel(i8),
+    /// Audyssey DSX. Older receivers only.
+    AudysseyDsx(AudysseyDsx),
+    /// Stage width of Audyssey DSX in dB, from -10 to +10. Older receivers
+    /// only.
+    StageWidth(i8),
+    /// Stage height of Audyssey DSX in dB, from -10 to +10. Older receivers
+    /// only.
+    StageHeight(i8),
+    /// Height gain of Dolby `PLIIz`. Older receivers only.
+    HeightGain(HeightGain),
 }
 
 impl SoundSettingValue {
@@ -523,6 +542,14 @@ impl SoundSettingValue {
             ),
             Self::DelayTime(v) => digits(out, "PSDEL ", "delay time", v, MAX_DELAY_TIME, 3),
             Self::AudioDelay(v) => digits(out, "PSDELAY ", "audio delay", v, MAX_AUDIO_DELAY, 3),
+            Self::DialogLevelAdjust(on) => code(out, "PSDIL ", on_off_code(on)),
+            Self::DialogLevel(db) => {
+                decibels(out, "PSDIL ", "dialog level", db, MAX_DIALOG_LEVEL_DB)
+            }
+            Self::AudysseyDsx(v) => code(out, "PSDSX ", v.code()),
+            Self::StageWidth(db) => decibels(out, "PSSTW ", "stage width", db, MAX_STAGE_DB),
+            Self::StageHeight(db) => decibels(out, "PSSTH ", "stage height", db, MAX_STAGE_DB),
+            Self::HeightGain(v) => code(out, "PSPHG ", v.code()),
         }
     }
 }
@@ -560,6 +587,12 @@ pub enum SoundStep {
     CenterImage,
     /// Center gain. Older Marantz receivers only.
     CenterGain,
+    /// Dialog level. Older receivers only.
+    DialogLevel,
+    /// Stage width of Audyssey DSX. Older receivers only.
+    StageWidth,
+    /// Stage height of Audyssey DSX. Older receivers only.
+    StageHeight,
 }
 
 fn write_step(out: &mut String, step: SoundStep, direction: &str) -> Result<(), Error> {
@@ -586,6 +619,9 @@ fn write_step(out: &mut String, step: SoundStep, direction: &str) -> Result<(), 
         SoundStep::EffectLevel => "PSEFF",
         SoundStep::CenterImage => "PSCEI",
         SoundStep::CenterGain => "PSCEG",
+        SoundStep::DialogLevel => "PSDIL",
+        SoundStep::StageWidth => "PSSTW",
+        SoundStep::StageHeight => "PSSTH",
     };
     out.push_str(name);
     out.push(' ');
@@ -619,6 +655,24 @@ fn digits(
     out.push_str(start);
     // Writing to a `String` cannot fail.
     let _ = write!(out, "{value:0width$}");
+    Ok(())
+}
+
+/// Writes a level in dB from `-max` to `max`, with 50 for 0 dB. `max` is
+/// below 40, so the number has two digits.
+fn decibels(
+    out: &mut String,
+    start: &str,
+    what: &'static str,
+    db: i8,
+    max: i8,
+) -> Result<(), Error> {
+    if !(-max..=max).contains(&db) {
+        return Err(Error::ValueOutOfRange { what });
+    }
+    out.push_str(start);
+    // Writing to a `String` cannot fail.
+    let _ = write!(out, "{}", 50 + i16::from(db));
     Ok(())
 }
 
@@ -1082,6 +1136,94 @@ mod tests {
                 "{value:?}"
             );
         }
+    }
+
+    #[test]
+    fn dialog_level_dsx_and_height_gain_texts() {
+        let text = |value: SoundSettingValue| {
+            let mut out = String::new();
+            value.write(&mut out).map(|()| out)
+        };
+        let cases = [
+            (SoundSettingValue::DialogLevelAdjust(true), "PSDIL ON"),
+            (SoundSettingValue::DialogLevelAdjust(false), "PSDIL OFF"),
+            (SoundSettingValue::DialogLevel(-12), "PSDIL 38"),
+            (SoundSettingValue::DialogLevel(0), "PSDIL 50"),
+            (SoundSettingValue::DialogLevel(12), "PSDIL 62"),
+            (
+                SoundSettingValue::StepUp(SoundStep::DialogLevel),
+                "PSDIL UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::DialogLevel),
+                "PSDIL DOWN",
+            ),
+            (
+                SoundSettingValue::AudysseyDsx(AudysseyDsx::HeightAndWide),
+                "PSDSX ONHW",
+            ),
+            (
+                SoundSettingValue::AudysseyDsx(AudysseyDsx::Height),
+                "PSDSX ONH",
+            ),
+            (
+                SoundSettingValue::AudysseyDsx(AudysseyDsx::Wide),
+                "PSDSX ONW",
+            ),
+            (
+                SoundSettingValue::AudysseyDsx(AudysseyDsx::Off),
+                "PSDSX OFF",
+            ),
+            (SoundSettingValue::StageWidth(-10), "PSSTW 40"),
+            (SoundSettingValue::StageWidth(10), "PSSTW 60"),
+            (SoundSettingValue::StepUp(SoundStep::StageWidth), "PSSTW UP"),
+            (
+                SoundSettingValue::StepDown(SoundStep::StageWidth),
+                "PSSTW DOWN",
+            ),
+            (SoundSettingValue::StageHeight(-10), "PSSTH 40"),
+            (SoundSettingValue::StageHeight(3), "PSSTH 53"),
+            (
+                SoundSettingValue::StepUp(SoundStep::StageHeight),
+                "PSSTH UP",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::StageHeight),
+                "PSSTH DOWN",
+            ),
+            (SoundSettingValue::HeightGain(HeightGain::Low), "PSPHG LOW"),
+            (
+                SoundSettingValue::HeightGain(HeightGain::Medium),
+                "PSPHG MID",
+            ),
+            (SoundSettingValue::HeightGain(HeightGain::High), "PSPHG HI"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
+        }
+        for value in [
+            SoundSettingValue::DialogLevel(-13),
+            SoundSettingValue::DialogLevel(13),
+            SoundSettingValue::DialogLevel(i8::MIN),
+            SoundSettingValue::StageWidth(-11),
+            SoundSettingValue::StageWidth(11),
+            SoundSettingValue::StageHeight(-11),
+            SoundSettingValue::StageHeight(i8::MAX),
+        ] {
+            let mut out = String::new();
+            assert!(
+                matches!(value.write(&mut out), Err(Error::ValueOutOfRange { .. })),
+                "{value:?}"
+            );
+            assert!(out.is_empty(), "{value:?}");
+        }
+        let mut settings = SoundSettings::default();
+        assert!(settings.apply("DIL", "47"));
+        assert!(settings.apply("DSX", "ONW"));
+        assert!(settings.apply("PHG", "MID"));
+        assert_eq!(settings.other["DIL"], "47");
+        assert_eq!(settings.other["DSX"], "ONW");
+        assert_eq!(settings.other["PHG"], "MID");
     }
 
     #[test]

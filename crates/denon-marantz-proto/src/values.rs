@@ -11,6 +11,16 @@ code_enum! {
 }
 
 code_enum! {
+    /// Audyssey DSX: the speakers that it adds.
+    pub enum AudysseyDsx {
+        Off = "OFF", "Off";
+        Height = "ONH", "Height";
+        Wide = "ONW", "Wide";
+        HeightAndWide = "ONHW", "Height + Wide";
+    }
+}
+
+code_enum! {
     /// Auro-3D mode.
     pub enum Auro3dMode {
         Direct = "DRCT", "Direct";
@@ -313,6 +323,15 @@ code_enum! {
 }
 
 code_enum! {
+    /// Height gain of Dolby `PLIIz`.
+    pub enum HeightGain {
+        Low = "LOW", "Low";
+        Medium = "MID", "Medium";
+        High = "HI", "High";
+    }
+}
+
+code_enum! {
     /// IMAX mode.
     pub enum ImaxMode {
         Auto = "AUTO", "Auto";
@@ -549,6 +568,7 @@ mod tests {
         round_trip!(
             AspectRatio,
             AudioRestorer,
+            AudysseyDsx,
             Auro3dMode,
             AuroMatic3dPreset,
             BluetoothOutputMode,
@@ -560,6 +580,7 @@ mod tests {
             Drc,
             EffectSpeakerSelection,
             HdmiAudioDecode,
+            HeightGain,
             MaxHdmiResolution,
             FrontSpeakers,
             Illumination,
