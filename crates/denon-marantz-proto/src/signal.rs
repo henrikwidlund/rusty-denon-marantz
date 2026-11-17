@@ -620,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_pixel_depth_takes_output_for_unknown_input() {
+    fn effective_pixel_depth_fills_or_clears_unknown() {
         use PixelDepth::{Bits8, Bits12, Unknown};
         let cases = [
             ("INFSIGRES I1080p25", "INFSIGPIX 03", Some(Bits12)),
