@@ -553,7 +553,7 @@ static QUERIES: [Entry; 126] = [
     both(Names, Query::SourceNames, "SSFUN ?"), // Source names
     both(Names, Query::SourcesInUse, "SSSOD ?"), // Sources in use or hidden
     both(Names, Query::SoundModeList, "OPSMLALL ?"), // Sound modes that the receiver offers
-    both(Names, Query::FriendlyName, "NSFRN?"), // Friendly name
+    both(Names, Query::FriendlyName, "NSFRN ?"), // Friendly name. "NSFRN?" breaks HEOS
     denon(Toggles, Query::AutoLipSync, "OPALS ?"), // Auto Lip Sync
     denon(Names, Query::QuickSelectNames, "SSQS ?"), // Quick select names
     denon(Sound, Query::SpeakerLevels, "SSLEV ?"), // Speaker channel levels
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn both_brands_ask_for_the_sources_sound_modes_and_name() {
         for brand in BRANDS {
-            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN?"] {
+            for wanted in ["SSFUN ?", "SSSOD ?", "OPSMLALL ?", "NSFRN ?"] {
                 assert!(state_queries(brand).any(|query| query == wanted));
             }
         }
