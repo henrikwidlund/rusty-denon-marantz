@@ -1,28 +1,28 @@
-AV7703-Deviceinfo-8080.xml	ok	0301	AV7703	3	False	True
-AVC-8500H-Deviceinfo-8080.xml	ok	0301	AVC-X8500H	3	False	True
-AVC-A10H-Deviceinfo-8080.xml	ok	0301	AVC-A10H	3	True	True
-AVC-X3700H-Deviceinfo-8080.xml	ok	0301	AVC-X3700H	2	False	True
-AVR-1713-Deviceinfo.xml	ok	0210	*AVR-1713	1	False	True
+AV7703-Deviceinfo-8080.xml	ok	0301	AV7703	3	False	True	Marantz
+AVC-8500H-Deviceinfo-8080.xml	ok	0301	AVC-X8500H	3	False	True	Denon
+AVC-A10H-Deviceinfo-8080.xml	ok	0301	AVC-A10H	3	True	True	Denon
+AVC-X3700H-Deviceinfo-8080.xml	ok	0301	AVC-X3700H	2	False	True	Denon
+AVR-1713-Deviceinfo.xml	ok	0210	*AVR-1713	1	False	True	Denon
 AVR-1912-Deviceinfo.xml	html
 AVR-2312CI-Deviceinfo.xml	html
 AVR-3311CI-Deviceinfo.xml	html
 AVR-3312-Deviceinfo.xml	html
-AVR-3313-Deviceinfo.xml	ok	0210	*AVR-3313	3	False	True
+AVR-3313-Deviceinfo.xml	ok	0210	*AVR-3313	3	False	True	Denon
 AVR-4810-Deviceinfo.xml	html
-AVR-X1100W-Deviceinfo.xml	ok	0250	*AVR-X1100W	2	False	True
-AVR-X2000-2-Deviceinfo.xml	ok	0210	*AVR-X2000	2	False	True
-AVR-X2000-Deviceinfo.xml	ok	0210	*AVR-X2000	2	False	True
-AVR-X2100W-2-Deviceinfo.xml	ok	0300	*AVR-X2100W	2	False	True
-AVR-X4000-Deviceinfo.xml	ok	0210	*AVR-X4000	3	False	True
-AVR-X4100W-Deviceinfo.xml	ok	0300	*AVR-X4100W	3	False	True
-AVR-X4300H-Deviceinfo-8080.xml	ok	0301	AVR-X4500H	3	False	True
-DRA-N4-Deviceinfo.xml	ok	0300	DRA-N4	1	False	True
-M-CR510-2-Deviceinfo.xml	ok	0220	M-CR510	1	False	True
-M-CR510-Deviceinfo.xml	ok	0220	M-CR510	1	False	True
+AVR-X1100W-Deviceinfo.xml	ok	0250	*AVR-X1100W	2	False	True	Denon
+AVR-X2000-2-Deviceinfo.xml	ok	0210	*AVR-X2000	2	False	True	Denon
+AVR-X2000-Deviceinfo.xml	ok	0210	*AVR-X2000	2	False	True	Denon
+AVR-X2100W-2-Deviceinfo.xml	ok	0300	*AVR-X2100W	2	False	True	Denon
+AVR-X4000-Deviceinfo.xml	ok	0210	*AVR-X4000	3	False	True	Denon
+AVR-X4100W-Deviceinfo.xml	ok	0300	*AVR-X4100W	3	False	True	Denon
+AVR-X4300H-Deviceinfo-8080.xml	ok	0301	AVR-X4500H	3	False	True	Denon
+DRA-N4-Deviceinfo.xml	ok	0300	DRA-N4	1	False	True	Denon
+M-CR510-2-Deviceinfo.xml	ok	0220	M-CR510	1	False	True	Marantz
+M-CR510-Deviceinfo.xml	ok	0220	M-CR510	1	False	True	Marantz
 M-CR603-Deviceinfo.xml	html
-M-RC610-Deviceinfo.xml	ok	0220	M-CR610	1	False	True
-NR1604-Deviceinfo.xml	ok	0210	*NR1604	2	False	True
-NR1609-Deviceinfo-8080.xml	ok	0301	NR1609	2	False	True
-SR5008-Deviceinfo.xml	ok	0210	*SR5008	2	False	True
-SR6011-Deviceinfo.xml	ok	0300	*SR6011	2	False	True
-SR6012-Deviceinfo-8080.xml	ok	0301	SR6012	2	False	True
+M-RC610-Deviceinfo.xml	ok	0220	M-CR610	1	False	True	Marantz
+NR1604-Deviceinfo.xml	ok	0210	*NR1604	2	False	True	Marantz
+NR1609-Deviceinfo-8080.xml	ok	0301	NR1609	2	False	True	Marantz
+SR5008-Deviceinfo.xml	ok	0210	*SR5008	2	False	True	Marantz
+SR6011-Deviceinfo.xml	ok	0300	*SR6011	2	False	True	Marantz
+SR6012-Deviceinfo-8080.xml	ok	0301	SR6012	2	False	True	Marantz

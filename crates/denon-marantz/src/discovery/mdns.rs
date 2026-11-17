@@ -9,7 +9,7 @@ use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent};
 use tokio::time::Instant;
 
 use super::{
-    Described, DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local, serial,
+    Described, DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local,
     sort_by_address,
 };
 use crate::error::Error;
@@ -239,7 +239,7 @@ async fn receiver(
     for location in DESCRIPTION_TYPES.map(location) {
         match describe(&location, http, probes).await {
             Described::Receiver(mut found) => {
-                found.serial_number = serial(found.serial_number).or_else(|| announced.did.clone());
+                found.serial_number = found.serial_number.or_else(|| announced.did.clone());
                 return Some(found);
             }
             Described::NotReceiver => return None,
@@ -254,16 +254,13 @@ async fn receiver(
     if !is_proven_receiver(&identified) {
         return None;
     }
-    // The model text has the brand only on some receivers. Marantz needs its name.
-    let brand = if announced
-        .model
-        .as_deref()
-        .is_some_and(|model| model.to_ascii_lowercase().contains("marantz"))
-    {
-        Brand::Marantz
-    } else {
-        Brand::Denon
-    };
+    // The brand from `BrandCode`, else from the model text. The model text has
+    // the brand only on some receivers. Marantz needs its name.
+    let brand = identified
+        .device_info
+        .brand
+        .or_else(|| announced.model.as_deref().and_then(Brand::from_model))
+        .unwrap_or(Brand::Denon);
     Some(DiscoveredReceiver {
         host,
         brand,

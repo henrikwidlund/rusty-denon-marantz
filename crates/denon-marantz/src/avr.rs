@@ -149,14 +149,15 @@ pub struct Info {
     pub type_proof: TypeProof,
     /// How the state is read.
     pub update_method: UpdateMethod,
-    /// Brand. If the receiver did not tell, the brand from
-    /// [`AvrBuilder::brand`], else [`Brand::Denon`].
+    /// Brand from the device description, else from `BrandCode` in the
+    /// device information, else from [`AvrBuilder::brand`], else
+    /// [`Brand::Denon`].
     pub brand: Brand,
     /// Manufacturer from the device description.
     pub manufacturer: Option<String>,
     /// Model from the device description.
     pub model_name: Option<String>,
-    /// Serial number from the device description.
+    /// Serial number from the device description. `None` if it is blank.
     pub serial_number: Option<String>,
     /// Name that the user gave the receiver.
     pub friendly_name: String,
@@ -1533,9 +1534,10 @@ impl AvrBuilder {
         self
     }
 
-    /// Sets the brand to use if the device description does not give one,
-    /// for example the [`Info::brand`] of an earlier connection. The brand in
-    /// the description wins. The default is [`Brand::Denon`].
+    /// Sets the brand to use if the receiver does not give one, for example
+    /// the [`Info::brand`] of an earlier connection. The brand in the device
+    /// description or the device information wins. The default is
+    /// [`Brand::Denon`].
     #[must_use]
     pub const fn brand(mut self, brand: Brand) -> Self {
         self.brand = Some(brand);
@@ -1559,8 +1561,12 @@ impl AvrBuilder {
     ///
     /// Returns an error if the receiver cannot be reached. A missing or
     /// unusable device description is not an error: the brand is then the one
-    /// from [`AvrBuilder::brand`] or [`Brand::Denon`], and the model is not
-    /// known.
+    /// from the device information, [`AvrBuilder::brand`] or [`Brand::Denon`],
+    /// and the model is not known.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "connect runs the steps in order; splitting it hides the order"
+    )]
     pub async fn connect(self) -> Result<Avr, Error> {
         #[cfg(feature = "telnet")]
         self.telnet.check()?;
@@ -1575,11 +1581,13 @@ impl AvrBuilder {
         };
         let priority = Arc::new(Priority::new(self.background_pause));
         let http = HttpClient::new(&self.host, port, self.http)?.with_priority(priority.clone());
-        let description = self.description(receiver_type).await?;
+        // The brand from the receiver wins over the given one.
+        let brand = device_info.brand.or(self.brand);
+        let description = self.description(receiver_type, brand).await?;
         let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
 
         let (brand, friendly_name) =
-            brand_and_name(&self.host, description.as_ref(), self.brand, friendly_name);
+            brand_and_name(&self.host, description.as_ref(), brand, friendly_name);
         let appcommand0300_commands = appcommand0300_commands(device_info.queries.as_ref());
 
         let zone_count =
@@ -1668,10 +1676,12 @@ impl AvrBuilder {
     /// Reads the device description, with one more try if the first one did
     /// not time out. `None` if the receiver has no usable one. The receiver
     /// was identified before, so a failure here is not an error: the
-    /// description only adds the brand and the model.
+    /// description only adds the brand and the model. `brand` is only for the
+    /// warning.
     async fn description(
         &self,
         receiver_type: ReceiverType,
+        brand: Option<Brand>,
     ) -> Result<Option<DeviceDescription<'static>>, Error> {
         let port = self
             .description_port
@@ -1702,7 +1712,7 @@ impl AvrBuilder {
             }
         }
         if let Some(error) = last_error {
-            let brand = self.brand.unwrap_or(Brand::Denon);
+            let brand = brand.unwrap_or(Brand::Denon);
             tracing::warn!(host = %self.host, %error, "no device description, assuming a {} receiver", brand.name());
         }
         Ok(None)
@@ -1754,26 +1764,27 @@ async fn detect_update_method(
     Ok((UpdateMethod::StatusPages, name))
 }
 
-/// The brand from the description, or else the given one, or else
-/// [`Brand::Denon`]. The name that the receiver gave, or else the one from the
-/// description, or else a name made from the brand.
+/// The brand from the description, or else the fallback (from the device
+/// information or the caller), or else [`Brand::Denon`]. The name that the
+/// receiver gave, or else the one from the description, or else a name made
+/// from the brand.
 fn brand_and_name(
     host: &str,
     description: Option<&DeviceDescription<'_>>,
-    given: Option<Brand>,
+    fallback: Option<Brand>,
     friendly_name: Option<String>,
 ) -> (Brand, String) {
     let brand = description
         .filter(|d| !d.manufacturer.is_empty())
         .map(DeviceDescription::brand)
-        .or(given)
+        .or(fallback)
         .unwrap_or_else(|| Brand::from_manufacturer(None));
-    if let Some(given) = given
-        && given != brand
+    if let Some(fallback) = fallback
+        && fallback != brand
     {
         tracing::debug!(
             host,
-            given = given.name(),
+            fallback = fallback.name(),
             brand = brand.name(),
             "the device description names another brand"
         );

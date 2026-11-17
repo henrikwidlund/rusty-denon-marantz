@@ -201,6 +201,11 @@ fn device_info_has_the_expected_values() {
         );
         assert_eq!(info.dirac_live, f[5] == "True", "{name}");
         assert_eq!(info.is_avr_x(), f[6] == "True", "{name}");
+        assert_eq!(
+            info.brand.map(Brand::name),
+            Some(f[7]).filter(|brand| !brand.is_empty()),
+            "{name}"
+        );
         ok += 1;
     }
     assert!(ok > 15 && html > 3, "{ok} {html}");

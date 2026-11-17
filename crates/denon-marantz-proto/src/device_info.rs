@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::brand::Brand;
 use crate::error::Error;
 use crate::values::TunerBand;
 use crate::xml::{Node, check_well_formed};
@@ -25,6 +26,8 @@ pub struct DeviceInfo<'a> {
     /// MAC address of the wired network, as 12 hexadecimal digits without
     /// separators.
     pub mac_address: Option<Cow<'a, str>>,
+    /// Brand from `BrandCode`. Older receivers have none.
+    pub brand: Option<Brand>,
     /// What the file says about a tuner.
     pub tuner: TunerInfo,
     /// Number of quick selects (smart selects on Marantz) that the file
@@ -299,6 +302,7 @@ impl<'a> DeviceInfo<'a> {
             dirac_live: root.contains_descendant("DiracLive"),
             category: text("CategoryName"),
             mac_address: text("MacAddress"),
+            brand: text("BrandCode").and_then(|code| Brand::from_code(&code)),
             tuner: TunerInfo::parse(root),
             quick_select_count: quick_select_count(root),
             queries: ListedQueries::parse(root),
@@ -315,6 +319,7 @@ impl<'a> DeviceInfo<'a> {
             dirac_live: self.dirac_live,
             category: self.category.map(|v| Cow::Owned(v.into_owned())),
             mac_address: self.mac_address.map(|v| Cow::Owned(v.into_owned())),
+            brand: self.brand,
             tuner: self.tuner,
             quick_select_count: self.quick_select_count,
             queries: self.queries,
@@ -373,13 +378,14 @@ mod tests {
     fn parses_the_values() {
         let xml = b"<?xml version=\"1.0\"?><Device_Info><CommApiVers>0301</CommApiVers>\
                     <ModelName>AVC-X3700H</ModelName><DeviceZones>2</DeviceZones>\
-                    <MacAddress>0123456789AB</MacAddress>\
+                    <MacAddress>0123456789AB</MacAddress><BrandCode>1</BrandCode>\
                     <Caps><x><DiracLive/></x></Caps></Device_Info>";
         let info = DeviceInfo::parse(xml).unwrap();
         assert_eq!(info.mac_address.as_deref(), Some("0123456789AB"));
         assert_eq!(info.comm_api_version.as_deref(), Some("0301"));
         assert_eq!(info.model_name.as_deref(), Some("AVC-X3700H"));
         assert_eq!(info.device_zones, Some(2));
+        assert_eq!(info.brand, Some(Brand::Marantz));
         assert!(info.dirac_live);
         assert!(info.is_avr_x());
     }
@@ -402,6 +408,7 @@ mod tests {
         assert_eq!(info.comm_api_version, None);
         assert_eq!(info.model_name, None);
         assert_eq!(info.device_zones, None);
+        assert_eq!(info.brand, None);
         assert!(!info.dirac_live);
         assert_eq!(info.tuner, TunerInfo::Unknown);
         assert_eq!(info.quick_select_count, None);

@@ -116,7 +116,8 @@ pub struct DiscoveredReceiver {
     pub model_name: Option<String>,
     /// Name that the user gave the receiver.
     pub friendly_name: Option<String>,
-    /// Serial number from the device description.
+    /// Serial number from the device description, or from the mDNS
+    /// announcement (`did`) if it has none. `None` if it is blank.
     pub serial_number: Option<String>,
     /// MAC address of the wired network from the device information, as 12
     /// hexadecimal digits without separators.
@@ -224,11 +225,6 @@ pub(crate) fn sort_by_address(receivers: &mut [DiscoveredReceiver]) {
     });
 }
 
-/// A serial number that has some text.
-pub(crate) fn serial(value: Option<String>) -> Option<String> {
-    value.filter(|text| !text.trim().is_empty())
-}
-
 /// The IPv4 addresses that a search is sent from.
 fn local_addresses() -> Result<Vec<Ipv4Addr>, Error> {
     let interfaces = if_addrs::get_if_addrs().map_err(|source| Error::Network {
@@ -333,7 +329,7 @@ async fn describe(
         manufacturer: description.manufacturer.to_string(),
         model_name: description.model_name.map(|v| v.to_string()),
         friendly_name: description.friendly_name.map(|v| v.to_string()),
-        serial_number: serial(description.serial_number.map(|v| v.to_string())),
+        serial_number: description.serial_number.map(|v| v.to_string()),
         mac_address: device_info.and_then(|d| d.mac_address.map(std::borrow::Cow::into_owned)),
         type_proof,
     })
@@ -409,14 +405,6 @@ mod tests {
                 "name.local"
             ]
         );
-    }
-
-    #[test]
-    fn a_blank_serial_number_is_none() {
-        assert_eq!(serial(Some(" ".to_owned())), None);
-        assert_eq!(serial(Some(String::new())), None);
-        assert_eq!(serial(Some("S1".to_owned())), Some("S1".to_owned()));
-        assert_eq!(serial(None), None);
     }
 
     #[test]

@@ -25,7 +25,7 @@ pub struct DeviceDescription<'a> {
     pub manufacturer: Cow<'a, str>,
     /// Model, for example `Denon AVR-X1600H`.
     pub model_name: Option<Cow<'a, str>>,
-    /// Serial number.
+    /// Serial number. `None` if it is blank.
     pub serial_number: Option<Cow<'a, str>>,
     /// Name that the user sees, for example `Denon AVR-X1600H`.
     pub friendly_name: Option<Cow<'a, str>>,
@@ -65,7 +65,7 @@ impl<'a> DeviceDescription<'a> {
         Ok(Self {
             manufacturer,
             model_name: text(&part, "modelName"),
-            serial_number: text(&part, "serialNumber"),
+            serial_number: text(&part, "serialNumber").filter(|serial| !serial.is_empty()),
             friendly_name: text(&part, "friendlyName"),
             presentation_url: text(&part, "presentationURL"),
         })
@@ -147,6 +147,16 @@ mod tests {
             Some("http://10.0.0.5/")
         );
         assert_eq!(description.brand(), Brand::Marantz);
+    }
+
+    #[test]
+    fn blank_serial_number_is_none() {
+        let body = wrap(
+            "<deviceType>urn:schemas-upnp-org:device:MediaRenderer:1</deviceType>\
+             <manufacturer>Denon</manufacturer><serialNumber> </serialNumber>",
+        );
+        let description = DeviceDescription::parse(&body).unwrap();
+        assert_eq!(description.serial_number, None);
     }
 
     #[test]

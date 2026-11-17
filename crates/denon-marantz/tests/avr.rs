@@ -6,9 +6,10 @@ mod common;
 
 use common::{
     AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER,
-    appcommand0300_answer, appcommand0300_item, avr_x_receiver, builder, config,
-    friendly_name_answer, is_friendly_name_request, output_settings_item, receiver_with_audyssey,
-    receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
+    appcommand0300_answer, appcommand0300_item, avr_x_receiver, avr_x_receiver_with_info, builder,
+    config, friendly_name_answer, is_friendly_name_request, output_settings_item,
+    receiver_with_audyssey, receiver_with_info_and_signal_answers, receiver_with_signal_answers,
+    web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, ListedQueries, PageStatus, TypeProof, UpdateMethod};
 use denon_marantz_proto::{
@@ -285,6 +286,62 @@ async fn given_brand_is_used_without_a_description() {
         .unwrap();
     assert_eq!(avr.info().brand, Brand::Marantz);
     assert_eq!(avr.info().friendly_name, "Marantz AVR");
+}
+
+/// A receiver without a device description whose device information has
+/// this `BrandCode`.
+async fn receiver_with_brand_code(code: &str) -> Fake {
+    let info = format!(
+        "<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVR-X1600H</ModelName>\
+         <BrandCode>{code}</BrandCode></Device_Info>"
+    )
+    .into_bytes();
+    Fake::start(move |seen| match seen.path.as_str() {
+        "/goform/Deviceinfo.xml" => Reply::Body(info.clone()),
+        "/goform/AppCommand.xml" => Reply::Body(b"<rx><cmd/></rx>".to_vec()),
+        _ => Reply::Status(404),
+    })
+    .await
+}
+
+#[tokio::test]
+async fn brand_code_is_used_without_a_description() {
+    let fake = receiver_with_brand_code("1").await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(avr.info().brand, Brand::Marantz);
+    assert_eq!(avr.info().friendly_name, "Marantz AVR");
+}
+
+#[tokio::test]
+async fn brand_code_wins_over_the_given_brand() {
+    let fake = receiver_with_brand_code("0").await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .brand(Brand::Marantz)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.info().brand, Brand::Denon);
+}
+
+#[tokio::test]
+async fn description_brand_wins_over_the_brand_code() {
+    let fake = avr_x_receiver_with_info(
+        b"<Device_Info><CommApiVers>0301</CommApiVers><BrandCode>1</BrandCode></Device_Info>",
+    )
+    .await;
+    let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert_eq!(avr.info().brand, Brand::Denon);
+}
+
+#[tokio::test]
+async fn unknown_brand_code_is_ignored() {
+    let fake = receiver_with_brand_code("7").await;
+    let avr = builder(&fake, ReceiverType::AvrX)
+        .brand(Brand::Marantz)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.info().brand, Brand::Marantz);
 }
 
 #[tokio::test]
