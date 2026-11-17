@@ -104,11 +104,12 @@ pub use tuner::{
 pub use values::{
     AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
     ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
-    DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
-    Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, MaxHdmiResolution, Mdax,
-    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PixelDepth, Power,
-    ReferenceLevelOffset, RoomSize, SpeakerPreset, SurroundLevelCompensation, Trigger, TunerBand,
-    TunerMode, VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdRadioBand, HdTuningMode,
+    HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode,
+    MaxHdmiResolution, Mdax, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
+    PixelDepth, Power, ReferenceLevelOffset, RoomSize, SpeakerPreset, SurroundLevelCompensation,
+    Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, VolumeDisplay,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use video_menu::{

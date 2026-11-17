@@ -98,7 +98,12 @@ impl Reads {
                 Some(Self::Audyssey)
             }
             // Tuning mode and storing a preset leave band and frequency as they are.
-            Command::Tuner(TunerCommand::Mode(_) | TunerCommand::StorePreset(_)) => None,
+            Command::Tuner(
+                TunerCommand::Mode(_)
+                | TunerCommand::StorePreset(_)
+                | TunerCommand::HdMode(_)
+                | TunerCommand::HdStorePreset(_),
+            ) => None,
             Command::Tuner(_) => Some(Self::Tuner),
             Command::SetVideoSetting(VideoSettingValue::HdmiOutput(_)) => Some(Self::HdmiOutput),
             _ => None,
@@ -175,6 +180,13 @@ mod tests {
             Some(Reads::Tuner)
         );
         assert_eq!(main(Command::Tuner(TunerCommand::StorePreset(1))), None);
+        assert_eq!(main(Command::Tuner(TunerCommand::HdStorePreset(1))), None);
+        assert_eq!(
+            main(Command::Tuner(TunerCommand::HdMode(
+                denon_marantz_proto::HdTuningMode::Manual
+            ))),
+            None
+        );
         assert_eq!(main(Command::Play), None);
         assert_eq!(
             main(Command::SetVideoSetting(VideoSettingValue::HdmiOutput(
