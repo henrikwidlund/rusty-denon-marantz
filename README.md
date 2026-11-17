@@ -162,7 +162,8 @@ does not choose.
 The signal fields keep the values as the receiver sends them. Two methods of
 `SignalState` add what the receiver leaves out. `effective_pixel_depth()` gives
 the input the output depth when the receiver sends `0` (unknown) for an input
-signal. `video_color()` joins the color space and BT.2020, for example
+signal, and no value for a side without a video signal, as the web interface
+does. `video_color()` joins the color space and BT.2020, for example
 `4:4:4/BT.2020`. Receivers report BT.2020 in different ways: in the color
 space code (`SSINFSIGCOS` `9` is 4:2:2 with BT.2020), with `SSINFSIGECI` or in
 the web interface. If a receiver reports it, BT.2020 is off after the

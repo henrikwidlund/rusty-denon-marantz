@@ -234,15 +234,17 @@ pub struct SignalState {
 impl SignalState {
     /// Bits for each color. Some receivers send `0` (unknown) for the input
     /// while there is an input signal. Then the input takes the output value.
+    /// A side without a video signal has no value, as on the web page.
     #[must_use]
     pub fn effective_pixel_depth(&self) -> InOut<PixelDepth> {
         let InOut { input, output } = self.pixel_depth;
+        let output = match output {
+            Some(PixelDepth::Unknown) if self.video.output.is_none() => None,
+            _ => output,
+        };
         let input = match (input, output) {
-            (Some(PixelDepth::Unknown), Some(known))
-                if known != PixelDepth::Unknown && self.video.input.is_some() =>
-            {
-                Some(known)
-            }
+            (Some(PixelDepth::Unknown), _) if self.video.input.is_none() => None,
+            (Some(PixelDepth::Unknown), Some(known)) if known != PixelDepth::Unknown => Some(known),
             _ => input,
         };
         InOut { input, output }
@@ -624,15 +626,16 @@ mod tests {
             ("INFSIGRES I1080p25", "INFSIGPIX 03", Some(Bits12)),
             ("INFSIGRES I4K24", "INFSIGPIX 01", Some(Bits8)),
             ("INFSIGRES I1080p50", "INFSIGPIX 31", Some(Bits12)),
-            // No input signal: the input stays unknown.
-            ("INFSIGRES I---", "INFSIGPIX 01", Some(Unknown)),
-            ("INFSIGRES I---", "INFSIGPIX 00", Some(Unknown)),
+            // No input signal: no value, as on the web page.
+            ("INFSIGRES I---", "INFSIGPIX 01", None),
+            ("INFSIGRES I---", "INFSIGPIX 00", None),
             // Nothing to take: both are unknown.
             ("INFSIGRES I1080p25", "INFSIGPIX 00", Some(Unknown)),
         ];
         for (resolution, depth, expected) in cases {
             let mut signal = SignalState::default();
             ss(&mut signal, resolution);
+            ss(&mut signal, "INFSIGRES O1080p60");
             ss(&mut signal, depth);
             let effective = signal.effective_pixel_depth();
             assert_eq!(effective.input, expected, "{resolution} {depth}");
@@ -641,6 +644,17 @@ mod tests {
                 "{resolution} {depth}"
             );
         }
+        // No output signal: no output value.
+        let mut signal = SignalState::default();
+        ss(&mut signal, "INFSIGRES I1080p25");
+        ss(&mut signal, "INFSIGPIX 30");
+        assert_eq!(
+            signal.effective_pixel_depth(),
+            InOut {
+                input: Some(Bits12),
+                output: None
+            }
+        );
         // The raw value is kept.
         let mut signal = SignalState::default();
         ss(&mut signal, "INFSIGRES I1080p25");
