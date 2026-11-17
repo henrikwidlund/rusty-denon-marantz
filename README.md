@@ -233,8 +233,10 @@ watch it with `Heos::changes`. It also:
 - Reads and plays HEOS Favorites and quick selects.
 - Plays a stream from a URL, and an input of the device.
 
-Volume and mute are not in the HEOS crates. On the AVC-A10H, the HEOS volume is
-shared by the zones. Use the `denon-marantz` crate for them.
+The client does not keep or control the volume and mute. On the AVC-A10H, the
+HEOS volume is shared by the zones. Use the `denon-marantz` crate for them. For
+other HEOS devices, `denon-marantz-heos-proto` has the volume and mute commands
+of players and groups, and `Heos::send` sends them.
 
 ```rust
 use denon_marantz_heos::Heos;
@@ -344,6 +346,9 @@ have not run on a receiver:
   groups.
 - HEOS quick selects: the receiver accepts the call, but the effect was not
   checked.
+- HEOS volume and mute commands of players and groups in
+  `denon-marantz-heos-proto`. They follow the HEOS CLI specification and are
+  tested with unit tests only.
 - HEOS: connecting again after a lost connection, and the heartbeat. They are
   tested with a fake device.
 
