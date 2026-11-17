@@ -241,6 +241,26 @@ async fn an_invalid_command_is_not_sent() {
 }
 
 #[tokio::test]
+async fn a_command_whose_caller_stopped_waiting_is_not_sent() {
+    let fake = Fake::start(|line| match name(line) {
+        "player/play_next" => {
+            Reply::Paced(Duration::from_millis(300), vec![answer("player/play_next")])
+        }
+        _ => from_data(line),
+    })
+    .await;
+    let heos = connect(&fake).await;
+    let (slow, given_up) = tokio::join!(heos.play_next(PID), async {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::timeout(Duration::from_millis(50), heos.play_previous(PID)).await
+    });
+    slow.unwrap();
+    assert!(given_up.is_err());
+    heos.set_play_state(PID, PlayState::Pause).await.unwrap();
+    assert_eq!(fake.count("player/play_previous"), 0);
+}
+
+#[tokio::test]
 async fn a_command_without_an_answer_times_out_and_connects_again() {
     let fake = Fake::start(|line| match name(line) {
         "player/play_previous" => Reply::Hang,

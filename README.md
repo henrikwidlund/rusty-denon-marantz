@@ -257,9 +257,10 @@ loop {
 ```
 
 The client keeps two connections: one for commands and one for events. It
-sends one command at a time. It connects again after a drop, waits longer
-after each failed try, and then reads the state again. `HeosConfig` has the
-times. The `denon-marantz-heos-proto` crate has the protocol without IO.
+sends one command at a time. A command whose future is dropped before it is
+sent is not sent. It connects again after a drop, waits longer after each
+failed try, and then reads the state again. `HeosConfig` has the times. The
+`denon-marantz-heos-proto` crate has the protocol without IO.
 
 Notes about HEOS:
 

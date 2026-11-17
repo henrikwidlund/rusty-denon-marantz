@@ -248,6 +248,8 @@ impl Heos {
 
     /// Sends a command and waits for its answer.
     ///
+    /// If the future is dropped before the command is sent, it is not sent.
+    ///
     /// Answers to reads of the state, for example `get_now_playing_media`,
     /// and to `set_play_mode` also change the state.
     pub async fn send(&self, command: Command<'_>) -> Result<Answer, Error> {

@@ -56,6 +56,8 @@
 //! - Reading the HEOS Favorites can take longer than other commands. The
 //!   device first answers that it works on the command
 //!   ([`HeosConfig::slow_command_limit`]).
+//! - Commands are sent one at a time. If the future of a command is dropped
+//!   before the command is sent, it is not sent.
 
 mod client;
 mod error;

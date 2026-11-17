@@ -427,6 +427,15 @@ impl<'a> Session<'a> {
                     );
                     continue;
                 }
+                // The caller stopped waiting: sending it now would be too late.
+                Job::Command {
+                    name,
+                    reply: Some(reply),
+                    ..
+                } if reply.is_closed() => {
+                    tracing::trace!(command = name, "HEOS command dropped, nobody waits");
+                    continue;
+                }
                 Job::Command { line, name, reply } => (line, name, reply),
             };
             tracing::trace!(command = name, "HEOS command");
