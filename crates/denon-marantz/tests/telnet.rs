@@ -19,12 +19,12 @@ use denon_marantz::{
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
-    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction,
-    PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume, ReceiverType,
-    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger,
-    TunerBand, TunerMode, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
-    ZoneChannelMode, ZoneHdmiAudio,
+    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand,
+    HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq,
+    MuteLevel, NoiseReduction, PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume,
+    ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset,
+    ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, Volume, VolumeDisplay,
+    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -2112,6 +2112,44 @@ async fn the_other_tuner_methods_send_their_commands() {
     assert_eq!(
         commands_sent(&telnet),
         ["TFANDOWN", "TMANMANUAL", "TPANUP", "TPANDOWN"]
+    );
+}
+
+#[tokio::test]
+async fn hd_tuner_methods_send_their_commands() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tuner = avr.tuner();
+    tuner.hd_frequency_up().await.unwrap();
+    tuner.hd_frequency_down().await.unwrap();
+    tuner.select_hd_multicast(2).await.unwrap();
+    tuner.set_hd_band(HdRadioBand::Fm).await.unwrap();
+    tuner.set_hd_mode(HdTuningMode::AutoHd).await.unwrap();
+    tuner.hd_preset_up().await.unwrap();
+    tuner.hd_preset_down().await.unwrap();
+    tuner.select_hd_preset(3).await.unwrap();
+    tuner.store_hd_preset(12).await.unwrap();
+    for error in [
+        tuner.select_hd_multicast(9).await.unwrap_err(),
+        tuner.select_hd_preset(57).await.unwrap_err(),
+        tuner.store_hd_preset(0).await.unwrap_err(),
+    ] {
+        assert!(error.is_invalid_input(), "{error:?}");
+    }
+    wait_until("the commands", || commands_sent(&telnet).len() >= 9).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "TFHDUP",
+            "TFHDDOWN",
+            "TFHDMC2",
+            "TMHDFM",
+            "TMHDAUTOHD",
+            "TPHDUP",
+            "TPHDDOWN",
+            "TPHD03",
+            "TPHDMEM12"
+        ]
     );
 }
 

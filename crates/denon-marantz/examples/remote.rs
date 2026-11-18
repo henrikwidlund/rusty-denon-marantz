@@ -56,6 +56,9 @@
 //! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
+//! HD Radio receivers only: hd-up, hd-down, hd-multicast N (0 to 8, 0 is analog),
+//! hd-band CODE (AM or FM), hd-mode CODE (AUTOHD, AUTO, MANUAL, ANAAUTO, ANAMANU),
+//! hd-preset-up, hd-preset-down, hd-preset N, hd-store N (N is 1 to 56),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
@@ -77,11 +80,11 @@ use denon_marantz::{
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Channel,
     ChannelLevel, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode,
-    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PliizHeightGain, PowerOnVolume,
-    ReferenceLevelOffset, RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel,
-    Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Volume, VolumeDisplay,
-    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    EcoMode, FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
+    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
+    PliizHeightGain, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep, SoundSettingValue,
+    SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
+    VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -177,7 +180,7 @@ const DEVICE_COMMANDS: [&str; 15] = [
 ];
 
 /// Commands that the tuner control has methods for.
-const TUNER_COMMANDS: [&str; 8] = [
+const TUNER_COMMANDS: [&str; 17] = [
     "tuner-up",
     "tuner-down",
     "tuner-band",
@@ -186,6 +189,15 @@ const TUNER_COMMANDS: [&str; 8] = [
     "tuner-preset-down",
     "tuner-preset",
     "tuner-store",
+    "hd-up",
+    "hd-down",
+    "hd-multicast",
+    "hd-band",
+    "hd-mode",
+    "hd-preset-up",
+    "hd-preset-down",
+    "hd-preset",
+    "hd-store",
 ];
 
 /// Commands that the tone control has methods for.
@@ -732,6 +744,24 @@ async fn tuner_command(
         "tuner-preset-down" => tuner.preset_down().await?,
         "tuner-preset" => tuner.select_preset(number()?).await?,
         "tuner-store" => tuner.store_preset(number()?).await?,
+        "hd-up" => tuner.hd_frequency_up().await?,
+        "hd-down" => tuner.hd_frequency_down().await?,
+        "hd-multicast" => {
+            let channel = arg.need()?.parse().map_err(|_| "hd-multicast is 0 to 8")?;
+            tuner.select_hd_multicast(channel).await?;
+        }
+        "hd-band" => {
+            let band = HdRadioBand::from_code(arg.need()?).ok_or_else(|| arg.unknown("band"))?;
+            tuner.set_hd_band(band).await?;
+        }
+        "hd-mode" => {
+            let mode = HdTuningMode::from_code(arg.need()?).ok_or_else(|| arg.unknown("mode"))?;
+            tuner.set_hd_mode(mode).await?;
+        }
+        "hd-preset-up" => tuner.hd_preset_up().await?,
+        "hd-preset-down" => tuner.hd_preset_down().await?,
+        "hd-preset" => tuner.select_hd_preset(number()?).await?,
+        "hd-store" => tuner.store_hd_preset(number()?).await?,
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())

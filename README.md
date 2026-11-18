@@ -205,8 +205,8 @@ A program that does not want telnet never opens it: use
 - After a command, the values that it changed are read, for example the volume
   and mute after a volume command, tone control after a bass command on the
   main zone, the Audyssey settings after an Audyssey command (not while telnet
-  is open, which reports them), and the band and frequency after a tuner
-  command while the tuner plays. The read waits until no command came for
+  is open, which reports them), and the band and frequency after an analog
+  tuner command while the tuner plays. The read waits until no command came for
   500 ms, and not longer than 2 s, so a held key causes few reads. The
   receiver shows a new power state, source or sound mode late, so these are
   read again every 1.5 s until a read shows a change, at most 3 times. Change
