@@ -33,9 +33,12 @@
 //! treble-down (DB is a whole number from -6 to 6), dynamic-eq-on,
 //! dynamic-eq-off, multi-eq CODE, ref-level CODE, dynamic-volume CODE, lfc-on,
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
-//! effect on or off, effect-level N, center-image N, center-gain N, step SETTING-up or SETTING-down
+//! effect on or off, effect-level N, center-image N, center-gain N, dialog-level-adjust on or off,
+//! dialog-level DB (-12 to 12), dsx CODE (OFF, ONH, ONW, ONHW), stage-width DB, stage-height DB (-10 to 10),
+//! height-gain CODE (LOW, MID, HI), step SETTING-up or SETTING-down
 //! (audio-delay, delay-time, dialog-control, dimension, center-width, center-width-cew, lfe, bass-sync, auro-strength,
-//! center-level, effect-level, center-image, center-gain, subwoofer1 to subwoofer4, for example lfe-up),
+//! center-level, effect-level, center-image, center-gain, dialog-level, stage-width, stage-height,
+//! subwoofer1 to subwoofer4, for example lfe-up),
 //! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
 //! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
 //! contrast-up, contrast-down, brightness-up, brightness-down, saturation-up, saturation-down,
@@ -72,13 +75,13 @@ use denon_marantz::{
     Avr, Command, QueryGroup, RemoteKey, TelnetConfig, ToneControl, VideoControl, ZoneControl,
 };
 use denon_marantz_proto::{
-    AspectRatio, AudioRestorer, AutoStandby, BluetoothOutputMode, Channel, ChannelLevel,
-    DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode,
-    FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq,
-    MuteLevel, NoiseReduction, PanelLock, PictureMode, PowerOnVolume, ReferenceLevelOffset,
-    RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand,
-    TunerMode, VideoProcessingMode, VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone,
-    ZoneChannelMode, ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Channel,
+    ChannelLevel, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicVolume,
+    EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode,
+    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PliizHeightGain, PowerOnVolume,
+    ReferenceLevelOffset, RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, ToneLevel,
+    Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution, Volume, VolumeDisplay,
+    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -198,7 +201,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 46] = [
+const SOUND_COMMANDS: [&str; 52] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -227,6 +230,12 @@ const SOUND_COMMANDS: [&str; 46] = [
     "effect-level",
     "center-image",
     "center-gain",
+    "dialog-level-adjust",
+    "dialog-level",
+    "dsx",
+    "stage-width",
+    "stage-height",
+    "height-gain",
     "channel-volume",
     "channel-up",
     "channel-down",
@@ -537,6 +546,42 @@ async fn sound_extra_command(
             avr.telnet_send(Zone::Main, Command::SetSoundSetting(value))
                 .await?;
         }
+        other => return older_sound_command(avr, other, argument).await,
+    }
+    Ok(())
+}
+
+/// Runs a sound command that only older receivers have.
+async fn older_sound_command(
+    avr: &Avr,
+    name: &str,
+    argument: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let db = |text: &str| -> Result<i8, String> {
+        text.parse().map_err(|_| "DB is a whole number".to_owned())
+    };
+    match name {
+        "dialog-level-adjust" => {
+            let on = match need()? {
+                "on" => true,
+                "off" => false,
+                _ => return Err(unknown("dialog level adjust").into()),
+            };
+            avr.sound().set_dialog_level_adjust(on).await?;
+        }
+        "dialog-level" => avr.sound().set_dialog_level(db(need()?)?).await?,
+        "dsx" => {
+            let dsx = AudysseyDsx::from_code(need()?).ok_or_else(|| unknown("Audyssey DSX"))?;
+            avr.sound().set_audyssey_dsx(dsx).await?;
+        }
+        "stage-width" => avr.sound().set_stage_width(db(need()?)?).await?,
+        "stage-height" => avr.sound().set_stage_height(db(need()?)?).await?,
+        "height-gain" => {
+            let gain = PliizHeightGain::from_code(need()?).ok_or_else(|| unknown("height gain"))?;
+            avr.sound().set_height_gain(gain).await?;
+        }
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
@@ -566,6 +611,9 @@ fn parse_step(text: &str) -> Result<(SoundStep, bool), String> {
         "effect-level" => SoundStep::EffectLevel,
         "center-image" => SoundStep::CenterImage,
         "center-gain" => SoundStep::CenterGain,
+        "dialog-level" => SoundStep::DialogLevel,
+        "stage-width" => SoundStep::StageWidth,
+        "stage-height" => SoundStep::StageHeight,
         other => match other.strip_prefix("subwoofer").map(str::parse) {
             Some(Ok(number)) => SoundStep::SubwooferLevel(number),
             _ => return Err(format!("unknown setting {other}")),

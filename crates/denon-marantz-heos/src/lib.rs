@@ -3,8 +3,10 @@
 //! It reads what plays, the play state, the position and the repeat and
 //! shuffle modes, and it controls the transport. It also reads and plays the
 //! queue, HEOS Favorites and quick selects, and plays streams and inputs.
-//! Volume and mute are not here: on the AVC-A10H, the HEOS volume is shared
-//! by the zones, so use telnet or HTTP for them.
+//! The client does not keep or control the volume and mute: on the AVC-A10H,
+//! the HEOS volume is shared by the zones, so use telnet or HTTP for them. For
+//! other HEOS devices, the protocol crate has the volume and mute commands of
+//! players and groups, and [`Heos::send`] sends them.
 //!
 //! The protocol is in the `denon-marantz-heos-proto` crate, also as
 //! [`proto`].
