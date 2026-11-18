@@ -3,14 +3,17 @@
 use std::fmt::Write as _;
 
 use crate::error::Error;
-use crate::types::{PlayState, PlayerId, QueueId, RepeatMode, SourceId};
+use crate::types::{MAX_VOLUME, PlayState, PlayerId, QueueId, RepeatMode, SourceId};
 
 /// Highest quick select slot.
 const MAX_QUICK_SELECT: u8 = 6;
 
+/// Highest volume step.
+const MAX_VOLUME_STEP: u8 = 10;
+
 /// A command to the CLI.
 ///
-/// Volume, mute, groups, sign-in and service browsing are not here.
+/// Group membership, sign-in and service browsing are not here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Command<'a> {
@@ -44,6 +47,92 @@ pub enum Command<'a> {
     GetNowPlayingMedia {
         /// Player.
         pid: PlayerId,
+    },
+    /// Reads the volume.
+    GetVolume {
+        /// Player.
+        pid: PlayerId,
+    },
+    /// Sets the volume.
+    SetVolume {
+        /// Player.
+        pid: PlayerId,
+        /// Level from 0 to 100.
+        level: u8,
+    },
+    /// Turns the volume up.
+    VolumeUp {
+        /// Player.
+        pid: PlayerId,
+        /// Step from 1 to 10. `None` uses the step of the device, 5.
+        step: Option<u8>,
+    },
+    /// Turns the volume down.
+    VolumeDown {
+        /// Player.
+        pid: PlayerId,
+        /// Step from 1 to 10. `None` uses the step of the device, 5.
+        step: Option<u8>,
+    },
+    /// Reads if the player is muted.
+    GetMute {
+        /// Player.
+        pid: PlayerId,
+    },
+    /// Mutes or unmutes.
+    SetMute {
+        /// Player.
+        pid: PlayerId,
+        /// Mute on.
+        mute: bool,
+    },
+    /// Mutes if not muted, else unmutes.
+    ToggleMute {
+        /// Player.
+        pid: PlayerId,
+    },
+    /// Reads the volume of a group.
+    GetGroupVolume {
+        /// Group.
+        gid: PlayerId,
+    },
+    /// Sets the volume of a group.
+    SetGroupVolume {
+        /// Group.
+        gid: PlayerId,
+        /// Level from 0 to 100.
+        level: u8,
+    },
+    /// Turns the volume of a group up.
+    GroupVolumeUp {
+        /// Group.
+        gid: PlayerId,
+        /// Step from 1 to 10. `None` uses the step of the device, 5.
+        step: Option<u8>,
+    },
+    /// Turns the volume of a group down.
+    GroupVolumeDown {
+        /// Group.
+        gid: PlayerId,
+        /// Step from 1 to 10. `None` uses the step of the device, 5.
+        step: Option<u8>,
+    },
+    /// Reads if a group is muted.
+    GetGroupMute {
+        /// Group.
+        gid: PlayerId,
+    },
+    /// Mutes or unmutes a group.
+    SetGroupMute {
+        /// Group.
+        gid: PlayerId,
+        /// Mute on.
+        mute: bool,
+    },
+    /// Mutes a group if not muted, else unmutes it.
+    ToggleGroupMute {
+        /// Group.
+        gid: PlayerId,
     },
     /// Reads the repeat and shuffle modes.
     GetPlayMode {
@@ -149,6 +238,20 @@ impl Command<'_> {
             Self::GetPlayState { .. } => "player/get_play_state",
             Self::SetPlayState { .. } => "player/set_play_state",
             Self::GetNowPlayingMedia { .. } => "player/get_now_playing_media",
+            Self::GetVolume { .. } => "player/get_volume",
+            Self::SetVolume { .. } => "player/set_volume",
+            Self::VolumeUp { .. } => "player/volume_up",
+            Self::VolumeDown { .. } => "player/volume_down",
+            Self::GetMute { .. } => "player/get_mute",
+            Self::SetMute { .. } => "player/set_mute",
+            Self::ToggleMute { .. } => "player/toggle_mute",
+            Self::GetGroupVolume { .. } => "group/get_volume",
+            Self::SetGroupVolume { .. } => "group/set_volume",
+            Self::GroupVolumeUp { .. } => "group/volume_up",
+            Self::GroupVolumeDown { .. } => "group/volume_down",
+            Self::GetGroupMute { .. } => "group/get_mute",
+            Self::SetGroupMute { .. } => "group/set_mute",
+            Self::ToggleGroupMute { .. } => "group/toggle_mute",
             Self::GetPlayMode { .. } => "player/get_play_mode",
             Self::SetPlayMode { .. } => "player/set_play_mode",
             Self::PlayNext { .. } => "player/play_next",
@@ -197,6 +300,25 @@ impl Command<'_> {
                 })
             }
             Self::PlayPreset { preset: 0, .. } => Err(Error::ValueOutOfRange { what: "preset" }),
+            Self::SetVolume { level, .. } | Self::SetGroupVolume { level, .. }
+                if level > MAX_VOLUME =>
+            {
+                Err(Error::ValueOutOfRange { what: "volume" })
+            }
+            Self::VolumeUp {
+                step: Some(step), ..
+            }
+            | Self::VolumeDown {
+                step: Some(step), ..
+            }
+            | Self::GroupVolumeUp {
+                step: Some(step), ..
+            }
+            | Self::GroupVolumeDown {
+                step: Some(step), ..
+            } if !(1..=MAX_VOLUME_STEP).contains(&step) => Err(Error::ValueOutOfRange {
+                what: "volume step",
+            }),
             Self::PlayInput { input: text, .. } | Self::PlayStream { url: text, .. }
                 if text.is_empty() || text.chars().any(char::is_control) =>
             {
@@ -219,7 +341,25 @@ impl Command<'_> {
             | Self::PlayNext { pid }
             | Self::PlayPrevious { pid }
             | Self::ClearQueue { pid }
-            | Self::GetQuickSelects { pid } => write!(out, "?pid={pid}"),
+            | Self::GetQuickSelects { pid }
+            | Self::GetVolume { pid }
+            | Self::GetMute { pid }
+            | Self::ToggleMute { pid } => write!(out, "?pid={pid}"),
+            Self::SetVolume { pid, level } => write!(out, "?pid={pid}&level={level}"),
+            Self::VolumeUp { pid, step } | Self::VolumeDown { pid, step } => {
+                write!(out, "?pid={pid}")?;
+                write_step(out, step)
+            }
+            Self::SetMute { pid, mute } => write!(out, "?pid={pid}&state={}", on_off(mute)),
+            Self::GetGroupVolume { gid }
+            | Self::GetGroupMute { gid }
+            | Self::ToggleGroupMute { gid } => write!(out, "?gid={gid}"),
+            Self::SetGroupVolume { gid, level } => write!(out, "?gid={gid}&level={level}"),
+            Self::GroupVolumeUp { gid, step } | Self::GroupVolumeDown { gid, step } => {
+                write!(out, "?gid={gid}")?;
+                write_step(out, step)
+            }
+            Self::SetGroupMute { gid, mute } => write!(out, "?gid={gid}&state={}", on_off(mute)),
             Self::SetPlayState { pid, state } => {
                 write!(out, "?pid={pid}&state={}", state.name())
             }
@@ -279,6 +419,10 @@ fn write_range(out: &mut String, range: Option<(u32, u32)>) -> std::fmt::Result 
         Some((first, last)) => write!(out, "&range={first},{last}"),
         None => Ok(()),
     }
+}
+
+fn write_step(out: &mut String, step: Option<u8>) -> std::fmt::Result {
+    step.map_or(Ok(()), |step| write!(out, "&step={step}"))
 }
 
 #[cfg(test)]
@@ -373,6 +517,108 @@ mod tests {
     }
 
     #[test]
+    fn writes_volume_and_mute_commands() {
+        let pid = PlayerId(-12);
+        let cases = [
+            (
+                Command::GetVolume { pid },
+                "heos://player/get_volume?pid=-12",
+            ),
+            (
+                Command::SetVolume { pid, level: 100 },
+                "heos://player/set_volume?pid=-12&level=100",
+            ),
+            (
+                Command::SetVolume { pid, level: 0 },
+                "heos://player/set_volume?pid=-12&level=0",
+            ),
+            (
+                Command::VolumeUp {
+                    pid,
+                    step: Some(10),
+                },
+                "heos://player/volume_up?pid=-12&step=10",
+            ),
+            (
+                Command::VolumeUp { pid, step: None },
+                "heos://player/volume_up?pid=-12",
+            ),
+            (
+                Command::VolumeDown { pid, step: Some(1) },
+                "heos://player/volume_down?pid=-12&step=1",
+            ),
+            (
+                Command::VolumeDown { pid, step: None },
+                "heos://player/volume_down?pid=-12",
+            ),
+            (Command::GetMute { pid }, "heos://player/get_mute?pid=-12"),
+            (
+                Command::SetMute { pid, mute: true },
+                "heos://player/set_mute?pid=-12&state=on",
+            ),
+            (
+                Command::SetMute { pid, mute: false },
+                "heos://player/set_mute?pid=-12&state=off",
+            ),
+            (
+                Command::ToggleMute { pid },
+                "heos://player/toggle_mute?pid=-12",
+            ),
+            (
+                Command::GetGroupVolume { gid: pid },
+                "heos://group/get_volume?gid=-12",
+            ),
+            (
+                Command::SetGroupVolume {
+                    gid: pid,
+                    level: 30,
+                },
+                "heos://group/set_volume?gid=-12&level=30",
+            ),
+            (
+                Command::GroupVolumeUp {
+                    gid: pid,
+                    step: Some(5),
+                },
+                "heos://group/volume_up?gid=-12&step=5",
+            ),
+            (
+                Command::GroupVolumeDown {
+                    gid: pid,
+                    step: None,
+                },
+                "heos://group/volume_down?gid=-12",
+            ),
+            (
+                Command::GroupVolumeDown {
+                    gid: pid,
+                    step: Some(2),
+                },
+                "heos://group/volume_down?gid=-12&step=2",
+            ),
+            (
+                Command::GetGroupMute { gid: pid },
+                "heos://group/get_mute?gid=-12",
+            ),
+            (
+                Command::SetGroupMute {
+                    gid: pid,
+                    mute: true,
+                },
+                "heos://group/set_mute?gid=-12&state=on",
+            ),
+            (
+                Command::ToggleGroupMute { gid: pid },
+                "heos://group/toggle_mute?gid=-12",
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(line(command), format!("{expected}\r\n"));
+            assert!(expected[7..].starts_with(command.name()), "{expected}");
+        }
+    }
+
+    #[test]
     fn rejects_bad_values() {
         let pid = PlayerId(1);
         let cases = [
@@ -391,6 +637,50 @@ mod tests {
             (
                 Command::PlayPreset { pid, preset: 0 },
                 Error::ValueOutOfRange { what: "preset" },
+            ),
+            (
+                Command::SetVolume { pid, level: 101 },
+                Error::ValueOutOfRange { what: "volume" },
+            ),
+            (
+                Command::SetGroupVolume {
+                    gid: pid,
+                    level: 101,
+                },
+                Error::ValueOutOfRange { what: "volume" },
+            ),
+            (
+                Command::VolumeUp { pid, step: Some(0) },
+                Error::ValueOutOfRange {
+                    what: "volume step",
+                },
+            ),
+            (
+                Command::VolumeDown {
+                    pid,
+                    step: Some(11),
+                },
+                Error::ValueOutOfRange {
+                    what: "volume step",
+                },
+            ),
+            (
+                Command::GroupVolumeUp {
+                    gid: pid,
+                    step: Some(11),
+                },
+                Error::ValueOutOfRange {
+                    what: "volume step",
+                },
+            ),
+            (
+                Command::GroupVolumeDown {
+                    gid: pid,
+                    step: Some(0),
+                },
+                Error::ValueOutOfRange {
+                    what: "volume step",
+                },
             ),
             (
                 Command::GetQueue {

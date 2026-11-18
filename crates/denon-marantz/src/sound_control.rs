@@ -2,10 +2,11 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    AudioRestorer, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel, ChannelLevel,
-    ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc, EffectSpeakerSelection,
-    FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, Mdax, RoomSize,
-    SoundSettingValue, SoundStep, SpeakerPreset, SurroundLevelCompensation, Zone,
+    AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel,
+    ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc,
+    EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode,
+    Mdax, PliizHeightGain, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
+    SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -102,6 +103,12 @@ impl<'a> SoundControl<'a> {
         set_dialog_control(u8) => DialogControl, "the dialog control in dB, from 0 to 6";
         set_delay_time(u16) => DelayTime, "the delay time in ms, from 0 to 300";
         set_audio_delay(u16) => AudioDelay, "the audio delay in ms, from 0 to 500";
+        set_dialog_level_adjust(bool) => DialogLevelAdjust, "Dialog Level Adjust on (`true`) or off (`false`). Older receivers only";
+        set_dialog_level(i8) => DialogLevel, "the dialog level in dB, from -12 to +12. Older receivers only";
+        set_audyssey_dsx(AudysseyDsx) => AudysseyDsx, "Audyssey DSX. Older receivers only";
+        set_stage_width(i8) => StageWidth, "the stage width of Audyssey DSX in dB, from -10 to +10. Older receivers only";
+        set_stage_height(i8) => StageHeight, "the stage height of Audyssey DSX in dB, from -10 to +10. Older receivers only";
+        set_height_gain(PliizHeightGain) => HeightGain, "the height gain of Dolby `PLIIz`. Older receivers only";
     }
 
     /// Sets the center width, from 0 to 7. Receivers use the name `PSCEN` or
@@ -171,6 +178,9 @@ impl<'a> SoundControl<'a> {
         effect_level_up, effect_level_down => EffectLevel, "the effect level";
         center_image_up, center_image_down => CenterImage, "the center image (older receivers)";
         center_gain_up, center_gain_down => CenterGain, "the center gain (older Marantz receivers)";
+        dialog_level_up, dialog_level_down => DialogLevel, "the dialog level (older receivers)";
+        stage_width_up, stage_width_down => StageWidth, "the stage width of Audyssey DSX (older receivers)";
+        stage_height_up, stage_height_down => StageHeight, "the stage height of Audyssey DSX (older receivers)";
     }
 
     /// Raises the level of subwoofer 1 to 4 by one step.

@@ -10,7 +10,7 @@ use crate::de;
 use crate::error::Error;
 use crate::event::Event;
 use crate::message::Message;
-use crate::types::{NowPlaying, PlayMode, PlayState, RepeatMode};
+use crate::types::{MAX_VOLUME, NowPlaying, PlayMode, PlayState, RepeatMode};
 
 /// Prefix of the command name of an event.
 const EVENT_PREFIX: &str = "event/";
@@ -141,6 +141,24 @@ impl<'a> Response<'a> {
             repeat: message.parse_with("repeat", RepeatMode::from_name)?,
             shuffle: message.on_off("shuffle")?,
         })
+    }
+
+    /// Volume level from 0 to 100, from the message of `get_volume` and
+    /// `set_volume` of players and groups.
+    pub fn volume(&self) -> Result<u8, Error> {
+        self.message().parse_with("level", |value| {
+            value
+                .trim()
+                .parse()
+                .ok()
+                .filter(|level| *level <= MAX_VOLUME)
+        })
+    }
+
+    /// Mute state from the message of `get_mute` and `set_mute` of players
+    /// and groups.
+    pub fn mute(&self) -> Result<bool, Error> {
+        self.message().on_off("state")
     }
 
     /// Parses the payload of `get_now_playing_media`.
@@ -410,6 +428,38 @@ mod tests {
             page.play_mode(),
             Err(Error::MissingField { field: "repeat" })
         );
+    }
+
+    #[test]
+    fn volume_and_mute() {
+        fn parse(line: &str) -> Response<'_> {
+            Response::parse(line).unwrap()
+        }
+        let player = parse(
+            r#"{"heos":{"command":"player/get_volume","result":"success","message":"pid=1&level=37"}}"#,
+        );
+        assert_eq!(player.volume(), Ok(37));
+        let group = parse(
+            r#"{"heos":{"command":"group/set_volume","result":"success","message":"gid=-3&level= 100 "}}"#,
+        );
+        assert_eq!(group.volume(), Ok(100));
+        let high = parse(
+            r#"{"heos":{"command":"player/get_volume","result":"success","message":"pid=1&level=101"}}"#,
+        );
+        assert_eq!(high.volume(), Err(Error::InvalidValue { field: "level" }));
+        let muted = parse(
+            r#"{"heos":{"command":"player/get_mute","result":"success","message":"pid=1&state=on"}}"#,
+        );
+        assert_eq!(muted.mute(), Ok(true));
+        assert_eq!(muted.volume(), Err(Error::MissingField { field: "level" }));
+        let unmuted = parse(
+            r#"{"heos":{"command":"group/set_mute","result":"success","message":"gid=-3&state=off"}}"#,
+        );
+        assert_eq!(unmuted.mute(), Ok(false));
+        let bad = parse(
+            r#"{"heos":{"command":"player/get_mute","result":"success","message":"pid=1&state=play"}}"#,
+        );
+        assert_eq!(bad.mute(), Err(Error::InvalidValue { field: "state" }));
     }
 
     #[test]

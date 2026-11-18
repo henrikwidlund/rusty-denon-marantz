@@ -32,6 +32,8 @@ fuzz_target!(|data: &[u8]| {
                 items.into_iter().map(BrowseItem::into_owned).count()
             });
             let _ = response.play_mode();
+            let _ = response.volume();
+            let _ = response.mute();
             let _ = response.count();
         });
     }

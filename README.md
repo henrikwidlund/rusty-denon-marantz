@@ -15,6 +15,8 @@ state again.
 - Zones: main, zone 2 and zone 3. Power, volume, mute, source, quick select.
 - Sound: sound mode, tone control, Audyssey, Dirac Live, tactile transducer,
   speaker preset, channel levels, dialog enhancer and other sound settings.
+  For older receivers also Dialog Level Adjust, Audyssey DSX with its stage
+  width and height, and the Dolby Pro Logic IIz height gain.
 - Speakers: crossovers, distances, channel level dials, subwoofer output and
   bass settings, read from the web interface.
 - Sources: names (user, default and automatic), hidden sources and the
@@ -233,8 +235,10 @@ watch it with `Heos::changes`. It also:
 - Reads and plays HEOS Favorites and quick selects.
 - Plays a stream from a URL, and an input of the device.
 
-Volume and mute are not in the HEOS crates. On the AVC-A10H, the HEOS volume is
-shared by the zones. Use the `denon-marantz` crate for them.
+The client does not keep or control the volume and mute. On the AVC-A10H, the
+HEOS volume is shared by the zones. Use the `denon-marantz` crate for them. For
+other HEOS devices, `denon-marantz-heos-proto` has the volume and mute commands
+of players and groups, and `Heos::send` sends them.
 
 ```rust
 use denon_marantz_heos::Heos;
@@ -330,6 +334,10 @@ have not run on a receiver:
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver
   sends no answer or error, so the state shows no change.
+- Dialog Level Adjust (`PSDIL`), Audyssey DSX (`PSDSX`, `PSSTW`, `PSSTH`)
+  and the Pro Logic IIz height gain (`PSPHG`). They follow the Denon AVR
+  control protocol Ver.06 for the 2014 models and are tested with unit tests
+  only. The state keeps their events as text in `other`.
 - Dirac filters other than Dirac ART. Only Dirac ART was tested for locking the
   channel levels and the crossovers.
 - The value `WhenOn` of the network control setting: the network answers only
@@ -344,6 +352,9 @@ have not run on a receiver:
   groups.
 - HEOS quick selects: the receiver accepts the call, but the effect was not
   checked.
+- HEOS volume and mute commands of players and groups in
+  `denon-marantz-heos-proto`. They follow the HEOS CLI specification and are
+  tested with unit tests only.
 - HEOS: connecting again after a lost connection, and the heartbeat. They are
   tested with a fake device.
 
