@@ -380,6 +380,7 @@ pub enum SoundSettingValue {
     /// Neural:X.
     NeuralX(bool),
     /// Dolby Atmos on (`true`) or off (`false`).
+    /// Not all receivers support it. Others ignore the command.
     /// [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle)
     /// switches it.
     DolbyAtmos(bool),

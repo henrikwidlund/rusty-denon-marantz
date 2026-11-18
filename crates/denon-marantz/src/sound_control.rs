@@ -97,7 +97,7 @@ impl<'a> SoundControl<'a> {
         set_headphone_eq(bool) => HeadphoneEq, "the headphone EQ on (`true`) or off (`false`)";
         set_cinema_eq(bool) => CinemaEq, "the cinema EQ on (`true`) or off (`false`)";
         set_neural_x(bool) => NeuralX, "Neural:X on (`true`) or off (`false`)";
-        set_dolby_atmos(bool) => DolbyAtmos, "Dolby Atmos on (`true`) or off (`false`). [`ZoneControl::press`](crate::ZoneControl::press) with [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle) switches it";
+        set_dolby_atmos(bool) => DolbyAtmos, "Dolby Atmos on (`true`) or off (`false`). Not all receivers support it. Others ignore the command. [`ZoneControl::press`](crate::ZoneControl::press) with [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle) switches it";
         set_panorama(bool) => Panorama, "panorama on (`true`) or off (`false`)";
         set_dimension(u8) => Dimension, "the dimension, from 0 to 6";
         set_bass_sync(u8) => BassSync, "the bass sync, from 0 to 16";
