@@ -87,13 +87,45 @@ code_enum! {
 }
 
 code_enum! {
-    /// Audio input mode of the main zone. The receiver also has a state with
-    /// no input, but it only reports that and cannot be set.
+    /// Audio input mode of the main zone. `SevenOneIn` is for receivers with
+    /// a 7.1 channel input only.
     pub enum InputMode {
         Auto = "AUTO", "Auto";
         Hdmi = "HDMI", "HDMI";
         Digital = "DIGITAL", "Digital";
         Analog = "ANALOG", "Analog";
+        SevenOneIn = "7.1IN", "7.1CH In";
+    }
+}
+
+code_enum! {
+    /// Audio input of the main zone that the receiver reports but that
+    /// cannot be set.
+    pub enum InputReport {
+        Arc = "ARC", "ARC";
+        Earc = "EARC", "eARC";
+        NoInput = "NO", "No Input";
+    }
+}
+
+/// What the receiver reports as the audio input of the main zone: the mode
+/// that was set, or an input that cannot be set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum InputModeState {
+    /// A mode that can be set.
+    Mode(InputMode),
+    /// An input that the receiver reports only.
+    Report(InputReport),
+}
+
+impl InputModeState {
+    /// Parses a code used by the receiver.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        InputMode::from_code(code)
+            .map(Self::Mode)
+            .or_else(|| InputReport::from_code(code).map(Self::Report))
     }
 }
 
@@ -238,7 +270,7 @@ code_enum! {
 }
 
 code_enum! {
-    /// Speakers used for effect channels.
+    /// Speakers used for effect channels. `Off` is for older receivers only.
     pub enum EffectSpeakerSelection {
         Floor = "FL", "Floor";
         Front = "FR", "Front";
@@ -249,6 +281,7 @@ code_enum! {
         SurroundBack = "SB", "Surround Back";
         SurroundBackAndFrontHeight = "BH", "Surround Back + Front Height";
         SurroundBackAndFrontWide = "BW", "Surround Back + Front Wide";
+        Off = "OFF", "Off";
     }
 }
 
@@ -330,6 +363,39 @@ code_enum! {
         Mid = "MID", "MID";
         High = "HI", "HI";
         Off = "OFF", "OFF";
+    }
+}
+
+code_enum! {
+    /// Dynamic compression (D.COMP). Older receivers only.
+    pub enum DynamicCompression {
+        Off = "OFF", "Off";
+        Low = "LOW", "Low";
+        Mid = "MID", "Mid";
+        High = "HIGH", "High";
+    }
+}
+
+code_enum! {
+    /// Mode of Dolby `PLII`, `PLIIx`, `PLIIz` and DTS Neo. Older receivers only.
+    pub enum ProLogicMode {
+        Cinema = "CINEMA", "Cinema";
+        Music = "MUSIC", "Music";
+        Game = "GAME", "Game";
+        ProLogic = "PRO LOGIC", "Pro Logic";
+        Height = "HEIGHT", "Height";
+    }
+}
+
+code_enum! {
+    /// Mode of the surround back speakers. Older receivers only.
+    pub enum SurroundBackMode {
+        Off = "OFF", "Off";
+        On = "ON", "On";
+        MatrixOn = "MTRX ON", "Matrix On";
+        Pl2xCinema = "PL2X CINEMA", "PL2X Cinema";
+        Pl2xMusic = "PL2X MUSIC", "PL2X Music";
+        EsMatrix = "ESMTRX", "ES Matrix";
     }
 }
 

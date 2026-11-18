@@ -152,7 +152,7 @@ query_values! {
         SoundModeList,
         /// Friendly name.
         FriendlyName,
-        /// Quick select names (Denon).
+        /// Quick select names.
         QuickSelectNames,
         /// Levels of the speaker channels, as in the setup menu (Denon).
         SpeakerLevels,
@@ -224,6 +224,8 @@ query_values! {
         DialogControl,
         /// Effect speaker selection.
         EffectSpeakers,
+        /// Front height output.
+        FrontHeight,
         /// Dynamic range compression.
         Drc,
         /// Delay time (`PSDEL`) of the surround modes that have it.
@@ -493,7 +495,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Entry; 128] = [
+static QUERIES: [Entry; 130] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -562,6 +564,7 @@ static QUERIES: [Entry; 128] = [
     both(Names, Query::FriendlyName, "NSFRN ?"), // Friendly name. "NSFRN?" breaks HEOS
     denon(Toggles, Query::AutoLipSync, "OPALS ?"), // Auto Lip Sync
     denon(Names, Query::QuickSelectNames, "SSQS ?"), // Quick select names
+    marantz(Names, Query::QuickSelectNames, "SSQSNZMA ?"), // Quick select names
     denon(Sound, Query::SpeakerLevels, "SSLEV ?"), // Speaker channel levels
     both(Sound, Query::ReferenceLevel, "PSREFLEV ?"), // Reference Level
     both(Sound, Query::DynamicVolume, "PSDYNVOL ?"), // Dynamic Vol.
@@ -595,6 +598,7 @@ static QUERIES: [Entry; 128] = [
     both(Sound, Query::RoomSize, "PSRSZ ?"), // ROOM SIZE
     both(Sound, Query::DialogControl, "PSDIC ?"), // Dialog Control
     both(Sound, Query::EffectSpeakers, "PSSP: ?"), // Effect Speaker selection
+    both(Sound, Query::FrontHeight, "PSFH: ?"), // Front height output
     both(Sound, Query::Drc, "PSDRC ?"),    // DRC
     both(Sound, Query::DelayTime, "PSDEL ?"), // DELAY TIME
     both(Sound, Query::AudioRestorer, "PSRSTR ?"), // AUDIO RESTORER
@@ -698,12 +702,14 @@ mod tests {
         assert!(denon.contains(&"MSQUICK ?"));
         assert!(!denon.contains(&"MSSMART ?"));
         assert!(marantz.contains(&"MSSMART ?"));
-        for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?"] {
+        for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?", "SSQSNZMA ?"] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
-        assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 120);
-        assert_eq!(marantz.len(), 119);
+        for query in ["OPALS ?", "SSQS ?"] {
+            assert!(denon.contains(&query) && !marantz.contains(&query));
+        }
+        assert_eq!(denon.len(), 121);
+        assert_eq!(marantz.len(), 121);
     }
 
     #[test]

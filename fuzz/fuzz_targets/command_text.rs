@@ -10,6 +10,7 @@ fuzz_target!(|text: &str| {
         Command::SelectSource(text),
         Command::SelectSoundMode(text),
         Command::VideoSelectSource(text),
+        Command::RecordSource(text),
         Command::Raw(text),
     ] {
         for brand in [Brand::Denon, Brand::Marantz] {

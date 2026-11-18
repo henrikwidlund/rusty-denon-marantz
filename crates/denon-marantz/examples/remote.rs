@@ -35,7 +35,9 @@
 //! lfc-off, containment 1-7, containment-up, containment-down, dirac CODE dirac-name NAME,
 //! effect on or off, effect-level N, center-image N, center-gain N, dialog-level-adjust on or off,
 //! dialog-level DB (-12 to 12), dsx CODE (OFF, ONH, ONW, ONHW), stage-width DB, stage-height DB (-10 to 10),
-//! height-gain CODE (LOW, MID, HI), step SETTING-up or SETTING-down
+//! height-gain CODE (LOW, MID, HI), pro-logic-mode CODE (CINEMA, MUSIC, GAME, PRO LOGIC, HEIGHT),
+//! surround-back-mode CODE (OFF, ON, MTRX ON, PL2X CINEMA, PL2X MUSIC, ESMTRX), front-height on or off,
+//! dynamic-compression CODE (OFF, LOW, MID, HIGH), auto-flag-detect on or off, step SETTING-up or SETTING-down
 //! (audio-delay, delay-time, dialog-control, dimension, center-width, center-width-cew, lfe, bass-sync, auro-strength,
 //! center-level, effect-level, center-image, center-gain, dialog-level, stage-width, stage-height,
 //! subwoofer1 to subwoofer4, for example lfe-up),
@@ -53,18 +55,24 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, dolby-atmos on or off, speaker-preset 1, 2 or toggle, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
-//! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL, ANALOG or 7.1IN), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
+//! tuner-up, tuner-down, tuner-frequency HUNDREDTHS, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! HD Radio receivers only: hd-up, hd-down, hd-multicast N (0 to 8, 0 is analog),
 //! hd-band CODE (AM or FM), hd-mode CODE (AUTOHD, AUTO, MANUAL, ANAAUTO, ANAMANU),
 //! hd-preset-up, hd-preset-down, hd-preset N, hd-store N (N is 1 to 56),
+//! hd-frequency HUNDREDTHS or HUNDREDTHS:CHANNEL (8750 is 87.50 MHz, 105000 is 1050 kHz),
+//! hd-request (asks for the HD Radio state), tuner-presets (asks for the preset names),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
 //! CODE is the telnet code, for example AUDYSSEY, 5, HEV, ML or OFF), volume-up, volume-down, volume DB, mute, unmute, source NAME, sound-mode NAME,
 //! all-zone-stereo-on, all-zone-stereo-off, play, pause, stop, up, down, left,
 //! right, enter, back, info, options, setup-open, setup-close, trigger-on N, trigger-off N (N is 1 to 3), raw TEXT,
+//! older receivers only: insta-prevue on or off, source-menu on or off, record-source NAME (CD, PHONO ... or SOURCE),
+//! net-next, net-previous, net-repeat one, all or off, net-random on or off, net-repeat-toggle,
+//! net-random-toggle, net-up, net-down, net-left, net-right, net-enter, net-page-next,
+//! net-page-previous, net-preset N, net-store N (N is 1 to 56), net-preset-names,
 //! key NAME (next, previous, repeat-off, repeat-one, repeat-all, random-on,
 //! random-off, page-up, page-down, rewind, fast-forward, atmos, cec-on,
 //! cec-off, digit-0 to digit-9, volume-0db, volume-minus-20db,
@@ -79,12 +87,13 @@ use denon_marantz::{
 };
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Channel,
-    ChannelLevel, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicVolume,
-    EcoMode, FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
-    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
-    PliizHeightGain, PowerOnVolume, ReferenceLevelOffset, RoomSize, Sleep, SoundSettingValue,
-    SoundStep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
-    VideoResolution, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    ChannelLevel, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicCompression,
+    DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput,
+    HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NetworkAudioCommand, NoiseReduction,
+    PanelLock, PictureMode, PliizHeightGain, PowerOnVolume, ProLogicMode, ReferenceLevelOffset,
+    RepeatMode, RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, SurroundBackMode,
+    ToneLevel, Trigger, TunerBand, TunerFrequency, TunerMode, VideoProcessingMode, VideoResolution,
+    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -182,7 +191,7 @@ const DEVICE_COMMANDS: [&str; 17] = [
 ];
 
 /// Commands that the tuner control has methods for.
-const TUNER_COMMANDS: [&str; 17] = [
+const TUNER_COMMANDS: [&str; 21] = [
     "tuner-up",
     "tuner-down",
     "tuner-band",
@@ -200,6 +209,10 @@ const TUNER_COMMANDS: [&str; 17] = [
     "hd-preset-down",
     "hd-preset",
     "hd-store",
+    "hd-frequency",
+    "hd-request",
+    "tuner-frequency",
+    "tuner-presets",
 ];
 
 /// Commands that the tone control has methods for.
@@ -215,7 +228,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 53] = [
+const SOUND_COMMANDS: [&str; 57] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -239,7 +252,6 @@ const SOUND_COMMANDS: [&str; 53] = [
     "tactile-lpf",
     "front-speakers",
     "panorama",
-    "dolby-atmos",
     "speaker-preset",
     "effect",
     "effect-level",
@@ -251,6 +263,11 @@ const SOUND_COMMANDS: [&str; 53] = [
     "stage-width",
     "stage-height",
     "height-gain",
+    "pro-logic-mode",
+    "surround-back-mode",
+    "front-height",
+    "dynamic-compression",
+    "auto-flag-detect",
     "channel-volume",
     "channel-up",
     "channel-down",
@@ -273,6 +290,7 @@ const SOUND_COMMANDS: [&str; 53] = [
 
 /// The other commands, sent with `Avr::telnet_send`.
 fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, String> {
+    let arg = Argument { name, argument };
     Ok(match name {
         "device-power-on" => Command::DevicePowerOn,
         "device-power-standby" => Command::DevicePowerStandby,
@@ -291,6 +309,38 @@ fn command<'a>(name: &str, argument: Option<&'a str>) -> Result<Command<'a>, Str
         "options" => Command::Options,
         "setup-open" => Command::SetupMenu(true),
         "setup-close" => Command::SetupMenu(false),
+        "insta-prevue" => Command::InstaPrevue(arg.on_off("InstaPrevue")?),
+        "source-menu" => Command::SourceMenu(arg.on_off("source menu")?),
+        "record-source" => Command::RecordSource(argument.ok_or("record-source needs a name")?),
+        "net-next" => Command::NetworkAudio(NetworkAudioCommand::Next),
+        "net-previous" => Command::NetworkAudio(NetworkAudioCommand::Previous),
+        "net-repeat" => Command::NetworkAudio(NetworkAudioCommand::Repeat(match argument {
+            Some("one") => RepeatMode::One,
+            Some("all") => RepeatMode::All,
+            Some("off") => RepeatMode::Off,
+            _ => return Err("net-repeat needs one, all or off".to_owned()),
+        })),
+        "net-random" => Command::NetworkAudio(NetworkAudioCommand::Random(arg.on_off("random")?)),
+        "net-repeat-toggle" => Command::NetworkAudio(NetworkAudioCommand::RepeatToggle),
+        "net-random-toggle" => Command::NetworkAudio(NetworkAudioCommand::RandomToggle),
+        "net-up" => Command::NetworkAudio(NetworkAudioCommand::CursorUp),
+        "net-down" => Command::NetworkAudio(NetworkAudioCommand::CursorDown),
+        "net-left" => Command::NetworkAudio(NetworkAudioCommand::CursorLeft),
+        "net-right" => Command::NetworkAudio(NetworkAudioCommand::CursorRight),
+        "net-enter" => Command::NetworkAudio(NetworkAudioCommand::CursorEnter),
+        "net-page-next" => Command::NetworkAudio(NetworkAudioCommand::PageNext),
+        "net-page-previous" => Command::NetworkAudio(NetworkAudioCommand::PagePrevious),
+        "net-preset" | "net-store" => {
+            let number: u8 = argument
+                .and_then(|text| text.parse().ok())
+                .ok_or("net-preset and net-store need a number from 1 to 56")?;
+            Command::NetworkAudio(if name == "net-preset" {
+                NetworkAudioCommand::Preset(number)
+            } else {
+                NetworkAudioCommand::StorePreset(number)
+            })
+        }
+        "net-preset-names" => Command::NetworkAudio(NetworkAudioCommand::PresetNames),
         "trigger-on" | "trigger-off" => {
             let number: u8 = argument
                 .and_then(|text| text.parse().ok())
@@ -409,17 +459,11 @@ async fn sound_command(
             let on = arg.on_off("panorama")?;
             avr.sound().set_panorama(on).await?;
         }
-        "dolby-atmos" => {
-            let on = arg.on_off("Dolby Atmos")?;
-            avr.sound().set_dolby_atmos(on).await?;
+        "speaker-preset" => {
+            let preset =
+                SpeakerPreset::from_code(arg.need()?).ok_or_else(|| arg.unknown("preset"))?;
+            avr.sound().set_speaker_preset(preset).await?;
         }
-        "speaker-preset" => match arg.need()? {
-            "toggle" => avr.sound().toggle_speaker_preset().await?,
-            code => {
-                let preset = SpeakerPreset::from_code(code).ok_or_else(|| arg.unknown("preset"))?;
-                avr.sound().set_speaker_preset(preset).await?;
-            }
-        },
         "tactile-up" => avr.sound().tactile_level_up().await?,
         "tactile-down" => avr.sound().tactile_level_down().await?,
         "tactile-lpf" => {
@@ -591,6 +635,29 @@ async fn older_sound_command(
             let gain = PliizHeightGain::from_code(arg.need()?)
                 .ok_or_else(|| arg.unknown("height gain"))?;
             avr.sound().set_height_gain(gain).await?;
+        }
+        "pro-logic-mode" => {
+            let mode = ProLogicMode::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("Pro Logic mode"))?;
+            avr.sound().set_pro_logic_mode(mode).await?;
+        }
+        "surround-back-mode" => {
+            let mode = SurroundBackMode::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("surround back mode"))?;
+            avr.sound().set_surround_back_mode(mode).await?;
+        }
+        "front-height" => {
+            let on = arg.on_off("front height")?;
+            avr.sound().set_front_height(on).await?;
+        }
+        "dynamic-compression" => {
+            let level = DynamicCompression::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("dynamic compression"))?;
+            avr.sound().set_dynamic_compression(level).await?;
+        }
+        "auto-flag-detect" => {
+            let on = arg.on_off("auto flag detect")?;
+            avr.sound().set_auto_flag_detect(on).await?;
         }
         other => return Err(format!("unknown command {other}").into()),
     }
@@ -773,6 +840,36 @@ async fn tuner_command(
         "hd-preset-down" => tuner.hd_preset_down().await?,
         "hd-preset" => tuner.select_hd_preset(number()?).await?,
         "hd-store" => tuner.store_hd_preset(number()?).await?,
+        "hd-request" => tuner.request_hd().await?,
+        "tuner-frequency" => {
+            let frequency = arg
+                .need()?
+                .parse()
+                .ok()
+                .and_then(TunerFrequency::from_hundredths)
+                .ok_or("tuner-frequency needs hundredths, for example 8750 for 87.50 MHz")?;
+            tuner.set_frequency(frequency).await?;
+        }
+        "tuner-presets" => tuner.request_presets().await?,
+        "hd-frequency" => {
+            let text = arg.need()?;
+            let (hundredths, channel) = match text.split_once(':') {
+                Some((hundredths, channel)) => (hundredths, Some(channel)),
+                None => (text, None),
+            };
+            let frequency = hundredths
+                .parse()
+                .ok()
+                .and_then(TunerFrequency::from_hundredths)
+                .ok_or("hd-frequency needs hundredths, for example 8750 for 87.50 MHz")?;
+            match channel {
+                Some(channel) => {
+                    let channel = channel.parse().map_err(|_| "the channel is 0 to 8")?;
+                    tuner.set_hd_frequency_multicast(frequency, channel).await?;
+                }
+                None => tuner.set_hd_frequency(frequency).await?,
+            }
+        }
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())

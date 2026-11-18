@@ -17,6 +17,7 @@ use crate::appcommand::Field;
 use crate::general_menu::{GeneralPart, GeneralSettings};
 use crate::input_pages::SourceLevels;
 use crate::input_pages::{InputAssignment, SourceNames};
+use crate::network_audio::MAX_NETWORK_PRESET;
 use crate::now_playing::NowPlaying;
 use crate::picture::PictureSettings;
 use crate::settings_availability::{GroupAvailability, SettingsAvailability};
@@ -38,9 +39,10 @@ use crate::video_menu::{VideoMenu, VideoMenuPart};
 use crate::zone_settings::MAX_QUICK_SELECT;
 use crate::{
     AutoStandby, BluetoothOutputMode, Channel, ChannelLevel, ContainmentAmount, DigitalCodec,
-    DimmerMode, DiracFilter, DynamicVolume, EcoMode, HdmiOutput, Illumination, InputMode, MultiEq,
-    MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep, SpeakerPreset,
-    ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    DimmerMode, DiracFilter, DynamicVolume, EcoMode, HdmiOutput, Illumination, InputModeState,
+    MultiEq, MuteLevel, PanelLock, Power, PowerOnVolume, ReferenceLevelOffset, Sleep,
+    SpeakerPreset, ToneLevel, Trigger, Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode,
+    ZoneHdmiAudio,
 };
 
 /// A value of the state.
@@ -175,7 +177,14 @@ pub enum Setting {
     SpeakerPreset,
     /// Video select of the receiver: on or off, or its source.
     VideoSelect,
-    /// The band, mode, frequency, preset or station of the tuner.
+    /// `InstaPrevue` of the receiver is shown.
+    InstaPrevue,
+    /// The source of the recording output (REC SELECT).
+    RecordSource,
+    /// The name of a network audio preset.
+    NetworkPresetNames,
+    /// The band, mode, frequency, preset or station of the tuner, the HD
+    /// Radio state or the tuner presets.
     Tuner,
     /// A video setting such as the video processing mode or the HDMI output.
     VideoSettings,
@@ -321,7 +330,7 @@ pub struct DeviceState {
     pub illumination: Option<Illumination>,
     /// Names of the quick selects. The first is quick select 1. A quick
     /// select with no name, or that the receiver has not reported, is `None`.
-    /// Telnet reports them on a Denon receiver.
+    /// Telnet reports them.
     pub quick_select_names: Vec<Option<String>>,
     /// Level of each speaker channel that the receiver has reported, in the
     /// order of the report. Telnet reports them on a Denon receiver.
@@ -335,8 +344,9 @@ pub struct DeviceState {
     /// the input or the signal changes. [`DeviceState::channel_volumes`] keeps
     /// the levels of the channels of earlier lists too.
     pub active_channels: Vec<Channel>,
-    /// The audio input mode of the main zone, the `SD` events.
-    pub input_mode: Option<InputMode>,
+    /// The audio input mode of the main zone, the `SD` events: the mode that
+    /// was set, or an input that the receiver reports only, such as ARC.
+    pub input_mode: Option<InputModeState>,
     /// Speaker crossovers, configuration and graphic EQ. Telnet reports them.
     pub speaker_setup: SpeakerSetup,
     /// Which settings the receiver offers and lets the user change now. Only
@@ -384,6 +394,18 @@ pub struct DeviceState {
     /// The video settings, for example the video processing mode. Telnet
     /// reports them.
     pub video_settings: VideoSettings,
+    /// `InstaPrevue`, the previews of the HDMI sources, is shown. Older
+    /// receivers only.
+    pub insta_prevue: Option<bool>,
+    /// The source of the recording output (REC SELECT). `None` when the
+    /// receiver reports `SOURCE`: the selected source. Older receivers only.
+    pub record_source: Option<String>,
+    /// Names of the network audio presets, as the receiver sends them. The
+    /// first is preset 1. A preset that has no name, or that the receiver
+    /// has not reported, is `None`. They come after
+    /// [`NetworkAudioCommand::PresetNames`](crate::NetworkAudioCommand::PresetNames).
+    /// Older receivers only.
+    pub network_preset_names: Vec<Option<String>>,
 }
 
 /// Sets the level of a channel in a list. Returns true if the list changed.
@@ -553,7 +575,7 @@ impl State {
                 self.zone_change(zone?, Setting::Sleep, |z| set(&mut z.sleep, Some(value)))
             }
             Event::Sd if zone == Some(Zone::Main) => {
-                let mode = InputMode::from_code(parameter.trim())?;
+                let mode = InputModeState::from_code(parameter.trim())?;
                 self.device_change(Setting::InputMode, |d| set(&mut d.input_mode, Some(mode)))
             }
             Event::Ss if zone == Some(Zone::Main) => {
@@ -582,8 +604,14 @@ impl State {
             }
             Event::Mn => self.apply_menu(parameter),
             Event::Ns => {
-                let name = parameter.strip_prefix("FRN ")?.trim();
-                self.apply_friendly_name(name)
+                if let Some(name) = parameter.strip_prefix("FRN ") {
+                    return self.apply_friendly_name(name.trim());
+                }
+                let changed = self.apply_network_preset_name(parameter.strip_prefix('H')?)?;
+                changed.then_some(Change {
+                    zone: None,
+                    setting: Setting::NetworkPresetNames,
+                })
             }
             // Zone 2 and 3 send their own bass and treble as `PS` events.
             Event::Ps if zone == Some(Zone::Main) => self.apply_sound_setting(parameter),
@@ -921,6 +949,11 @@ impl State {
             ("MULTEQ", value)
         } else if let Some(value) = parameter.strip_prefix("SP:") {
             ("SP:", value)
+        } else if let Some((name, value)) = COLON_NAMES
+            .iter()
+            .find_map(|name| Some((*name, parameter.strip_prefix(name)?.strip_prefix(':')?)))
+        {
+            (name, value)
         } else {
             parameter.split_once(' ')?
         };
@@ -1064,11 +1097,14 @@ impl State {
             Event::Ilb => self.apply_illumination(parameter),
             Event::Sp => self.apply_speaker_preset(parameter),
             Event::Sv => self.apply_video_select(parameter),
+            Event::Sr => self.apply_record_source(parameter),
             Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
             Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
             Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
             Event::Nse => self.apply_now_playing_event(|now| now.apply_net_audio_line(parameter)),
-            Event::Hd => self.apply_now_playing_event(|now| now.apply_hd_radio(parameter)),
+            Event::Hd => self
+                .apply_now_playing_event(|now| now.apply_hd_radio(parameter))
+                .or_else(|| self.apply_tuner(|tuner| tuner.hd.apply_status(parameter))),
             _ => None,
         }
     }
@@ -1095,6 +1131,41 @@ impl State {
                 })
             }
         }
+    }
+
+    /// Applies an `SR` event: a source, for example `CD`, or `SOURCE`.
+    fn apply_record_source(&mut self, parameter: &str) -> Option<Change> {
+        let source = match parameter.trim() {
+            "" | "?" => return None,
+            "SOURCE" => None,
+            source => Some(telnet_to_display_source(source)),
+        };
+        self.device_change(Setting::RecordSource, |d| match source {
+            Some(source) => set_text(&mut d.record_source, source),
+            None => set(&mut d.record_source, None),
+        })
+    }
+
+    /// Applies an `NSH` answer without `NSH`, for example `00Radio 1`: the
+    /// preset number from `00` and the name. Returns `None` if it is not a
+    /// preset name, and otherwise true if the names changed. An empty name
+    /// means no name.
+    fn apply_network_preset_name(&mut self, rest: &str) -> Option<bool> {
+        let digits = rest.get(..2)?;
+        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let index = usize::from(digits.parse::<u8>().ok()?);
+        if index >= usize::from(MAX_NETWORK_PRESET) {
+            return None;
+        }
+        let name = rest[2..].trim();
+        let names = &mut self.device.network_preset_names;
+        let is_new = names.len() <= index;
+        if is_new {
+            names.resize(index + 1, None);
+        }
+        Some(set_optional_text(&mut names[index], Some(name).filter(|n| !n.is_empty())) || is_new)
     }
 
     /// Applies a `PV` event, for example `MOV` or `CN 050`.
@@ -1170,6 +1241,9 @@ impl State {
         }
         if let Some(value) = parameter.strip_prefix("ALSSET ") {
             return self.apply_auto_lip_sync(value);
+        }
+        if let Some(rest) = parameter.strip_prefix("TPN") {
+            return self.apply_tuner(|tuner| tuner.apply_preset_name(rest));
         }
         self.apply_dirac_slot(parameter)
     }
@@ -1391,15 +1465,28 @@ impl State {
             })
     }
 
-    /// Applies an `SS` event like `QS1QSN Quick Select 1`. Returns `None` if
+    /// Applies an `SS` event like `QS1QSN Quick Select 1`, or the form of
+    /// the `SSQSNZMA ?` answer, `QSNZMAQS1 Quick Select 1`. Returns `None` if
     /// the event is not about the name of a quick select, and otherwise true
     /// if the names changed. An empty name means no name.
     fn apply_quick_select_name(&mut self, parameter: &str) -> Option<bool> {
-        let rest = parameter.strip_prefix("QS")?;
+        let (rest, answer_form) = match parameter.strip_prefix("QSNZMAQS") {
+            Some(rest) => (rest, true),
+            None => (parameter.strip_prefix("QS")?, false),
+        };
         let digit = *rest.as_bytes().first()?;
         let index = usize::from(digit.checked_sub(b'1').filter(|n| *n < 9)?);
         // The first byte is an ASCII digit, so the index is a char boundary.
-        let name = rest[1..].strip_prefix("QSN")?.trim();
+        let after = &rest[1..];
+        let name = if answer_form {
+            if !after.is_empty() && !after.starts_with(' ') {
+                return None;
+            }
+            after
+        } else {
+            after.strip_prefix("QSN")?
+        }
+        .trim();
         let names = &mut self.device.quick_select_names;
         let is_new = names.len() <= index;
         if is_new {
@@ -1470,11 +1557,13 @@ impl State {
         })
     }
 
-    /// Applies an `MN` event: the setup menu is open (`MEN ON`) or all zone
-    /// stereo is on (`ZST ON`).
+    /// Applies an `MN` event: the setup menu is open (`MEN ON`), all zone
+    /// stereo is on (`ZST ON`) or `InstaPrevue` is shown (`PRV ON`).
     fn apply_menu(&mut self, parameter: &str) -> Option<Change> {
         let (setting, text) = if let Some(text) = parameter.strip_prefix("MEN") {
             (Setting::SettingsMenu, text)
+        } else if let Some(text) = parameter.strip_prefix("PRV") {
+            (Setting::InstaPrevue, text)
         } else {
             (Setting::AllZoneStereo, parameter.strip_prefix("ZST")?)
         };
@@ -1484,11 +1573,12 @@ impl State {
             _ => return None,
         };
         self.device_change(setting, |d| {
-            if setting == Setting::SettingsMenu {
-                set(&mut d.settings_menu, Some(value))
-            } else {
-                set(&mut d.all_zone_stereo, Some(value))
-            }
+            let slot = match setting {
+                Setting::SettingsMenu => &mut d.settings_menu,
+                Setting::InstaPrevue => &mut d.insta_prevue,
+                _ => &mut d.all_zone_stereo,
+            };
+            set(slot, Some(value))
         })
     }
 
@@ -1571,6 +1661,10 @@ fn on_off_answer(text: &str) -> Option<bool> {
         None
     }
 }
+
+/// `PS` names of older receivers that end with a colon. The value follows
+/// with no space, for example `PSMODE:CINEMA`.
+const COLON_NAMES: [&str; 3] = ["MODE", "SB", "FH"];
 
 const fn sources_change() -> Change {
     Change {
@@ -2863,15 +2957,128 @@ mod tests {
 
     #[test]
     fn input_mode_follows_events() {
+        use crate::{InputMode, InputReport};
         let mut state = State::new(false);
         let mode = || change(None, Setting::InputMode);
+        let input = |state: &State| state.device().input_mode;
         assert_eq!(apply(&mut state, "SDHDMI"), mode());
         assert_eq!(apply(&mut state, "SDHDMI"), None);
-        assert_eq!(state.device().input_mode, Some(InputMode::Hdmi));
+        assert_eq!(input(&state), Some(InputModeState::Mode(InputMode::Hdmi)));
         assert_eq!(apply(&mut state, "SDAUTO"), mode());
-        assert_eq!(state.device().input_mode, Some(InputMode::Auto));
+        assert_eq!(input(&state), Some(InputModeState::Mode(InputMode::Auto)));
         assert_eq!(apply(&mut state, "SDXYZ"), None);
-        assert_eq!(state.device().input_mode, Some(InputMode::Auto));
+        assert_eq!(input(&state), Some(InputModeState::Mode(InputMode::Auto)));
+        assert_eq!(apply(&mut state, "SD7.1IN"), mode());
+        assert_eq!(
+            input(&state),
+            Some(InputModeState::Mode(InputMode::SevenOneIn))
+        );
+        for (text, report) in [
+            ("SDARC", InputReport::Arc),
+            ("SDEARC", InputReport::Earc),
+            ("SDNO", InputReport::NoInput),
+        ] {
+            assert_eq!(apply(&mut state, text), mode(), "{text}");
+            assert_eq!(input(&state), Some(InputModeState::Report(report)));
+        }
+    }
+
+    #[test]
+    fn older_receiver_reports() {
+        use crate::{DynamicCompression, ProLogicMode, SurroundBackMode};
+        let mut state = State::new(false);
+        let device = |setting| change(None, setting);
+        // Sound settings of older receivers.
+        assert_eq!(
+            apply(&mut state, "PSMODE:PRO LOGIC"),
+            device(Setting::SoundSettings)
+        );
+        assert_eq!(
+            apply(&mut state, "PSSB:MTRX ON"),
+            device(Setting::SoundSettings)
+        );
+        assert_eq!(apply(&mut state, "PSFH:ON"), device(Setting::SoundSettings));
+        assert_eq!(
+            apply(&mut state, "PSDCO LOW"),
+            device(Setting::SoundSettings)
+        );
+        assert_eq!(
+            apply(&mut state, "PSAFD ON"),
+            device(Setting::SoundSettings)
+        );
+        let sound = &state.device().sound_settings;
+        assert_eq!(sound.pro_logic_mode, Some(ProLogicMode::ProLogic));
+        assert_eq!(sound.surround_back_mode, Some(SurroundBackMode::MatrixOn));
+        assert_eq!(sound.dynamic_compression, Some(DynamicCompression::Low));
+        assert_eq!(sound.auto_flag_detect, Some(true));
+        assert_eq!(sound.front_height, Some(true));
+        assert!(sound.other.is_empty());
+        assert_eq!(
+            state.device().sound_settings.effect_speakers,
+            None,
+            "the colon names do not reach the effect speakers"
+        );
+        // InstaPrevue.
+        assert_eq!(apply(&mut state, "MNPRV ON"), device(Setting::InstaPrevue));
+        assert_eq!(apply(&mut state, "MNPRV ON"), None);
+        assert_eq!(state.device().insta_prevue, Some(true));
+        assert_eq!(apply(&mut state, "MNPRV OFF"), device(Setting::InstaPrevue));
+        assert_eq!(apply(&mut state, "MNPRV X"), None);
+        assert_eq!(state.device().settings_menu, None);
+        assert_eq!(state.device().all_zone_stereo, None);
+        // REC SELECT.
+        assert_eq!(apply(&mut state, "SRCD"), device(Setting::RecordSource));
+        assert_eq!(apply(&mut state, "SRCD"), None);
+        assert_eq!(state.device().record_source.as_deref(), Some("CD"));
+        assert_eq!(apply(&mut state, "SR?"), None);
+        assert_eq!(apply(&mut state, "SRSOURCE"), device(Setting::RecordSource));
+        assert_eq!(state.device().record_source, None);
+    }
+
+    #[test]
+    fn network_preset_names_follow_answers() {
+        let mut state = State::new(false);
+        let names = || change(None, Setting::NetworkPresetNames);
+        assert_eq!(apply(&mut state, "NSH01Radio 2              "), names());
+        assert_eq!(apply(&mut state, "NSH01Radio 2"), None);
+        assert_eq!(
+            state.device().network_preset_names,
+            [None, Some("Radio 2".to_owned())]
+        );
+        assert_eq!(apply(&mut state, "NSH00Radio 1"), names());
+        assert_eq!(apply(&mut state, "NSH55"), names());
+        assert_eq!(state.device().network_preset_names.len(), 56);
+        assert_eq!(state.device().network_preset_names[55], None);
+        assert_eq!(apply(&mut state, "NSH01    "), names());
+        assert_eq!(state.device().network_preset_names[1], None);
+        for text in ["NSH56Name", "NSH9", "NSHxxName", "NSH", "NSH?", "NSH 1Name"] {
+            assert_eq!(apply(&mut state, text), None, "{text}");
+        }
+        assert_eq!(state.device().network_preset_names.len(), 56);
+    }
+
+    #[test]
+    fn hd_radio_status_goes_to_the_tuner() {
+        let mut state = State::new(false);
+        assert_eq!(
+            apply(&mut state, "HDSIG LEV 3"),
+            change(None, Setting::Tuner)
+        );
+        assert_eq!(state.device().tuner.hd.signal_level, Some(3));
+        assert_eq!(
+            apply(&mut state, "HDARTISTBand"),
+            change(None, Setting::NowPlaying)
+        );
+        assert_eq!(apply(&mut state, "HDARTISTBand"), None);
+        assert_eq!(
+            apply(&mut state, "TFHD008750"),
+            change(None, Setting::Tuner)
+        );
+        assert_eq!(
+            state.device().tuner.hd.frequency.unwrap().hundredths(),
+            8750
+        );
+        assert_eq!(state.device().tuner.frequency, None);
     }
 
     #[test]
@@ -3316,6 +3523,21 @@ mod tests {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
         assert_eq!(state.device().quick_select_names.len(), 2);
+        // The answer to `SSQSNZMA ?`.
+        assert_eq!(apply(&mut state, "SSQSNZMAQS1 Night"), names());
+        assert_eq!(apply(&mut state, "SSQSNZMAQS4"), names());
+        assert_eq!(
+            state.device().quick_select_names,
+            [Some("Night".to_owned()), None, None, None]
+        );
+        for line in [
+            "SSQSNZMA END",
+            "SSQSNZMAQS0 x",
+            "SSQSNZMAQS1x",
+            "SSQSNZMA ?",
+        ] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
     }
 
     #[test]

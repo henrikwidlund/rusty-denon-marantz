@@ -7,6 +7,7 @@ use crate::channel::ChannelVolumeCommand;
 use crate::containment::ContainmentAmount;
 use crate::device_settings::DeviceSettingValue;
 use crate::error::Error;
+use crate::network_audio::NetworkAudioCommand;
 use crate::picture::PictureSettingValue;
 use crate::remote_key::{RemoteKey, write_denon_code, write_marantz_code};
 use crate::sound_settings::SoundSettingValue;
@@ -55,12 +56,18 @@ pub enum Command<'a> {
     /// Turns video select on and takes the video from a source, by its
     /// telnet name, for example `DVD`. `LAST` takes the source from before.
     VideoSelectSource(&'a str),
+    /// Selects the source for the recording output (REC SELECT) by its
+    /// telnet name, for example `CD`. `SOURCE` ends REC SELECT. Older
+    /// receivers only.
+    RecordSource(&'a str),
     /// Plays.
     Play,
     /// Pauses.
     Pause,
     /// Stops.
     Stop,
+    /// Controls the network audio of older receivers.
+    NetworkAudio(NetworkAudioCommand),
     /// Moves the cursor up in the menu.
     CursorUp,
     /// Moves the cursor down in the menu.
@@ -79,6 +86,12 @@ pub enum Command<'a> {
     Options,
     /// Opens (`true`) or closes (`false`) the setup menu.
     SetupMenu(bool),
+    /// Shows (`true`) or hides (`false`) `InstaPrevue`, the previews of the
+    /// HDMI sources. Older receivers only.
+    InstaPrevue(bool),
+    /// Shows (`true`) or hides (`false`) the source select menu on the TV.
+    /// Older receivers only.
+    SourceMenu(bool),
     /// Turns tone control on (`true`) or off (`false`). Bass and treble work
     /// only when it is on. The receiver ignores this with a Dirac Live filter
     /// selected.
@@ -191,9 +204,11 @@ impl Command<'_> {
             Self::AllZoneStereo(true) => out.push_str("MNZST ON"),
             Self::AllZoneStereo(false) => out.push_str("MNZST OFF"),
             Self::VideoSelectSource(name) => push_name(out, "SV", name)?,
+            Self::RecordSource(name) => push_name(out, "SR", name)?,
             Self::Play => out.push_str("NS9A"),
             Self::Pause => out.push_str("NS9B"),
             Self::Stop => out.push_str("NS9C"),
+            Self::NetworkAudio(command) => command.write(out)?,
             Self::CursorUp => out.push_str("MNCUP"),
             Self::CursorDown => out.push_str("MNCDN"),
             Self::CursorLeft => out.push_str("MNCLT"),
@@ -204,6 +219,8 @@ impl Command<'_> {
             Self::Options => out.push_str("MNOPT"),
             Self::SetupMenu(true) => out.push_str("MNMEN ON"),
             Self::SetupMenu(false) => out.push_str("MNMEN OFF"),
+            Self::InstaPrevue(on) => push_on_off(out, "MNPRV ", on),
+            Self::SourceMenu(on) => push_on_off(out, "MNSRC ", on),
             Self::ToneControl(true) => out.push_str("PSTONE CTRL ON"),
             Self::ToneControl(false) => out.push_str("PSTONE CTRL OFF"),
             Self::SetBass(level) => push_main_tone(out, "PSBAS", level)?,
@@ -308,6 +325,11 @@ fn push_trigger(out: &mut String, trigger: Trigger, on: bool) {
         trigger.number(),
         if on { "ON" } else { "OFF" }
     );
+}
+
+fn push_on_off(out: &mut String, prefix: &str, on: bool) {
+    out.push_str(prefix);
+    out.push_str(if on { "ON" } else { "OFF" });
 }
 
 /// Appends the prefix and the name, if the name is valid text.
@@ -513,6 +535,8 @@ mod tests {
             (Command::AllZoneStereo(true), "MNZST ON\r"),
             (Command::AllZoneStereo(false), "MNZST OFF\r"),
             (Command::VideoSelectSource("DVD"), "SVDVD\r"),
+            (Command::RecordSource("CD"), "SRCD\r"),
+            (Command::RecordSource("SOURCE"), "SRSOURCE\r"),
             (Command::SetTrigger(Trigger::One, true), "TR1 ON\r"),
             (Command::SetTrigger(Trigger::Three, false), "TR3 OFF\r"),
             (
@@ -527,6 +551,7 @@ mod tests {
             (Command::SetInputMode(InputMode::Hdmi), "SDHDMI\r"),
             (Command::SetInputMode(InputMode::Digital), "SDDIGITAL\r"),
             (Command::SetInputMode(InputMode::Analog), "SDANALOG\r"),
+            (Command::SetInputMode(InputMode::SevenOneIn), "SD7.1IN\r"),
             (
                 Command::SetVideoSetting(VideoSettingValue::VerticalStretch(true)),
                 "VSVST ON\r",
@@ -544,6 +569,15 @@ mod tests {
             (Command::Options, "MNOPT\r"),
             (Command::SetupMenu(true), "MNMEN ON\r"),
             (Command::SetupMenu(false), "MNMEN OFF\r"),
+            (Command::InstaPrevue(true), "MNPRV ON\r"),
+            (Command::InstaPrevue(false), "MNPRV OFF\r"),
+            (Command::SourceMenu(true), "MNSRC ON\r"),
+            (Command::SourceMenu(false), "MNSRC OFF\r"),
+            (Command::NetworkAudio(NetworkAudioCommand::Next), "NS9D\r"),
+            (
+                Command::NetworkAudio(NetworkAudioCommand::Preset(3)),
+                "NSB02\r",
+            ),
             (Command::Raw("PSDYNEQ ?"), "PSDYNEQ ?\r"),
         ];
         for (command, expected) in cases {
@@ -569,6 +603,7 @@ mod tests {
                 Command::SelectSource(text),
                 Command::SelectSoundMode(text),
                 Command::VideoSelectSource(text),
+                Command::RecordSource(text),
                 Command::Raw(text),
             ] {
                 let mut out = String::from("KEEP");

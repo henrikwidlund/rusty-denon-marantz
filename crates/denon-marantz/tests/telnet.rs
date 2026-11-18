@@ -19,12 +19,13 @@ use denon_marantz::{
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
-    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand,
-    HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq,
-    MuteLevel, NoiseReduction, PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume,
-    ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset,
-    ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode, Volume, VolumeDisplay,
-    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    DigitalCodec, DimmerMode, DiracFilter, DynamicCompression, DynamicVolume, EcoMode,
+    FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
+    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
+    PliizHeightGain, Power, PowerOnVolume, ProLogicMode, ReceiverType, ReferenceLevelOffset,
+    RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, SurroundBackMode, ToneLevel, Trigger,
+    TunerBand, TunerFrequency, TunerMode, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode,
+    Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -689,6 +690,22 @@ async fn the_tuner_state_is_asked_for_when_the_source_changes_to_the_tuner() {
 }
 
 #[tokio::test]
+async fn the_hd_radio_state_is_asked_for_when_the_source_changes_to_hd_radio() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let count = 1 + state_queries(Brand::Denon).count();
+    wait_until("all queries", || sent(&telnet).len() >= count).await;
+    telnet.send(b"SIHDRADIO\r");
+    let hd = ["HD?", "TFHD?", "TPHD?", "TMHD?"].map(str::to_owned);
+    wait_until("the HD Radio queries", || sent(&telnet).ends_with(&hd)).await;
+    avr.tuner().request_hd().await.unwrap();
+    avr.tuner().request_presets().await.unwrap();
+    let mut wanted = hd.to_vec();
+    wanted.push("OPTPN ?".to_owned());
+    wait_until("the requests", || sent(&telnet).ends_with(&wanted)).await;
+}
+
+#[tokio::test]
 async fn the_queries_are_sent_again_after_a_reconnect() {
     let telnet = FakeTelnet::start().await;
     let (_avr, _http) = connected(telnet_config(telnet.port)).await;
@@ -1244,6 +1261,7 @@ async fn device_methods_send_their_commands() {
     device.set_remote_lock(true).await.unwrap();
     device.set_video_select(false).await.unwrap();
     device.select_video_source("GAME").await.unwrap();
+    device.select_record_source("CD").await.unwrap();
     device
         .set_panel_lock(PanelLock::PanelAndVolume)
         .await
@@ -1269,7 +1287,7 @@ async fn device_methods_send_their_commands() {
         .await
         .unwrap_err();
     assert!(error.is_unsupported(), "{error:?}");
-    wait_until("the commands", || commands_sent(&telnet).len() >= 13).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 14).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -1279,6 +1297,7 @@ async fn device_methods_send_their_commands() {
             "SYREMOTE LOCK ON",
             "SVOFF",
             "SVGAME",
+            "SRCD",
             "SYPANEL+V LOCK ON",
             "SYPANEL LOCK OFF",
             "MNCHL",
@@ -1449,11 +1468,25 @@ async fn dialog_level_dsx_and_height_gain_are_sent() {
         .set_height_gain(PliizHeightGain::Medium)
         .await
         .unwrap();
+    sound
+        .set_pro_logic_mode(ProLogicMode::ProLogic)
+        .await
+        .unwrap();
+    sound
+        .set_surround_back_mode(SurroundBackMode::MatrixOn)
+        .await
+        .unwrap();
+    sound.set_front_height(true).await.unwrap();
+    sound
+        .set_dynamic_compression(DynamicCompression::Low)
+        .await
+        .unwrap();
+    sound.set_auto_flag_detect(false).await.unwrap();
     let error = sound.set_dialog_level(13).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     let error = sound.set_stage_width(-11).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
-    wait_until("the commands", || commands_sent(&telnet).len() >= 9).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 14).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -1466,6 +1499,11 @@ async fn dialog_level_dsx_and_height_gain_are_sent() {
             "PSSTH 49",
             "PSSTH UP",
             "PSPHG MID",
+            "PSMODE:PRO LOGIC",
+            "PSSB:MTRX ON",
+            "PSFH:ON",
+            "PSDCO LOW",
+            "PSAFD OFF",
         ]
     );
 }
@@ -1654,13 +1692,11 @@ async fn sound_methods_send_their_commands() {
     sound.set_tactile_transducer(true).await.unwrap();
     sound.set_front_speakers(FrontSpeakers::B).await.unwrap();
     sound.set_speaker_preset(SpeakerPreset::Two).await.unwrap();
-    sound.toggle_speaker_preset().await.unwrap();
-    sound.set_dolby_atmos(false).await.unwrap();
     sound.tactile_level_up().await.unwrap();
     sound.set_tactile_low_pass(60).await.unwrap();
     let level = ChannelLevel::from_half_db(-1).unwrap();
     sound.set_subwoofer_level(2, level).await.unwrap();
-    wait_until("the commands", || commands_sent(&telnet).len() >= 15).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 13).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -1674,8 +1710,6 @@ async fn sound_methods_send_their_commands() {
             "SSTTR ON",
             "PSFRONT SPB",
             "SPPR 2",
-            "SPPR TOGGLE",
-            "PSATM OFF",
             "SSTTRLEV UP",
             "SSTTRLPF 060",
             "PSSWL2 495"
@@ -2111,15 +2145,19 @@ async fn the_other_tuner_methods_send_their_commands() {
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
     let tuner = avr.tuner();
     tuner.frequency_down().await.unwrap();
+    tuner
+        .set_frequency(TunerFrequency::from_hundredths(8750).unwrap())
+        .await
+        .unwrap();
     tuner.set_mode(TunerMode::Manual).await.unwrap();
     tuner.preset_up().await.unwrap();
     tuner.preset_down().await.unwrap();
     let error = tuner.store_preset(0).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
-    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 5).await;
     assert_eq!(
         commands_sent(&telnet),
-        ["TFANDOWN", "TMANMANUAL", "TPANUP", "TPANDOWN"]
+        ["TFANDOWN", "TFAN008750", "TMANMANUAL", "TPANUP", "TPANDOWN"]
     );
 }
 
@@ -2137,14 +2175,18 @@ async fn hd_tuner_methods_send_their_commands() {
     tuner.hd_preset_down().await.unwrap();
     tuner.select_hd_preset(3).await.unwrap();
     tuner.store_hd_preset(12).await.unwrap();
+    let fm = TunerFrequency::from_hundredths(8750).unwrap();
+    tuner.set_hd_frequency(fm).await.unwrap();
+    tuner.set_hd_frequency_multicast(fm, 5).await.unwrap();
     for error in [
+        tuner.set_hd_frequency_multicast(fm, 9).await.unwrap_err(),
         tuner.select_hd_multicast(9).await.unwrap_err(),
         tuner.select_hd_preset(57).await.unwrap_err(),
         tuner.store_hd_preset(0).await.unwrap_err(),
     ] {
         assert!(error.is_invalid_input(), "{error:?}");
     }
-    wait_until("the commands", || commands_sent(&telnet).len() >= 9).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -2156,7 +2198,9 @@ async fn hd_tuner_methods_send_their_commands() {
             "TPHDUP",
             "TPHDDOWN",
             "TPHD03",
-            "TPHDMEM12"
+            "TPHDMEM12",
+            "TFHD008750",
+            "TFHD008750MC5",
         ]
     );
 }

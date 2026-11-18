@@ -2,10 +2,11 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    HdRadioBand, HdTuningMode, TUNER_QUERIES, TunerBand, TunerCommand, TunerMode, Zone,
+    HD_RADIO_QUERIES, HdRadioBand, HdTuningMode, TUNER_PRESETS_QUERY, TUNER_QUERIES, TunerBand,
+    TunerCommand, TunerFrequency, TunerMode, Zone,
 };
 
-use crate::avr::Avr;
+use crate::avr::{Avr, send_queries};
 use crate::error::Error;
 
 /// Controls the tuner of a receiver. Get it from [`Avr::tuner`].
@@ -129,6 +130,39 @@ impl<'a> TunerControl<'a> {
         self.send(TunerCommand::HdMulticast(channel)).await
     }
 
+    /// Tunes to a frequency.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn set_frequency(&self, frequency: TunerFrequency) -> Result<(), Error> {
+        self.send(TunerCommand::Frequency(frequency)).await
+    }
+
+    /// Tunes the HD Radio tuner to a frequency.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn set_hd_frequency(&self, frequency: TunerFrequency) -> Result<(), Error> {
+        self.send(TunerCommand::HdFrequency(frequency)).await
+    }
+
+    /// Tunes the HD Radio tuner to a frequency and selects a multicast
+    /// channel, from 1 to 8, or 0 for the analog broadcast.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn set_hd_frequency_multicast(
+        &self,
+        frequency: TunerFrequency,
+        channel: u8,
+    ) -> Result<(), Error> {
+        self.send(TunerCommand::HdFrequencyMulticast(frequency, channel))
+            .await
+    }
+
     /// Selects the band of the HD Radio tuner.
     ///
     /// # Errors
@@ -195,10 +229,39 @@ impl<'a> TunerControl<'a> {
     ///
     /// See [`TunerControl`].
     pub async fn request(&self) -> Result<(), Error> {
-        for query in TUNER_QUERIES {
-            self.avr.send(Zone::Main, Command::Raw(query)).await?;
-        }
-        Ok(())
+        send_queries(&TUNER_QUERIES, async |command| {
+            self.avr.send(Zone::Main, command).await
+        })
+        .await
+    }
+
+    /// Asks the HD Radio tuner for its status, frequency, preset, band and
+    /// tuning mode. The answers fill [`TunerState::hd`](denon_marantz_proto::TunerState::hd).
+    /// The connection also asks once when the source changes to HD Radio.
+    /// The receiver answers for the HD Radio source only. This always uses
+    /// telnet.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn request_hd(&self) -> Result<(), Error> {
+        send_queries(&HD_RADIO_QUERIES, async |command| {
+            self.avr.send(Zone::Main, command).await
+        })
+        .await
+    }
+
+    /// Asks for the names and frequencies of the tuner presets. The answers
+    /// fill [`TunerState::presets`](denon_marantz_proto::TunerState::presets). Not all receivers
+    /// answer. This always uses telnet.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn request_presets(&self) -> Result<(), Error> {
+        self.avr
+            .send(Zone::Main, Command::Raw(TUNER_PRESETS_QUERY))
+            .await
     }
 
     async fn send(&self, command: TunerCommand) -> Result<(), Error> {

@@ -16,14 +16,21 @@ state again.
 - Sound: sound mode, tone control, Audyssey, Dirac Live, tactile transducer,
   speaker preset, channel levels, dialog enhancer and other sound settings.
   For older receivers also Dialog Level Adjust, Audyssey DSX with its stage
-  width and height, and the Dolby Pro Logic IIz height gain.
+  width and height, the Dolby Pro Logic IIz height gain, the Pro Logic mode,
+  the surround back mode, dynamic compression and auto flag detect. Front
+  height output for Marantz and older Denon receivers.
 - Speakers: crossovers, distances, channel level dials, subwoofer output and
   bass settings, read from the web interface.
 - Sources: names (user, default and automatic), hidden sources and the
   physical input of each source.
 - Video and signal: HDMI output, video mode, scaler, input and output signal.
-- Receiver: eco, dimmer, locks, triggers, Bluetooth transmitter, tuner, remote
-  keys.
+- Receiver: eco, dimmer, locks, triggers, Bluetooth transmitter, video select,
+  remote keys. For older receivers also REC SELECT and InstaPrevue.
+- Tuner: band, mode, frequency, presets and preset names. HD Radio in North
+  America models: frequency, multicast channel, presets, signal level and
+  station information.
+- Network audio of older receivers: next, previous, repeat, random, cursor,
+  pages and presets with their names.
 - Which settings the receiver offers or blocks now, for example the crossovers
   while a Dirac ART filter is on, or the dialog control in a sound mode that
   has none.
@@ -147,11 +154,11 @@ a Marantz receiver.
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|
 | `Core` | yes | Power, source, volume and mute of the zones, sound mode, quick select | 9 | 9 |
-| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots | 7 | 6 |
+| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots, quick select names | 7 | 7 |
 | `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 22 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
-| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 19 | 19 |
-| `Sound` | no | Sound settings and levels | 36 | 36 |
+| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 21 | 21 |
+| `Sound` | no | Sound settings and levels | 37 | 37 |
 | `Zones` | no | Volume settings and levels of the zones | 5 | 5 |
 | `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
 | `Speakers` | no | Speaker configuration, crossovers and graphic EQ, Denon only | 3 | 0 |

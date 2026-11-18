@@ -12,11 +12,26 @@ use crate::xml::Node;
 /// answers them for the tuner source only.
 pub const TUNER_QUERIES: [&str; 3] = ["TFAN?", "TPAN?", "TMAN?"];
 
+/// Queries for the HD Radio tuner: the status, the frequency, the preset and
+/// the band and tuning mode. A receiver answers them for the HD Radio source
+/// only.
+pub const HD_RADIO_QUERIES: [&str; 4] = ["HD?", "TFHD?", "TPHD?", "TMHD?"];
+
+/// Query for the names and frequencies of the tuner presets. The answers
+/// fill [`TunerState::presets`].
+pub const TUNER_PRESETS_QUERY: &str = "OPTPN ?";
+
 /// Path of the status page of the tuner.
 pub const TUNER_STATUS_PATH: &str = "/goform/formTuner_TunerXml.xml";
 
 /// Highest preset number of the tuner.
 const MAX_PRESET: u8 = 56;
+
+/// Highest frequency in hundredths: six digits.
+const MAX_HUNDREDTHS: u32 = 999_999;
+
+/// Highest HD Radio signal level.
+const MAX_SIGNAL_LEVEL: u8 = 6;
 
 /// Highest HD Radio multicast channel. Channel 0 is the analog broadcast.
 const MAX_MULTICAST: u8 = 8;
@@ -29,6 +44,18 @@ pub struct TunerFrequency {
 }
 
 impl TunerFrequency {
+    /// The frequency in hundredths: of kHz for AM, of MHz for FM. For
+    /// example 8750 for 87.50 MHz or 105000 for 1050.00 kHz. `None` for 0 and
+    /// for more than six digits.
+    #[must_use]
+    pub const fn from_hundredths(hundredths: u32) -> Option<Self> {
+        if hundredths == 0 || hundredths > MAX_HUNDREDTHS {
+            None
+        } else {
+            Some(Self { hundredths })
+        }
+    }
+
     /// Reads the six digits of the report, for example `105000` or `008750`.
     #[must_use]
     pub fn from_digits(digits: &str) -> Option<Self> {
@@ -101,6 +128,123 @@ pub struct TunerState {
     pub preset: Option<u8>,
     /// Name of the station from RDS, in Europe and Asia Pacific models.
     pub station_name: Option<String>,
+    /// The HD Radio tuner.
+    pub hd: HdRadioState,
+    /// The tuner presets, from the answers to [`TUNER_PRESETS_QUERY`]. The
+    /// first is preset 1. A preset that the receiver has not reported has no
+    /// values.
+    pub presets: Vec<TunerPreset>,
+}
+
+/// A tuner preset, as the answer to [`TUNER_PRESETS_QUERY`] tells it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TunerPreset {
+    /// Name. `None` if the preset has no name.
+    pub name: Option<String>,
+    /// Frequency.
+    pub frequency: Option<TunerFrequency>,
+}
+
+/// What the HD Radio tuner reports, in North America models. A value is
+/// `None` until the receiver reports it. The title, artist, album and short
+/// station name are in [`NowPlaying`](crate::NowPlaying).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HdRadioState {
+    /// Band.
+    pub band: Option<HdRadioBand>,
+    /// Tuning mode.
+    pub mode: Option<HdTuningMode>,
+    /// Frequency.
+    pub frequency: Option<TunerFrequency>,
+    /// Multicast channel from 1 to 8, or 0 for the analog broadcast.
+    pub multicast_channel: Option<u8>,
+    /// Number of multicast channels of the station.
+    pub multicast_count: Option<u8>,
+    /// Preset number from 1 to 56. `None` if the tuner is not on a preset.
+    pub preset: Option<u8>,
+    /// Signal level from 0 to 6.
+    pub signal_level: Option<u8>,
+    /// The station plays digital (`true`) or analog (`false`).
+    pub digital: Option<bool>,
+    /// Long name of the station.
+    pub long_station_name: Option<String>,
+    /// Program type, for example `Rock`.
+    pub program_type: Option<String>,
+    /// Genre.
+    pub genre: Option<String>,
+}
+
+impl HdRadioState {
+    /// Applies the text of an `HD` event that is not about what plays, for
+    /// example `SIG LEV 4` or `MODE DIGITAL`. Returns `None` if it is not a
+    /// value that this library knows, and whether the state changed
+    /// otherwise.
+    pub(crate) fn apply_status(&mut self, parameter: &str) -> Option<bool> {
+        if let Some(level) = parameter.strip_prefix("SIG LEV ") {
+            let level = digit(level).filter(|level| *level <= MAX_SIGNAL_LEVEL)?;
+            return Some(replace(&mut self.signal_level, Some(level)));
+        }
+        if let Some(channel) = parameter.strip_prefix("MLT CURRCH ") {
+            let channel = digit(channel).filter(|channel| *channel <= MAX_MULTICAST)?;
+            return Some(replace(&mut self.multicast_channel, Some(channel)));
+        }
+        if let Some(count) = parameter.strip_prefix("MLT CAST CH ") {
+            return Some(replace(&mut self.multicast_count, Some(digit(count)?)));
+        }
+        if let Some(mode) = parameter.strip_prefix("MODE ") {
+            let digital = match mode.trim() {
+                "DIGITAL" => true,
+                "ANALOG" => false,
+                _ => return None,
+            };
+            return Some(replace(&mut self.digital, Some(digital)));
+        }
+        let (field, text) = [
+            ("STL NAME", &mut self.long_station_name),
+            ("PTY", &mut self.program_type),
+            ("GENRE", &mut self.genre),
+        ]
+        .into_iter()
+        .find_map(|(prefix, field)| Some((field, parameter.strip_prefix(prefix)?)))?;
+        let text = text.trim();
+        if field.as_deref() == Some(text) || (field.is_none() && text.is_empty()) {
+            return Some(false);
+        }
+        *field = (!text.is_empty()).then(|| text.to_owned());
+        Some(true)
+    }
+
+    /// Applies the text of a `TF` event after `HD`, for example `008750`,
+    /// `MC2` or `008750MC2`.
+    fn apply_frequency(&mut self, rest: &str) -> Option<bool> {
+        let (digits, channel) = match rest.split_once("MC") {
+            Some((digits, channel)) => (digits, Some(channel)),
+            None => (rest, None),
+        };
+        let frequency = if digits.is_empty() {
+            None
+        } else {
+            Some(TunerFrequency::from_digits(digits)?)
+        };
+        let channel = match channel {
+            Some(channel) => Some(digit(channel).filter(|channel| *channel <= MAX_MULTICAST)?),
+            None => None,
+        };
+        if frequency.is_none() && channel.is_none() {
+            return None;
+        }
+        let frequency = frequency.is_some_and(|f| replace(&mut self.frequency, Some(f)));
+        let channel = channel.is_some_and(|c| replace(&mut self.multicast_channel, Some(c)));
+        Some(frequency | channel)
+    }
+}
+
+/// Reads one digit.
+fn digit(text: &str) -> Option<u8> {
+    match text.trim().as_bytes() {
+        [byte @ b'0'..=b'9'] => Some(byte - b'0'),
+        _ => None,
+    }
 }
 
 impl TunerState {
@@ -108,6 +252,9 @@ impl TunerState {
     /// `ANNAME BBC R2 `. Returns `None` if it is not a value that this library
     /// knows, and whether the state changed otherwise.
     pub(crate) fn apply_frequency(&mut self, parameter: &str) -> Option<bool> {
+        if let Some(rest) = parameter.strip_prefix("HD") {
+            return self.hd.apply_frequency(rest);
+        }
         let rest = parameter.strip_prefix("AN")?;
         if let Some(name) = rest.strip_prefix("NAME") {
             // The receiver writes a space as an underscore.
@@ -121,19 +268,59 @@ impl TunerState {
         Some(replace(&mut self.frequency, Some(frequency)) | band)
     }
 
+    /// Applies the text of an `OPTPN` answer without `OPTPN`, for example
+    /// `03KEXP     009250`: the preset number, the name and the frequency.
+    pub(crate) fn apply_preset_name(&mut self, rest: &str) -> Option<bool> {
+        let index = usize::from(parse_preset(rest.get(..2)?)? - 1);
+        let rest = rest[2..].trim_end();
+        // The frequency is the last six characters. They are ASCII digits,
+        // so the start of them is a char boundary.
+        let start = rest.len().checked_sub(6)?;
+        if !rest.as_bytes()[start..].iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let frequency = TunerFrequency::from_digits(&rest[start..]);
+        let name = rest[..start].trim();
+        let is_new = self.presets.len() <= index;
+        if is_new {
+            self.presets.resize(index + 1, TunerPreset::default());
+        }
+        let preset = &mut self.presets[index];
+        let same = preset.frequency == frequency
+            && preset.name.as_deref() == Some(name).filter(|n| !n.is_empty());
+        if same {
+            return Some(is_new);
+        }
+        preset.frequency = frequency;
+        preset.name = (!name.is_empty()).then(|| name.to_owned());
+        Some(true)
+    }
+
     /// Applies the text of a `TP` event, for example `AN01` or `ANOFF`.
     pub(crate) fn apply_preset(&mut self, parameter: &str) -> Option<bool> {
-        let rest = parameter.strip_prefix("AN")?;
+        let (slot, rest) = if let Some(rest) = parameter.strip_prefix("HD") {
+            (&mut self.hd.preset, rest)
+        } else {
+            (&mut self.preset, parameter.strip_prefix("AN")?)
+        };
         let preset = if rest == "OFF" {
             None
         } else {
             Some(parse_preset(rest)?)
         };
-        Some(replace(&mut self.preset, preset))
+        Some(replace(slot, preset))
     }
 
     /// Applies the text of a `TM` event, for example `ANFM` or `ANAUTO`.
     pub(crate) fn apply_band_or_mode(&mut self, parameter: &str) -> Option<bool> {
+        if let Some(code) = parameter.strip_prefix("HD") {
+            return if let Some(band) = HdRadioBand::from_code(code) {
+                Some(replace(&mut self.hd.band, Some(band)))
+            } else {
+                let mode = HdTuningMode::from_code(code)?;
+                Some(replace(&mut self.hd.mode, Some(mode)))
+            };
+        }
         let code = parameter.strip_prefix("AN")?;
         if let Some(band) = TunerBand::from_code(code) {
             Some(replace(&mut self.band, Some(band)))
@@ -224,6 +411,8 @@ fn replace<T: PartialEq>(slot: &mut Option<T>, value: Option<T>) -> bool {
 pub enum TunerCommand {
     /// Tunes to the next frequency.
     FrequencyUp,
+    /// Tunes to a frequency.
+    Frequency(TunerFrequency),
     /// Tunes to the previous frequency.
     FrequencyDown,
     /// Selects the band. DAB is for DAB models only.
@@ -245,6 +434,11 @@ pub enum TunerCommand {
     /// Selects an HD Radio multicast channel, from 1 to 8, or 0 for the
     /// analog broadcast.
     HdMulticast(u8),
+    /// Tunes the HD Radio tuner to a frequency.
+    HdFrequency(TunerFrequency),
+    /// Tunes the HD Radio tuner to a frequency and selects a multicast
+    /// channel, from 1 to 8, or 0 for the analog broadcast.
+    HdFrequencyMulticast(TunerFrequency, u8),
     /// Selects the band of the HD Radio tuner.
     HdBand(HdRadioBand),
     /// Selects the tuning mode of the HD Radio tuner.
@@ -269,6 +463,9 @@ impl TunerCommand {
     pub(crate) fn write(self, out: &mut String) -> Result<(), Error> {
         match self {
             Self::FrequencyUp => out.push_str("TFANUP"),
+            Self::Frequency(frequency) => {
+                let _ = write!(out, "TFAN{:06}", frequency.hundredths);
+            }
             Self::FrequencyDown => out.push_str("TFANDOWN"),
             Self::Band(band) => {
                 out.push_str("TMAN");
@@ -285,12 +482,15 @@ impl TunerCommand {
             Self::HdFrequencyUp => out.push_str("TFHDUP"),
             Self::HdFrequencyDown => out.push_str("TFHDDOWN"),
             Self::HdMulticast(channel) => {
-                if channel > MAX_MULTICAST {
-                    return Err(Error::ValueOutOfRange {
-                        what: "HD Radio multicast channel",
-                    });
-                }
+                check_multicast(channel)?;
                 let _ = write!(out, "TFHDMC{channel}");
+            }
+            Self::HdFrequency(frequency) => {
+                let _ = write!(out, "TFHD{:06}", frequency.hundredths);
+            }
+            Self::HdFrequencyMulticast(frequency, channel) => {
+                check_multicast(channel)?;
+                let _ = write!(out, "TFHD{:06}MC{channel}", frequency.hundredths);
             }
             Self::HdBand(band) => {
                 out.push_str("TMHD");
@@ -307,6 +507,15 @@ impl TunerCommand {
         }
         Ok(())
     }
+}
+
+const fn check_multicast(channel: u8) -> Result<(), Error> {
+    if channel > MAX_MULTICAST {
+        return Err(Error::ValueOutOfRange {
+            what: "HD Radio multicast channel",
+        });
+    }
+    Ok(())
 }
 
 fn write_preset(out: &mut String, start: &str, number: u8) -> Result<(), Error> {
@@ -371,9 +580,13 @@ mod tests {
 
     #[test]
     fn texts() {
+        let fm = TunerFrequency::from_hundredths(8750).unwrap();
+        let am = TunerFrequency::from_hundredths(105_000).unwrap();
         let cases = [
             (TunerCommand::FrequencyUp, "TFANUP"),
             (TunerCommand::FrequencyDown, "TFANDOWN"),
+            (TunerCommand::Frequency(fm), "TFAN008750"),
+            (TunerCommand::Frequency(am), "TFAN105000"),
             (TunerCommand::Band(TunerBand::Fm), "TMANFM"),
             (TunerCommand::Band(TunerBand::Am), "TMANAM"),
             (TunerCommand::Band(TunerBand::Dab), "TMANDAB"),
@@ -389,6 +602,9 @@ mod tests {
             (TunerCommand::HdMulticast(0), "TFHDMC0"),
             (TunerCommand::HdMulticast(2), "TFHDMC2"),
             (TunerCommand::HdMulticast(8), "TFHDMC8"),
+            (TunerCommand::HdFrequency(fm), "TFHD008750"),
+            (TunerCommand::HdFrequency(am), "TFHD105000"),
+            (TunerCommand::HdFrequencyMulticast(fm, 5), "TFHD008750MC5"),
             (TunerCommand::HdBand(HdRadioBand::Am), "TMHDAM"),
             (TunerCommand::HdBand(HdRadioBand::Fm), "TMHDFM"),
             (TunerCommand::HdMode(HdTuningMode::AutoHd), "TMHDAUTOHD"),
@@ -484,14 +700,135 @@ mod tests {
 
     #[test]
     fn hd_multicast_channels_are_from_0_to_8() {
+        let fm = TunerFrequency::from_hundredths(8750).unwrap();
         for channel in [9, 10, 255] {
-            assert_eq!(
-                text(TunerCommand::HdMulticast(channel)),
-                Err(Error::ValueOutOfRange {
-                    what: "HD Radio multicast channel"
-                })
-            );
+            for command in [
+                TunerCommand::HdMulticast(channel),
+                TunerCommand::HdFrequencyMulticast(fm, channel),
+            ] {
+                assert_eq!(
+                    text(command),
+                    Err(Error::ValueOutOfRange {
+                        what: "HD Radio multicast channel"
+                    })
+                );
+            }
         }
+    }
+
+    #[test]
+    fn frequencies_from_hundredths() {
+        assert_eq!(
+            TunerFrequency::from_hundredths(8750).map(TunerFrequency::hundredths),
+            Some(8750)
+        );
+        assert_eq!(
+            TunerFrequency::from_hundredths(999_999).map(TunerFrequency::hundredths),
+            Some(999_999)
+        );
+        assert_eq!(TunerFrequency::from_hundredths(0), None);
+        assert_eq!(TunerFrequency::from_hundredths(1_000_000), None);
+    }
+
+    #[test]
+    fn hd_events_fill_the_hd_state() {
+        let mut state = TunerState::default();
+        assert_eq!(state.apply_frequency("HD008750"), Some(true));
+        assert_eq!(state.apply_frequency("HD008750"), Some(false));
+        assert_eq!(state.apply_frequency("HDMC2"), Some(true));
+        assert_eq!(state.apply_frequency("HD010110MC3"), Some(true));
+        assert_eq!(state.hd.frequency.unwrap().hundredths(), 10110);
+        assert_eq!(state.hd.multicast_channel, Some(3));
+        assert_eq!(state.apply_preset("HD07"), Some(true));
+        assert_eq!(state.hd.preset, Some(7));
+        assert_eq!(state.apply_preset("HDOFF"), Some(true));
+        assert_eq!(state.hd.preset, None);
+        assert_eq!(state.apply_band_or_mode("HDAM"), Some(true));
+        assert_eq!(state.apply_band_or_mode("HDAUTOHD"), Some(true));
+        assert_eq!(state.hd.band, Some(HdRadioBand::Am));
+        assert_eq!(state.hd.mode, Some(HdTuningMode::AutoHd));
+        // The analog values stay as they are.
+        assert_eq!(state.frequency, None);
+        assert_eq!(state.preset, None);
+        assert_eq!(state.band, None);
+        let hd = &mut state.hd;
+        assert_eq!(hd.apply_status("SIG LEV 4"), Some(true));
+        assert_eq!(hd.apply_status("SIG LEV 4"), Some(false));
+        assert_eq!(hd.apply_status("MLT CURRCH 1"), Some(true));
+        assert_eq!(hd.apply_status("MLT CAST CH 3"), Some(true));
+        assert_eq!(hd.apply_status("MODE DIGITAL"), Some(true));
+        assert_eq!(hd.apply_status("STL NAME Long Name  "), Some(true));
+        assert_eq!(hd.apply_status("PTY Rock"), Some(true));
+        assert_eq!(hd.apply_status("GENRE Jazz"), Some(true));
+        assert_eq!(hd.apply_status("GENRE Jazz"), Some(false));
+        assert_eq!(hd.signal_level, Some(4));
+        assert_eq!(hd.multicast_channel, Some(1));
+        assert_eq!(hd.multicast_count, Some(3));
+        assert_eq!(hd.digital, Some(true));
+        assert_eq!(hd.long_station_name.as_deref(), Some("Long Name"));
+        assert_eq!(hd.program_type.as_deref(), Some("Rock"));
+        assert_eq!(hd.genre.as_deref(), Some("Jazz"));
+        assert_eq!(hd.apply_status("GENRE "), Some(true));
+        assert_eq!(hd.genre, None);
+        assert_eq!(hd.apply_status("GENRE "), Some(false));
+    }
+
+    #[test]
+    fn preset_names_follow_answers() {
+        let mut state = TunerState::default();
+        assert_eq!(state.apply_preset_name("03KEXP     009250"), Some(true));
+        assert_eq!(state.apply_preset_name("03KEXP     009250"), Some(false));
+        assert_eq!(state.presets.len(), 3);
+        assert_eq!(state.presets[0], TunerPreset::default());
+        assert_eq!(state.presets[2].name.as_deref(), Some("KEXP"));
+        assert_eq!(state.presets[2].frequency.unwrap().hundredths(), 9250);
+        // An empty slot has a frequency but no name.
+        assert_eq!(state.apply_preset_name("01         009210"), Some(true));
+        assert_eq!(state.presets[0].name, None);
+        assert_eq!(state.presets[0].frequency.unwrap().hundredths(), 9210);
+        assert_eq!(state.apply_preset_name("01         009210"), Some(false));
+        // Spaces after the frequency.
+        assert_eq!(state.apply_preset_name("02WXYZ     010110  "), Some(true));
+        assert_eq!(state.presets[1].name.as_deref(), Some("WXYZ"));
+        for text in [
+            "",
+            "00KEXP     009250",
+            "57KEXP     009250",
+            "0xKEXP 009250",
+            "03KEXP",
+            "03KEXP     00925x",
+            "03",
+        ] {
+            assert_eq!(state.apply_preset_name(text), None, "{text:?}");
+        }
+        assert_eq!(state.presets.len(), 3);
+    }
+
+    #[test]
+    fn hd_events_that_are_not_values_change_nothing() {
+        let mut state = TunerState::default();
+        for text in ["HD", "HDUP", "HD0087", "HDMC9", "HDMC", "HD008750MC", "HD?"] {
+            assert_eq!(state.apply_frequency(text), None, "{text:?}");
+        }
+        for text in ["HD", "HD00", "HD57", "HDMEM01"] {
+            assert_eq!(state.apply_preset(text), None, "{text:?}");
+        }
+        for text in ["HD", "HDDAB", "HD?"] {
+            assert_eq!(state.apply_band_or_mode(text), None, "{text:?}");
+        }
+        for text in [
+            "SIG LEV 7",
+            "SIG LEV x",
+            "SIG LEV 10",
+            "MLT CURRCH 9",
+            "MODE",
+            "MODE X",
+            "ARTISTA",
+            "",
+        ] {
+            assert_eq!(state.hd.apply_status(text), None, "{text:?}");
+        }
+        assert_eq!(state, TunerState::default());
     }
 
     #[test]

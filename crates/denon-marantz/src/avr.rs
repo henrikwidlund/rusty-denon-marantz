@@ -979,11 +979,13 @@ impl Avr {
     pub async fn telnet_refresh_now_playing(&self) -> Result<(), Error> {
         match self.playing_kind() {
             Some(PlayingKind::NetAudio) => self.telnet_send(Zone::Main, Command::Raw("NSE")).await,
-            Some(PlayingKind::HdRadio) => self.telnet_send(Zone::Main, Command::Raw("HD?")).await,
+            Some(PlayingKind::HdRadio) => {
+                let send = async |command| self.telnet_send(Zone::Main, command).await;
+                send_queries(&denon_marantz_proto::HD_RADIO_QUERIES, send).await
+            }
             Some(PlayingKind::Tuner) => {
-                for query in denon_marantz_proto::TUNER_QUERIES {
-                    self.telnet_send(Zone::Main, Command::Raw(query)).await?;
-                }
+                let send = async |command| self.telnet_send(Zone::Main, command).await;
+                send_queries(&denon_marantz_proto::TUNER_QUERIES, send).await?;
                 self.telnet_send(Zone::Main, Command::Raw("TFANNAME?"))
                     .await
             }
@@ -1475,6 +1477,17 @@ async fn read_appcommand(
 }
 
 /// What the source of the main zone plays, from the state of `channels`.
+/// Sends each query with `send`, in order, and stops at the first error.
+pub(crate) async fn send_queries(
+    queries: &[&'static str],
+    send: impl AsyncFn(Command<'static>) -> Result<(), Error>,
+) -> Result<(), Error> {
+    for query in queries {
+        send(Command::Raw(query)).await?;
+    }
+    Ok(())
+}
+
 fn playing_kind(channels: &Channels) -> Option<PlayingKind> {
     let state = channels.watch_state();
     let state = state.borrow();

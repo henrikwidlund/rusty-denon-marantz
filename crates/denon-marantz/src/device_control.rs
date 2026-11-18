@@ -136,6 +136,18 @@ impl<'a> DeviceControl<'a> {
             .await
     }
 
+    /// Selects the source for the recording output (REC SELECT) by its telnet
+    /// name, for example `CD`. `SOURCE` ends REC SELECT. Older receivers
+    /// only.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`] if the name is empty or has a control
+    /// character. See also [`DeviceControl`].
+    pub async fn select_record_source(&self, name: &str) -> Result<(), Error> {
+        self.avr.send(Zone::Main, Command::RecordSource(name)).await
+    }
+
     /// Locks the panel buttons, with or without the master volume, or unlocks
     /// them. The receiver still takes commands on the network.
     ///

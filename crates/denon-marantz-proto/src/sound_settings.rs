@@ -6,8 +6,9 @@ use std::fmt::Write as _;
 use crate::error::Error;
 use crate::{
     AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter,
-    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode,
-    ImaxSubwooferOutput, Mdax, PliizHeightGain, RoomSize, SpeakerPreset, SurroundLevelCompensation,
+    DialogEnhancerLevel, Drc, DynamicCompression, EffectSpeakerSelection, FrontSpeakers, ImaxAudio,
+    ImaxMode, ImaxSubwooferOutput, Mdax, PliizHeightGain, ProLogicMode, RoomSize, SpeakerPreset,
+    SurroundBackMode, SurroundLevelCompensation,
 };
 
 /// The name that a receiver uses for the center width: `PSCEN` in the protocol
@@ -140,6 +141,32 @@ pub struct SoundSettings {
     pub tactile_level: Option<ChannelLevel>,
     /// Low pass filter of the tactile transducer in Hz.
     pub tactile_low_pass: Option<u16>,
+    /// The front height output is on. Marantz and older Denon receivers
+    /// only.
+    pub front_height: Option<bool>,
+    /// Mode of Dolby `PLII`, `PLIIx`, `PLIIz` and DTS Neo. Older receivers
+    /// only.
+    pub pro_logic_mode: Option<ProLogicMode>,
+    /// Mode of the surround back speakers. Older receivers only.
+    pub surround_back_mode: Option<SurroundBackMode>,
+    /// Dynamic compression (D.COMP). Older receivers only.
+    pub dynamic_compression: Option<DynamicCompression>,
+    /// Auto flag detect mode (AFDM) is on. Older receivers only.
+    pub auto_flag_detect: Option<bool>,
+    /// Dialog Level Adjust is on. Older receivers only.
+    pub dialog_level_adjust: Option<bool>,
+    /// Dialog level in dB, from -12 to 12. Older receivers only.
+    pub dialog_level: Option<i8>,
+    /// Audyssey DSX. Older receivers only.
+    pub audyssey_dsx: Option<AudysseyDsx>,
+    /// Stage width of Audyssey DSX in dB, from -10 to 10. Older receivers
+    /// only.
+    pub stage_width: Option<i8>,
+    /// Stage height of Audyssey DSX in dB, from -10 to 10. Older receivers
+    /// only.
+    pub stage_height: Option<i8>,
+    /// Height gain of Dolby `PLIIz`. Older receivers only.
+    pub height_gain: Option<PliizHeightGain>,
     /// Settings that have a name or a value that this library does not know.
     /// The key is the name without `PS`, the value is the text that follows
     /// it.
@@ -247,6 +274,36 @@ impl SoundSettings {
             "TTR" => put(&mut self.tactile_transducer, on_off(value)),
             "TTRLEV" => put(&mut self.tactile_level, ChannelLevel::from_code(value)),
             "TTRLPF" => put(&mut self.tactile_low_pass, number(value, 999)),
+            _ => self.apply_older(name, value),
+        }
+    }
+
+    /// Settings of older receivers, and the front height output. `None` if
+    /// the name or the value is not known.
+    fn apply_older(&mut self, name: &str, value: &str) -> Option<bool> {
+        match name {
+            "FH" => put(&mut self.front_height, on_off(value)),
+            "MODE" => put(&mut self.pro_logic_mode, ProLogicMode::from_code(value)),
+            "SB" => put(
+                &mut self.surround_back_mode,
+                SurroundBackMode::from_code(value),
+            ),
+            "DCO" => put(
+                &mut self.dynamic_compression,
+                DynamicCompression::from_code(value),
+            ),
+            "AFD" => put(&mut self.auto_flag_detect, on_off(value)),
+            "DIL" => match on_off(value) {
+                Some(on) => put(&mut self.dialog_level_adjust, Some(on)),
+                None => put(
+                    &mut self.dialog_level,
+                    decibels_answer(value, MAX_DIALOG_LEVEL_DB),
+                ),
+            },
+            "DSX" => put(&mut self.audyssey_dsx, AudysseyDsx::from_code(value)),
+            "STW" => put(&mut self.stage_width, decibels_answer(value, MAX_STAGE_DB)),
+            "STH" => put(&mut self.stage_height, decibels_answer(value, MAX_STAGE_DB)),
+            "PHG" => put(&mut self.height_gain, PliizHeightGain::from_code(value)),
             _ => None,
         }
     }
@@ -342,8 +399,6 @@ pub enum SoundSettingValue {
     FrontSpeakers(FrontSpeakers),
     /// Speaker preset.
     SpeakerPreset(SpeakerPreset),
-    /// Switches to the other speaker preset.
-    SpeakerPresetToggle,
     /// Tactile transducer on (`true`) or off (`false`).
     TactileTransducer(bool),
     /// Raises the level of the tactile transducer by one step.
@@ -379,11 +434,6 @@ pub enum SoundSettingValue {
     CinemaEq(bool),
     /// Neural:X.
     NeuralX(bool),
-    /// Dolby Atmos on (`true`) or off (`false`).
-    /// Not all receivers support it. Others ignore the command.
-    /// [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle)
-    /// switches it.
-    DolbyAtmos(bool),
     /// Panorama.
     Panorama(bool),
     /// Dimension, from 0 to 6.
@@ -411,6 +461,18 @@ pub enum SoundSettingValue {
     StageHeight(i8),
     /// Height gain of Dolby `PLIIz`. Older receivers only.
     HeightGain(PliizHeightGain),
+    /// Mode of Dolby `PLII`, `PLIIx`, `PLIIz` and DTS Neo. Older receivers only.
+    ProLogicMode(ProLogicMode),
+    /// Mode of the surround back speakers. Older receivers only.
+    SurroundBackMode(SurroundBackMode),
+    /// Front height output on (`true`) or off (`false`). Marantz and older
+    /// Denon receivers only.
+    FrontHeight(bool),
+    /// Dynamic compression (D.COMP). Older receivers only.
+    DynamicCompression(DynamicCompression),
+    /// Auto flag detect mode (AFDM) on (`true`) or off (`false`). Older
+    /// receivers only.
+    AutoFlagDetect(bool),
 }
 
 impl SoundSettingValue {
@@ -479,7 +541,6 @@ impl SoundSettingValue {
             Self::FrontSpeakers(v) => code(out, "PSFRONT ", v.code()),
             Self::Panorama(on) => code(out, "PSPAN ", on_off_code(on)),
             Self::SpeakerPreset(v) => code(out, "SPPR ", v.code()),
-            Self::SpeakerPresetToggle => code(out, "SPPR ", "TOGGLE"),
             Self::TactileTransducer(on) => code(out, "SSTTR ", on_off_code(on)),
             Self::TactileLevelUp => code(out, "SSTTRLEV ", "UP"),
             Self::TactileLevelDown => code(out, "SSTTRLEV ", "DOWN"),
@@ -536,7 +597,6 @@ impl SoundSettingValue {
             // No space before the value.
             Self::CinemaEq(on) => code(out, "PSCINEMA EQ.", on_off_code(on)),
             Self::NeuralX(on) => code(out, "PSNEURAL ", on_off_code(on)),
-            Self::DolbyAtmos(on) => code(out, "PSATM ", on_off_code(on)),
             Self::Dimension(v) => {
                 digits(out, "PSDIM ", "dimension", u16::from(v), MAX_DIMENSION, 2)
             }
@@ -559,6 +619,11 @@ impl SoundSettingValue {
             Self::StageWidth(db) => decibels(out, "PSSTW ", "stage width", db, MAX_STAGE_DB),
             Self::StageHeight(db) => decibels(out, "PSSTH ", "stage height", db, MAX_STAGE_DB),
             Self::HeightGain(v) => code(out, "PSPHG ", v.code()),
+            Self::ProLogicMode(v) => code(out, "PSMODE:", v.code()),
+            Self::SurroundBackMode(v) => code(out, "PSSB:", v.code()),
+            Self::FrontHeight(on) => code(out, "PSFH:", on_off_code(on)),
+            Self::DynamicCompression(v) => code(out, "PSDCO ", v.code()),
+            Self::AutoFlagDetect(on) => code(out, "PSAFD ", on_off_code(on)),
         }
     }
 }
@@ -715,6 +780,15 @@ fn on_off(text: &str) -> Option<bool> {
         "OFF" => Some(false),
         _ => None,
     }
+}
+
+/// Reads two digits where 50 is 0 dB, from `-max` to `max` dB.
+fn decibels_answer(text: &str, max: i8) -> Option<i8> {
+    if text.len() != 2 {
+        return None;
+    }
+    let db = number::<i8>(text, 99)? - 50;
+    (-max..=max).contains(&db).then_some(db)
 }
 
 /// A number written with digits, not more than `max`.
@@ -1018,7 +1092,6 @@ mod tests {
                 SoundSettingValue::SpeakerPreset(SpeakerPreset::Two),
                 "SPPR 2",
             ),
-            (SoundSettingValue::SpeakerPresetToggle, "SPPR TOGGLE"),
             (SoundSettingValue::TactileLevelUp, "SSTTRLEV UP"),
             (SoundSettingValue::TactileLevelDown, "SSTTRLEV DOWN"),
             (SoundSettingValue::TactileLowPass(80), "SSTTRLPF 080"),
@@ -1109,8 +1182,6 @@ mod tests {
             (SoundSettingValue::HeadphoneEq(false), "PSHEQ OFF"),
             (SoundSettingValue::CinemaEq(true), "PSCINEMA EQ.ON"),
             (SoundSettingValue::NeuralX(true), "PSNEURAL ON"),
-            (SoundSettingValue::DolbyAtmos(true), "PSATM ON"),
-            (SoundSettingValue::DolbyAtmos(false), "PSATM OFF"),
             (SoundSettingValue::Panorama(false), "PSPAN OFF"),
             (SoundSettingValue::Dimension(3), "PSDIM 03"),
             (SoundSettingValue::BassSync(16), "PSBSC 16"),
@@ -1151,7 +1222,7 @@ mod tests {
     }
 
     #[test]
-    fn dialog_level_dsx_and_height_gain_texts() {
+    fn older_receiver_texts() {
         let text = |value: SoundSettingValue| {
             let mut out = String::new();
             value.write(&mut out).map(|()| out)
@@ -1235,13 +1306,79 @@ mod tests {
             );
             assert!(out.is_empty(), "{value:?}");
         }
+    }
+
+    #[test]
+    fn older_receiver_answers() {
         let mut settings = SoundSettings::default();
         assert!(settings.apply("DIL", "47"));
+        assert!(!settings.apply("DIL", "47"));
+        assert!(settings.apply("DIL", "ON"));
         assert!(settings.apply("DSX", "ONW"));
+        assert!(settings.apply("STW", "40"));
+        assert!(settings.apply("STH", "60"));
         assert!(settings.apply("PHG", "MID"));
-        assert_eq!(settings.other["DIL"], "47");
-        assert_eq!(settings.other["DSX"], "ONW");
-        assert_eq!(settings.other["PHG"], "MID");
+        assert_eq!(settings.dialog_level, Some(-3));
+        assert_eq!(settings.dialog_level_adjust, Some(true));
+        assert_eq!(settings.audyssey_dsx, Some(AudysseyDsx::Wide));
+        assert_eq!(settings.stage_width, Some(-10));
+        assert_eq!(settings.stage_height, Some(10));
+        assert_eq!(settings.height_gain, Some(PliizHeightGain::Medium));
+        assert!(settings.other.is_empty());
+        // Values out of range or of an unknown form are kept as text.
+        for (name, value) in [
+            ("DIL", "37"),
+            ("DIL", "5"),
+            ("STW", "61"),
+            ("STH", "x0"),
+            ("DSX", "ON"),
+        ] {
+            settings.apply(name, value);
+            assert_eq!(settings.other[name], value, "{name} {value}");
+        }
+        assert_eq!(settings.dialog_level, Some(-3));
+        assert_eq!(settings.stage_width, Some(-10));
+    }
+
+    #[test]
+    fn older_mode_texts() {
+        let text = |value: SoundSettingValue| {
+            let mut out = String::new();
+            value.write(&mut out).map(|()| out)
+        };
+        let cases = [
+            (
+                SoundSettingValue::ProLogicMode(ProLogicMode::ProLogic),
+                "PSMODE:PRO LOGIC",
+            ),
+            (
+                SoundSettingValue::ProLogicMode(ProLogicMode::Height),
+                "PSMODE:HEIGHT",
+            ),
+            (
+                SoundSettingValue::SurroundBackMode(SurroundBackMode::MatrixOn),
+                "PSSB:MTRX ON",
+            ),
+            (
+                SoundSettingValue::SurroundBackMode(SurroundBackMode::Pl2xCinema),
+                "PSSB:PL2X CINEMA",
+            ),
+            (SoundSettingValue::FrontHeight(true), "PSFH:ON"),
+            (SoundSettingValue::FrontHeight(false), "PSFH:OFF"),
+            (
+                SoundSettingValue::DynamicCompression(DynamicCompression::High),
+                "PSDCO HIGH",
+            ),
+            (SoundSettingValue::AutoFlagDetect(true), "PSAFD ON"),
+            (SoundSettingValue::AutoFlagDetect(false), "PSAFD OFF"),
+            (
+                SoundSettingValue::EffectSpeakers(EffectSpeakerSelection::Off),
+                "PSSP:OFF",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
+        }
     }
 
     #[test]

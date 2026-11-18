@@ -41,8 +41,6 @@ pub enum RemoteKey {
     FastForward,
     /// Switches Dolby Atmos on and off. Main zone only.
     /// Some receivers show "not available".
-    /// [`SoundSettingValue::DolbyAtmos`](crate::SoundSettingValue::DolbyAtmos)
-    /// sets it.
     DolbyAtmosToggle,
     /// Turns HDMI control (CEC) on. Main zone only.
     HdmiCecOn,

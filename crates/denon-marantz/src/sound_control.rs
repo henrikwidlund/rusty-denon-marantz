@@ -3,10 +3,10 @@
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel,
-    ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc,
+    ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc, DynamicCompression,
     EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode,
-    Mdax, PliizHeightGain, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
-    SurroundLevelCompensation, Zone,
+    Mdax, PliizHeightGain, ProLogicMode, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
+    SurroundBackMode, SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -97,7 +97,6 @@ impl<'a> SoundControl<'a> {
         set_headphone_eq(bool) => HeadphoneEq, "the headphone EQ on (`true`) or off (`false`)";
         set_cinema_eq(bool) => CinemaEq, "the cinema EQ on (`true`) or off (`false`)";
         set_neural_x(bool) => NeuralX, "Neural:X on (`true`) or off (`false`)";
-        set_dolby_atmos(bool) => DolbyAtmos, "Dolby Atmos on (`true`) or off (`false`). Not all receivers support it. Others ignore the command. [`ZoneControl::press`](crate::ZoneControl::press) with [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle) switches it";
         set_panorama(bool) => Panorama, "panorama on (`true`) or off (`false`)";
         set_dimension(u8) => Dimension, "the dimension, from 0 to 6";
         set_bass_sync(u8) => BassSync, "the bass sync, from 0 to 16";
@@ -110,6 +109,11 @@ impl<'a> SoundControl<'a> {
         set_stage_width(i8) => StageWidth, "the stage width of Audyssey DSX in dB, from -10 to +10. Older receivers only";
         set_stage_height(i8) => StageHeight, "the stage height of Audyssey DSX in dB, from -10 to +10. Older receivers only";
         set_height_gain(PliizHeightGain) => HeightGain, "the height gain of Dolby `PLIIz`. Older receivers only";
+        set_pro_logic_mode(ProLogicMode) => ProLogicMode, "the mode of Dolby `PLII`, `PLIIx`, `PLIIz` and DTS Neo. Older receivers only";
+        set_surround_back_mode(SurroundBackMode) => SurroundBackMode, "the mode of the surround back speakers. Older receivers only";
+        set_front_height(bool) => FrontHeight, "the front height output on (`true`) or off (`false`). Marantz and older Denon receivers only";
+        set_dynamic_compression(DynamicCompression) => DynamicCompression, "the dynamic compression (D.COMP). Older receivers only";
+        set_auto_flag_detect(bool) => AutoFlagDetect, "the auto flag detect mode (AFDM) on (`true`) or off (`false`). Older receivers only";
     }
 
     /// Sets the center width, from 0 to 7. Receivers use the name `PSCEN` or
@@ -255,15 +259,6 @@ impl<'a> SoundControl<'a> {
     /// See [`SoundControl`].
     pub async fn reset_channel_volumes(&self) -> Result<(), Error> {
         self.channel_volume(ChannelVolumeCommand::ResetAll).await
-    }
-
-    /// Switches to the other speaker preset.
-    ///
-    /// # Errors
-    ///
-    /// See [`SoundControl`].
-    pub async fn toggle_speaker_preset(&self) -> Result<(), Error> {
-        self.send(SoundSettingValue::SpeakerPresetToggle).await
     }
 
     /// Raises the level of the tactile transducer by one step.

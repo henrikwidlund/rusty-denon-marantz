@@ -20,7 +20,7 @@ use denon_marantz_proto::telnet::{
     DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, MAIN_ZONE_POWER_QUERY,
     Message, Query, QueryGroup, SignalPart, group_queries, queries, signal_queries,
 };
-use denon_marantz_proto::{Brand, TUNER_QUERIES};
+use denon_marantz_proto::{Brand, HD_RADIO_QUERIES, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -757,17 +757,22 @@ impl Worker {
                         queue.last_read = Some(idle_since);
                         asked = false;
                         let mut tuner = false;
+                        let mut hd_radio = false;
                         let mut power_lines = 0_usize;
                         let unknown_before = self.colorimetry_unknown();
                         decoder.decode(&buffer[..count], |text| {
                             // The source of the main zone changed to the tuner.
                             tuner |= text == "SITUNER";
+                            hd_radio |= text == "SIHDRADIO";
                             // The answer to a marker query, or an event that looks like it.
                             power_lines += usize::from(text.starts_with("PW"));
                             self.handle_line(text, &mut filter);
                         });
                         if tuner {
                             queue.add(TUNER_QUERIES);
+                        }
+                        if hd_radio {
+                            queue.add(HD_RADIO_QUERIES);
                         }
                         // A change made BT.2020 not known: ask once more. The
                         // answer can repeat the last value, so the filter must

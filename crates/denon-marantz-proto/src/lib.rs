@@ -12,6 +12,7 @@ mod device_settings;
 mod error;
 mod general_menu;
 mod input_pages;
+mod network_audio;
 mod now_playing;
 mod picture;
 mod reading;
@@ -67,6 +68,7 @@ pub use input_pages::{
     INPUT_ASSIGN_PATH, InputAssignment, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH, SourceLevels,
     SourceNameEntry, SourceNames, source_for_index,
 };
+pub use network_audio::{NetworkAudioCommand, RepeatMode};
 pub use now_playing::{
     COVER_ARTWORK_PATH, HD_RADIO_STATUS_PATH, NET_AUDIO_STATUS_PATH, NowPlaying, PlayingKind,
     STATIC_ARTWORK_PATH,
@@ -99,17 +101,19 @@ pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};
 pub use tone::ToneLevel;
 pub use tuner::{
-    TUNER_QUERIES, TUNER_STATUS_PATH, TunerCommand, TunerFrequency, TunerPage, TunerState,
+    HD_RADIO_QUERIES, HdRadioState, TUNER_PRESETS_QUERY, TUNER_QUERIES, TUNER_STATUS_PATH,
+    TunerCommand, TunerFrequency, TunerPage, TunerPreset, TunerState,
 };
 pub use values::{
     AspectRatio, AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, AutoStandby,
     BluetoothOutputMode, ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode,
-    DiracFilter, Drc, DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdRadioBand,
-    HdTuningMode, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio, ImaxMode,
-    ImaxSubwooferOutput, InputMode, MaxHdmiResolution, Mdax, MultiEq, MuteLevel, NoiseReduction,
-    PanelLock, PictureMode, PixelDepth, PliizHeightGain, Power, ReferenceLevelOffset, RoomSize,
-    SpeakerPreset, SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode,
-    VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    DiracFilter, Drc, DynamicCompression, DynamicVolume, EcoMode, EffectSpeakerSelection,
+    FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
+    ImaxMode, ImaxSubwooferOutput, InputMode, InputModeState, InputReport, MaxHdmiResolution, Mdax,
+    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PixelDepth, PliizHeightGain, Power,
+    ProLogicMode, ReferenceLevelOffset, RoomSize, SpeakerPreset, SurroundBackMode,
+    SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
+    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use video_menu::{
