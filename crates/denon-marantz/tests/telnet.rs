@@ -18,12 +18,13 @@ use denon_marantz::{
 };
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
-    AudioRestorer, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel, DigitalCodec,
-    DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
-    HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock,
-    PictureMode, Power, PowerOnVolume, ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize,
-    Setting, Sleep, SpeakerPreset, ToneLevel, Trigger, TunerBand, TunerMode, VideoProcessingMode,
-    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
+    DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
+    HdmiOutput, HdmiUpscaler, HeightGain, Illumination, InputMode, MultiEq, MuteLevel,
+    NoiseReduction, PanelLock, PictureMode, Power, PowerOnVolume, ReceiverType,
+    ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger,
+    TunerBand, TunerMode, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1425,6 +1426,41 @@ async fn sound_steps_and_the_effect_level_are_sent_and_read() {
     let settings = avr.snapshot().device().sound_settings.clone();
     assert_eq!(settings.effect_level, Some(12));
     assert_eq!(settings.effect, Some(true));
+}
+
+#[tokio::test]
+async fn dialog_level_dsx_and_height_gain_are_sent() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    sound.set_dialog_level_adjust(true).await.unwrap();
+    sound.set_dialog_level(-3).await.unwrap();
+    sound.dialog_level_up().await.unwrap();
+    sound.set_audyssey_dsx(AudysseyDsx::Wide).await.unwrap();
+    sound.set_stage_width(2).await.unwrap();
+    sound.stage_width_down().await.unwrap();
+    sound.set_stage_height(-1).await.unwrap();
+    sound.stage_height_up().await.unwrap();
+    sound.set_height_gain(HeightGain::Medium).await.unwrap();
+    let error = sound.set_dialog_level(13).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    let error = sound.set_stage_width(-11).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 9).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "PSDIL ON",
+            "PSDIL 47",
+            "PSDIL UP",
+            "PSDSX ONW",
+            "PSSTW 52",
+            "PSSTW DOWN",
+            "PSSTH 49",
+            "PSSTH UP",
+            "PSPHG MID",
+        ]
+    );
 }
 
 #[tokio::test]

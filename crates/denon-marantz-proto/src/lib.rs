@@ -102,13 +102,14 @@ pub use tuner::{
     TUNER_QUERIES, TUNER_STATUS_PATH, TunerCommand, TunerFrequency, TunerPage, TunerState,
 };
 pub use values::{
-    AspectRatio, AudioRestorer, Auro3dMode, AuroMatic3dPreset, AutoStandby, BluetoothOutputMode,
-    ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, Drc,
-    DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers, HdmiAudioDecode, HdmiOutput,
-    Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, MaxHdmiResolution, Mdax,
-    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PixelDepth, Power,
-    ReferenceLevelOffset, RoomSize, SpeakerPreset, SurroundLevelCompensation, Trigger, TunerBand,
-    TunerMode, VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    AspectRatio, AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, AutoStandby,
+    BluetoothOutputMode, ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode,
+    DiracFilter, Drc, DynamicVolume, EcoMode, EffectSpeakerSelection, FrontSpeakers,
+    HdmiAudioDecode, HdmiOutput, HeightGain, Illumination, ImaxAudio, ImaxMode,
+    ImaxSubwooferOutput, InputMode, MaxHdmiResolution, Mdax, MultiEq, MuteLevel, NoiseReduction,
+    PanelLock, PictureMode, PixelDepth, Power, ReferenceLevelOffset, RoomSize, SpeakerPreset,
+    SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
+    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use video_menu::{

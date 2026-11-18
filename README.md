@@ -15,6 +15,8 @@ state again.
 - Zones: main, zone 2 and zone 3. Power, volume, mute, source, quick select.
 - Sound: sound mode, tone control, Audyssey, Dirac Live, tactile transducer,
   speaker preset, channel levels, dialog enhancer and other sound settings.
+  For older receivers also Dialog Level Adjust, Audyssey DSX with its stage
+  width and height, and the Dolby Pro Logic IIz height gain.
 - Speakers: crossovers, distances, channel level dials, subwoofer output and
   bass settings, read from the web interface.
 - Sources: names (user, default and automatic), hidden sources and the
@@ -332,6 +334,10 @@ have not run on a receiver:
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver
   sends no answer or error, so the state shows no change.
+- Dialog Level Adjust (`PSDIL`), Audyssey DSX (`PSDSX`, `PSSTW`, `PSSTH`)
+  and the Pro Logic IIz height gain (`PSPHG`). They follow the Denon AVR
+  control protocol Ver.06 for the 2014 models and are tested with unit tests
+  only. The state keeps their events as text in `other`.
 - Dirac filters other than Dirac ART. Only Dirac ART was tested for locking the
   channel levels and the crossovers.
 - The value `WhenOn` of the network control setting: the network answers only
