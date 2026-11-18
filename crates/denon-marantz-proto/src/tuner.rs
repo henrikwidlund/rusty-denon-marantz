@@ -5,7 +5,7 @@ use core::fmt::Write as _;
 
 use crate::error::Error;
 use crate::speaker_tables::root;
-use crate::values::{TunerBand, TunerMode};
+use crate::values::{HdRadioBand, HdTuningMode, TunerBand, TunerMode};
 use crate::xml::Node;
 
 /// Queries for the frequency, the preset and the tuning mode. A receiver
@@ -17,6 +17,9 @@ pub const TUNER_STATUS_PATH: &str = "/goform/formTuner_TunerXml.xml";
 
 /// Highest preset number of the tuner.
 const MAX_PRESET: u8 = 56;
+
+/// Highest HD Radio multicast channel. Channel 0 is the analog broadcast.
+const MAX_MULTICAST: u8 = 8;
 
 /// Frequency of the tuner as the receiver reports it: six digits written as
 /// `****.**`. Values above `050000` are AM in kHz, the others FM in MHz.
@@ -214,6 +217,8 @@ fn replace<T: PartialEq>(slot: &mut Option<T>, value: Option<T>) -> bool {
 
 /// A command for the tuner. Only receivers with a tuner accept them, and the
 /// source must be the tuner. Some models have a tuner in some regions only.
+///
+/// The HD Radio commands are for receivers with an HD Radio tuner only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TunerCommand {
@@ -233,6 +238,25 @@ pub enum TunerCommand {
     Preset(u8),
     /// Stores the station in a preset, from 1 to 56.
     StorePreset(u8),
+    /// Tunes the HD Radio tuner to the next frequency.
+    HdFrequencyUp,
+    /// Tunes the HD Radio tuner to the previous frequency.
+    HdFrequencyDown,
+    /// Selects an HD Radio multicast channel, from 1 to 8, or 0 for the
+    /// analog broadcast.
+    HdMulticast(u8),
+    /// Selects the band of the HD Radio tuner.
+    HdBand(HdRadioBand),
+    /// Selects the tuning mode of the HD Radio tuner.
+    HdMode(HdTuningMode),
+    /// Goes to the next HD Radio preset.
+    HdPresetUp,
+    /// Goes to the previous HD Radio preset.
+    HdPresetDown,
+    /// Goes to an HD Radio preset, from 1 to 56.
+    HdPreset(u8),
+    /// Stores the HD Radio station in a preset, from 1 to 56.
+    HdStorePreset(u8),
 }
 
 impl TunerCommand {
@@ -241,7 +265,7 @@ impl TunerCommand {
     /// # Errors
     ///
     /// Returns [`Error::ValueOutOfRange`] for a preset that is not from 1 to
-    /// 56. `out` is not changed then.
+    /// 56, or a multicast channel above 8. `out` is not changed then.
     pub(crate) fn write(self, out: &mut String) -> Result<(), Error> {
         match self {
             Self::FrequencyUp => out.push_str("TFANUP"),
@@ -258,6 +282,28 @@ impl TunerCommand {
             Self::PresetDown => out.push_str("TPANDOWN"),
             Self::Preset(number) => write_preset(out, "TPAN", number)?,
             Self::StorePreset(number) => write_preset(out, "TPANMEM", number)?,
+            Self::HdFrequencyUp => out.push_str("TFHDUP"),
+            Self::HdFrequencyDown => out.push_str("TFHDDOWN"),
+            Self::HdMulticast(channel) => {
+                if channel > MAX_MULTICAST {
+                    return Err(Error::ValueOutOfRange {
+                        what: "HD Radio multicast channel",
+                    });
+                }
+                let _ = write!(out, "TFHDMC{channel}");
+            }
+            Self::HdBand(band) => {
+                out.push_str("TMHD");
+                out.push_str(band.code());
+            }
+            Self::HdMode(mode) => {
+                out.push_str("TMHD");
+                out.push_str(mode.code());
+            }
+            Self::HdPresetUp => out.push_str("TPHDUP"),
+            Self::HdPresetDown => out.push_str("TPHDDOWN"),
+            Self::HdPreset(number) => write_preset(out, "TPHD", number)?,
+            Self::HdStorePreset(number) => write_preset(out, "TPHDMEM", number)?,
         }
         Ok(())
     }
@@ -338,6 +384,29 @@ mod tests {
             (TunerCommand::Preset(1), "TPAN01"),
             (TunerCommand::Preset(56), "TPAN56"),
             (TunerCommand::StorePreset(7), "TPANMEM07"),
+            (TunerCommand::HdFrequencyUp, "TFHDUP"),
+            (TunerCommand::HdFrequencyDown, "TFHDDOWN"),
+            (TunerCommand::HdMulticast(0), "TFHDMC0"),
+            (TunerCommand::HdMulticast(2), "TFHDMC2"),
+            (TunerCommand::HdMulticast(8), "TFHDMC8"),
+            (TunerCommand::HdBand(HdRadioBand::Am), "TMHDAM"),
+            (TunerCommand::HdBand(HdRadioBand::Fm), "TMHDFM"),
+            (TunerCommand::HdMode(HdTuningMode::AutoHd), "TMHDAUTOHD"),
+            (TunerCommand::HdMode(HdTuningMode::Auto), "TMHDAUTO"),
+            (TunerCommand::HdMode(HdTuningMode::Manual), "TMHDMANUAL"),
+            (
+                TunerCommand::HdMode(HdTuningMode::AnalogAuto),
+                "TMHDANAAUTO",
+            ),
+            (
+                TunerCommand::HdMode(HdTuningMode::AnalogManual),
+                "TMHDANAMANU",
+            ),
+            (TunerCommand::HdPresetUp, "TPHDUP"),
+            (TunerCommand::HdPresetDown, "TPHDDOWN"),
+            (TunerCommand::HdPreset(1), "TPHD01"),
+            (TunerCommand::HdPreset(56), "TPHD56"),
+            (TunerCommand::HdStorePreset(1), "TPHDMEM01"),
         ];
         for (command, expected) in cases {
             assert_eq!(text(command).as_deref(), Ok(expected), "{command:?}");
@@ -350,6 +419,8 @@ mod tests {
             for command in [
                 TunerCommand::Preset(number),
                 TunerCommand::StorePreset(number),
+                TunerCommand::HdPreset(number),
+                TunerCommand::HdStorePreset(number),
             ] {
                 assert_eq!(
                     text(command),
@@ -412,9 +483,23 @@ mod tests {
     }
 
     #[test]
+    fn hd_multicast_channels_are_from_0_to_8() {
+        for channel in [9, 10, 255] {
+            assert_eq!(
+                text(TunerCommand::HdMulticast(channel)),
+                Err(Error::ValueOutOfRange {
+                    what: "HD Radio multicast channel"
+                })
+            );
+        }
+    }
+
+    #[test]
     fn a_failed_command_leaves_the_text_unchanged() {
-        let mut out = String::from("x");
-        assert!(TunerCommand::Preset(0).write(&mut out).is_err());
-        assert_eq!(out, "x");
+        for command in [TunerCommand::Preset(0), TunerCommand::HdMulticast(9)] {
+            let mut out = String::from("x");
+            assert!(command.write(&mut out).is_err());
+            assert_eq!(out, "x");
+        }
     }
 }

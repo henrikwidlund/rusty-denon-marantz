@@ -156,6 +156,25 @@ code_enum! {
 }
 
 code_enum! {
+    /// Band of the HD Radio tuner.
+    pub enum HdRadioBand {
+        Am = "AM", "AM";
+        Fm = "FM", "FM";
+    }
+}
+
+code_enum! {
+    /// Tuning mode of the HD Radio tuner.
+    pub enum HdTuningMode {
+        AutoHd = "AUTOHD", "Automatic HD";
+        Auto = "AUTO", "Automatic";
+        Manual = "MANUAL", "Manual";
+        AnalogAuto = "ANAAUTO", "Analog automatic";
+        AnalogManual = "ANAMANU", "Analog manual";
+    }
+}
+
+code_enum! {
     /// Noise reduction of the picture.
     pub enum NoiseReduction {
         Off = "OFF", "Off";
@@ -583,6 +602,8 @@ mod tests {
             PliizHeightGain,
             MaxHdmiResolution,
             FrontSpeakers,
+            HdRadioBand,
+            HdTuningMode,
             Illumination,
             InputMode,
             Mdax,
@@ -625,6 +646,11 @@ mod tests {
         );
         assert_eq!(VideoProcessingMode::Movie.code(), "MOVI");
         assert_eq!(Drc::High.code(), "HI");
+        assert_eq!(HdTuningMode::AnalogManual.code(), "ANAMANU");
+        assert_eq!(
+            HdTuningMode::from_code("AUTOHD"),
+            Some(HdTuningMode::AutoHd)
+        );
     }
 
     #[test]

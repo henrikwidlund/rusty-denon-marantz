@@ -97,9 +97,17 @@ impl Reads {
             {
                 Some(Self::Audyssey)
             }
-            // Tuning mode and storing a preset leave band and frequency as they are.
-            Command::Tuner(TunerCommand::Mode(_) | TunerCommand::StorePreset(_)) => None,
-            Command::Tuner(_) => Some(Self::Tuner),
+            // The tuner page has the band and frequency of the analog tuner
+            // only. Tuning mode, storing a preset and HD Radio leave them as
+            // they are.
+            Command::Tuner(
+                TunerCommand::FrequencyUp
+                | TunerCommand::FrequencyDown
+                | TunerCommand::Band(_)
+                | TunerCommand::PresetUp
+                | TunerCommand::PresetDown
+                | TunerCommand::Preset(_),
+            ) => Some(Self::Tuner),
             Command::SetVideoSetting(VideoSettingValue::HdmiOutput(_)) => Some(Self::HdmiOutput),
             _ => None,
         }
@@ -175,6 +183,15 @@ mod tests {
             Some(Reads::Tuner)
         );
         assert_eq!(main(Command::Tuner(TunerCommand::StorePreset(1))), None);
+        assert_eq!(main(Command::Tuner(TunerCommand::HdStorePreset(1))), None);
+        assert_eq!(main(Command::Tuner(TunerCommand::HdFrequencyUp)), None);
+        assert_eq!(main(Command::Tuner(TunerCommand::HdPreset(1))), None);
+        assert_eq!(
+            main(Command::Tuner(TunerCommand::HdMode(
+                denon_marantz_proto::HdTuningMode::Manual
+            ))),
+            None
+        );
         assert_eq!(main(Command::Play), None);
         assert_eq!(
             main(Command::SetVideoSetting(VideoSettingValue::HdmiOutput(
