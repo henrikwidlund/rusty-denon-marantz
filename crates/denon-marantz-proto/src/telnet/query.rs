@@ -1,6 +1,6 @@
 //! Queries that ask a receiver for its state.
 
-use QueryGroup::{Core, Device, Names, Picture, Signal, Sound, Speakers, Toggles, Zones};
+use QueryGroup::{Core, Device, Names, Older, Picture, Signal, Sound, Speakers, Toggles, Zones};
 
 use crate::brand::Brand;
 
@@ -282,6 +282,26 @@ query_values! {
         NoiseReduction,
         /// Enhancer.
         Enhancer,
+        /// Pro Logic mode (`PSMODE`).
+        ProLogicMode,
+        /// Surround back mode (Denon).
+        SurroundBackMode,
+        /// Dynamic compression (`PSDCO`).
+        DynamicCompression,
+        /// Auto flag detect (Denon).
+        AutoFlagDetect,
+        /// Dialog level adjust and its level (Denon).
+        DialogLevel,
+        /// Audyssey DSX.
+        AudysseyDsx,
+        /// Stage width.
+        StageWidth,
+        /// Stage height.
+        StageHeight,
+        /// Height gain of Dolby `PLIIz`.
+        HeightGain,
+        /// `InstaPrevue`.
+        InstaPrevue,
 }
 
 impl Query {
@@ -362,6 +382,7 @@ labeled_enum! {
         Zones = "Zones";
         Picture = "Picture";
         Speakers = "Speakers";
+        Older = "Older";
     }
 }
 
@@ -386,6 +407,8 @@ impl QueryGroup {
     ///    adjustments. Only older receivers answer these.
     /// 9. [`Speakers`](Self::Speakers): the speaker configuration, the
     ///    crossovers and the graphic EQ. Only Denon receivers answer these.
+    /// 10. [`Older`](Self::Older): settings of receivers from about 2011 to
+    ///     2015. The command lists of receivers with HEOS do not have these.
     pub const DEFAULT_ORDER: &[Self] = &[
         Self::Core,
         Self::Names,
@@ -396,6 +419,7 @@ impl QueryGroup {
         Self::Zones,
         Self::Picture,
         Self::Speakers,
+        Self::Older,
     ];
 
     /// The groups that a connection fetches by default: the ones that most
@@ -495,7 +519,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Entry; 130] = [
+static QUERIES: [Entry; 140] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -627,6 +651,16 @@ static QUERIES: [Entry; 130] = [
     both(Picture, Query::Saturation, "PVST ?"), // Saturation
     both(Picture, Query::NoiseReduction, "PVDNR ?"), // Noise Reduction
     both(Picture, Query::Enhancer, "PVENH ?"), // Enhancer
+    both(Older, Query::ProLogicMode, "PSMODE: ?"), // Pro Logic mode
+    denon(Older, Query::SurroundBackMode, "PSSB: ?"), // Surround back mode
+    both(Older, Query::DynamicCompression, "PSDCO ?"), // Dynamic compression
+    denon(Older, Query::AutoFlagDetect, "PSAFD ?"), // Auto flag detect
+    denon(Older, Query::DialogLevel, "PSDIL ?"), // Dialog level adjust and level
+    both(Older, Query::AudysseyDsx, "PSDSX ?"), // Audyssey DSX
+    both(Older, Query::StageWidth, "PSSTW ?"), // Stage width
+    both(Older, Query::StageHeight, "PSSTH ?"), // Stage height
+    both(Older, Query::HeightGain, "PSPHG ?"), // PLIIz height gain
+    both(Older, Query::InstaPrevue, "MNPRV?"), // InstaPrevue
 ];
 
 #[cfg(test)]
@@ -685,14 +719,14 @@ mod tests {
     }
 
     #[test]
-    fn speaker_queries_are_last_and_for_denon() {
+    fn speaker_queries_come_before_the_older_ones_and_are_for_denon() {
         let denon: Vec<_> = state_queries(Brand::Denon).collect();
         let marantz: Vec<_> = state_queries(Brand::Marantz).collect();
-        let tail: Vec<_> = denon[denon.len() - 3..].to_vec();
-        assert_eq!(tail, ["SSSPC ?", "SSCFR ?", "SSAEQLRS ?"]);
+        let end = denon.len() - group_queries(Brand::Denon, Older).count();
+        assert_eq!(denon[end - 3..end], ["SSSPC ?", "SSCFR ?", "SSAEQLRS ?"]);
         assert!(!marantz.contains(&"SSAEQLRS ?"));
         assert!(denon.contains(&"SD?") && marantz.contains(&"SD?"));
-        assert_eq!(QueryGroup::DEFAULT_ORDER.last(), Some(&Speakers));
+        assert!(QueryGroup::DEFAULT_ORDER.ends_with(&[Speakers, Older]));
     }
 
     #[test]
@@ -708,8 +742,11 @@ mod tests {
         for query in ["OPALS ?", "SSQS ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }
-        assert_eq!(denon.len(), 121);
-        assert_eq!(marantz.len(), 121);
+        assert_eq!(denon.len(), 131);
+        assert_eq!(marantz.len(), 128);
+        for query in ["PSSB: ?", "PSAFD ?", "PSDIL ?"] {
+            assert!(denon.contains(&query) && !marantz.contains(&query));
+        }
     }
 
     #[test]

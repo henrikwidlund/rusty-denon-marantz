@@ -162,6 +162,7 @@ a Marantz receiver.
 | `Zones` | no | Volume settings and levels of the zones | 5 | 5 |
 | `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
 | `Speakers` | no | Speaker configuration, crossovers and graphic EQ, Denon only | 3 | 0 |
+| `Older` | no | Settings of receivers from about 2011 to 2015, for example Pro Logic mode, Audyssey DSX and InstaPrevue. Not in the command lists of receivers with HEOS | 10 | 7 |
 
 The web interface (port 11080) is read on request, because it does not
 send changes:
