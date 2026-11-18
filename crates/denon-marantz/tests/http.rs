@@ -308,6 +308,18 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// Tries to build a connection again within `connect_retry`. On Windows a
+/// refused connection is reported after about two seconds, so a short
+/// connect timeout ends each try sooner there.
+fn retrying(connect_retry: Duration) -> HttpConfig {
+    HttpConfig {
+        connect_timeout: Duration::from_millis(100),
+        request_timeout: Duration::from_secs(3),
+        connect_retry,
+        ..config()
+    }
+}
+
 /// Answers one request on `port` with `ok`, after `delay`.
 fn answer_later(port: u16, delay: Duration) {
     tokio::spawn(async move {
@@ -331,48 +343,39 @@ fn answer_later(port: u16, delay: Duration) {
 async fn a_connection_that_cannot_be_built_is_tried_again() {
     let port = free_port();
     answer_later(port, Duration::from_millis(200));
-    let retrying = HttpConfig {
-        connect_retry: Duration::from_secs(2),
-        ..config()
-    };
-    let client = HttpClient::new("127.0.0.1", port, retrying).unwrap();
+    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::from_secs(2))).unwrap();
     assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
 }
 
 #[tokio::test]
-async fn without_connect_retry_a_refused_connection_fails_at_once() {
+async fn without_connect_retry_a_connection_is_tried_once() {
     let port = free_port();
-    let client = HttpClient::new("127.0.0.1", port, config()).unwrap();
+    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::ZERO)).unwrap();
     let started = Instant::now();
     let error = client.get("/x").await.unwrap_err();
-    assert!(error.is_network(), "{error:?}");
-    assert!(started.elapsed() < Duration::from_millis(200));
+    assert!(error.is_not_sent(), "{error:?}");
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_millis(300), "{elapsed:?}");
 }
 
 #[tokio::test]
 async fn connect_retry_ends_at_its_limit() {
     let port = free_port();
-    let retrying = HttpConfig {
-        connect_retry: Duration::from_millis(300),
-        ..config()
-    };
-    let client = HttpClient::new("127.0.0.1", port, retrying).unwrap();
+    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::from_millis(300))).unwrap();
     let started = Instant::now();
     let error = client.get("/x").await.unwrap_err();
-    assert!(error.is_network(), "{error:?}");
+    assert!(error.is_not_sent(), "{error:?}");
     let elapsed = started.elapsed();
     assert!(elapsed >= Duration::from_millis(150), "{elapsed:?}");
-    assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+    // The last try can start just before the limit and take the connect
+    // timeout.
+    assert!(elapsed < Duration::from_millis(800), "{elapsed:?}");
 }
 
 #[tokio::test]
 async fn a_request_that_was_sent_is_not_sent_again() {
     let fake = Fake::start(|_| Reply::Close).await;
-    let retrying = HttpConfig {
-        connect_retry: Duration::from_secs(2),
-        ..config()
-    };
-    let error = client(&fake, retrying)
+    let error = client(&fake, retrying(Duration::from_secs(2)))
         .post("/goform/AppCommand.xml", Bytes::from_static(b"<tx/>"))
         .await
         .unwrap_err();
@@ -385,17 +388,13 @@ async fn a_request_that_was_sent_is_not_sent_again() {
 async fn a_connect_retry_without_end_works() {
     let port = free_port();
     answer_later(port, Duration::from_millis(100));
-    let forever = HttpConfig {
-        connect_retry: Duration::MAX,
-        ..config()
-    };
-    let client = HttpClient::new("127.0.0.1", port, forever).unwrap();
+    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::MAX)).unwrap();
     assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
 }
 
 #[tokio::test]
 async fn only_a_connection_that_was_not_opened_is_not_sent() {
-    let refused = HttpClient::new("127.0.0.1", free_port(), config())
+    let refused = HttpClient::new("127.0.0.1", free_port(), retrying(Duration::ZERO))
         .unwrap()
         .get("/x")
         .await
