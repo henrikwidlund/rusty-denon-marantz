@@ -55,9 +55,11 @@ pub enum NetworkAudioCommand {
     PageNext,
     /// Shows the previous page.
     PagePrevious,
-    /// Goes to a preset, from 1 to 56.
+    /// Goes to a preset, from 1 to 56. Denon receivers of 2014 and 2015
+    /// have 36 presets.
     Preset(u8),
-    /// Stores what plays in a preset, from 1 to 56.
+    /// Stores what plays in a preset, from 1 to 56. Denon receivers of 2014
+    /// and 2015 have 36 presets.
     StorePreset(u8),
     /// Asks for the names of all presets. The answers fill
     /// [`DeviceState::network_preset_names`](crate::DeviceState::network_preset_names).

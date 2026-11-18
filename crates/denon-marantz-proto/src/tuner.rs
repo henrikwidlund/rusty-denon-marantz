@@ -382,8 +382,12 @@ fn value_of(node: Node<'_>, tag: &str) -> Option<String> {
     Some(value.node().text()?.into_owned())
 }
 
-/// Reads a preset number: two digits from 01 to 56.
+/// Reads a preset as two digits, `01` to `56`, or as a letter and a digit,
+/// `A1` to `G8`.
 fn parse_preset(text: &str) -> Option<u8> {
+    if let [letter @ b'A'..=b'G', digit @ b'1'..=b'8'] = text.as_bytes() {
+        return Some((letter - b'A') * 8 + (digit - b'0'));
+    }
     if text.len() != 2 || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -427,6 +431,14 @@ pub enum TunerCommand {
     Preset(u8),
     /// Stores the station in a preset, from 1 to 56.
     StorePreset(u8),
+    /// Goes to a preset, from 1 to 56, in the form A1 to G8 of Marantz
+    /// receivers of about 2011. Preset 1 is A1, 9 is B1 and 56 is G8.
+    /// Receivers that report presets as A1 to G8 need this form.
+    /// [`TunerState::preset`] has the number for both forms.
+    LetteredPreset(u8),
+    /// Stores the station in a preset, from 1 to 56, in the form A1 to G8.
+    /// See [`TunerCommand::LetteredPreset`].
+    StoreLetteredPreset(u8),
     /// Tunes the HD Radio tuner to the next frequency.
     HdFrequencyUp,
     /// Tunes the HD Radio tuner to the previous frequency.
@@ -479,6 +491,10 @@ impl TunerCommand {
             Self::PresetDown => out.push_str("TPANDOWN"),
             Self::Preset(number) => write_preset(out, "TPAN", number)?,
             Self::StorePreset(number) => write_preset(out, "TPANMEM", number)?,
+            Self::LetteredPreset(number) => write_lettered_preset(out, "TPAN", number)?,
+            Self::StoreLetteredPreset(number) => {
+                write_lettered_preset(out, "TPANMEM", number)?;
+            }
             Self::HdFrequencyUp => out.push_str("TFHDUP"),
             Self::HdFrequencyDown => out.push_str("TFHDDOWN"),
             Self::HdMulticast(channel) => {
@@ -518,12 +534,27 @@ const fn check_multicast(channel: u8) -> Result<(), Error> {
     Ok(())
 }
 
-fn write_preset(out: &mut String, start: &str, number: u8) -> Result<(), Error> {
-    if !(1..=MAX_PRESET).contains(&number) {
+/// Writes a preset from 1 to 56 as A1 to G8: eight presets for each letter.
+fn write_lettered_preset(out: &mut String, start: &str, number: u8) -> Result<(), Error> {
+    check_preset(number)?;
+    let index = number - 1;
+    out.push_str(start);
+    out.push(char::from(b'A' + index / 8));
+    out.push(char::from(b'1' + index % 8));
+    Ok(())
+}
+
+const fn check_preset(number: u8) -> Result<(), Error> {
+    if number == 0 || number > MAX_PRESET {
         return Err(Error::ValueOutOfRange {
             what: "tuner preset",
         });
     }
+    Ok(())
+}
+
+fn write_preset(out: &mut String, start: &str, number: u8) -> Result<(), Error> {
+    check_preset(number)?;
     out.push_str(start);
     // Writing to a `String` cannot fail.
     let _ = write!(out, "{number:02}");
@@ -597,6 +628,10 @@ mod tests {
             (TunerCommand::Preset(1), "TPAN01"),
             (TunerCommand::Preset(56), "TPAN56"),
             (TunerCommand::StorePreset(7), "TPANMEM07"),
+            (TunerCommand::LetteredPreset(1), "TPANA1"),
+            (TunerCommand::LetteredPreset(9), "TPANB1"),
+            (TunerCommand::LetteredPreset(56), "TPANG8"),
+            (TunerCommand::StoreLetteredPreset(16), "TPANMEMB8"),
             (TunerCommand::HdFrequencyUp, "TFHDUP"),
             (TunerCommand::HdFrequencyDown, "TFHDDOWN"),
             (TunerCommand::HdMulticast(0), "TFHDMC0"),
@@ -635,6 +670,8 @@ mod tests {
             for command in [
                 TunerCommand::Preset(number),
                 TunerCommand::StorePreset(number),
+                TunerCommand::LetteredPreset(number),
+                TunerCommand::StoreLetteredPreset(number),
                 TunerCommand::HdPreset(number),
                 TunerCommand::HdStorePreset(number),
             ] {
@@ -809,6 +846,14 @@ mod tests {
         let mut state = TunerState::default();
         for text in ["HD", "HDUP", "HD0087", "HDMC9", "HDMC", "HD008750MC", "HD?"] {
             assert_eq!(state.apply_frequency(text), None, "{text:?}");
+        }
+        assert_eq!(state.apply_preset("ANA1"), Some(true));
+        assert_eq!(state.preset, Some(1));
+        assert_eq!(state.apply_preset("ANG8"), Some(true));
+        assert_eq!(state.preset, Some(56));
+        state.preset = None;
+        for text in ["ANA0", "ANA9", "ANH1", "ANa1"] {
+            assert_eq!(state.apply_preset(text), None, "{text:?}");
         }
         for text in ["HD", "HD00", "HD57", "HDMEM01"] {
             assert_eq!(state.apply_preset(text), None, "{text:?}");

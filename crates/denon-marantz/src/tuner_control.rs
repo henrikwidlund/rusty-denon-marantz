@@ -102,6 +102,28 @@ impl<'a> TunerControl<'a> {
         self.send(TunerCommand::StorePreset(number)).await
     }
 
+    /// Goes to a preset, from 1 to 56, in the form A1 to G8 of Marantz
+    /// receivers of about 2011. Preset 1 is A1, 9 is B1 and 56 is G8.
+    /// Receivers that report presets as A1 to G8 need this form. The tuner
+    /// state has the number for both forms.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn select_lettered_preset(&self, number: u8) -> Result<(), Error> {
+        self.send(TunerCommand::LetteredPreset(number)).await
+    }
+
+    /// Stores the station that is tuned in a preset, from 1 to 56, in the
+    /// form A1 to G8. See [`TunerControl::select_lettered_preset`].
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn store_lettered_preset(&self, number: u8) -> Result<(), Error> {
+        self.send(TunerCommand::StoreLetteredPreset(number)).await
+    }
+
     /// Tunes the HD Radio tuner to the next frequency.
     ///
     /// # Errors

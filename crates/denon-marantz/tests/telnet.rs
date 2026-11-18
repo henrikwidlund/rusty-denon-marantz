@@ -1095,12 +1095,23 @@ async fn tuner_methods_send_their_commands_and_events_fill_the_state() {
     tuner.frequency_up().await.unwrap();
     tuner.select_preset(3).await.unwrap();
     tuner.store_preset(12).await.unwrap();
+    tuner.select_lettered_preset(9).await.unwrap();
+    tuner.store_lettered_preset(56).await.unwrap();
     let error = tuner.select_preset(57).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
-    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    let error = tuner.select_lettered_preset(0).await.unwrap_err();
+    assert!(error.is_invalid_input(), "{error:?}");
+    wait_until("the commands", || commands_sent(&telnet).len() >= 6).await;
     assert_eq!(
         commands_sent(&telnet),
-        ["TMANFM", "TFANUP", "TPAN03", "TPANMEM12"]
+        [
+            "TMANFM",
+            "TFANUP",
+            "TPAN03",
+            "TPANMEM12",
+            "TPANB1",
+            "TPANMEMG8"
+        ]
     );
     tuner.request().await.unwrap();
     wait_until("the queries", || {
