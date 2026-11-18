@@ -58,8 +58,12 @@ pub enum Error {
         request: String,
         /// The time that was allowed.
         limit: Duration,
+        /// The request may have reached the receiver. `false` if it surely
+        /// did not: the connection could not be opened. See
+        /// [`Error::is_not_sent`].
+        sent: bool,
     },
-    /// The connection failed.
+    /// The connection failed, or it was closed before the answer.
     #[error("{request}: network error: {}", Chain(&**source))]
     Network {
         /// The request.
@@ -67,6 +71,10 @@ pub enum Error {
         /// Cause.
         #[source]
         source: Source,
+        /// The request may have reached the receiver. `false` if it surely
+        /// did not: the connection could not be opened. See
+        /// [`Error::is_not_sent`].
+        sent: bool,
     },
     /// The receiver answered with an HTTP status that is not a success.
     #[error("{request}: the receiver answered with HTTP status {status}")]
@@ -130,9 +138,8 @@ pub enum Error {
     /// same error.
     #[error("the command asks for a value, which the receiver answers on telnet only")]
     QueryNeedsTelnet,
-    /// The telnet connection is not open, so nothing was sent.
-    ///
-    /// After a write was begun, the line may still have been sent.
+    /// The telnet connection is not open, so nothing was sent. A line whose
+    /// write was begun gives [`Error::Network`] instead.
     #[error("the telnet connection is not open")]
     NotConnected,
     /// A command cannot be sent, for example because its text has a control
@@ -325,6 +332,21 @@ impl Error {
         matches!(self, Self::Network { .. })
     }
 
+    /// Returns true if the request surely did not reach the receiver: the
+    /// connection could not be opened, or telnet is not open. Sending it again
+    /// cannot run a command twice. A reset, a closed connection or a timeout
+    /// after the connection was open gives false. It is only for errors of
+    /// the connection: others, for example invalid input, give false.
+    #[must_use]
+    pub const fn is_not_sent(&self) -> bool {
+        matches!(
+            self,
+            Self::Timeout { sent: false, .. }
+                | Self::Network { sent: false, .. }
+                | Self::NotConnected
+        )
+    }
+
     /// Returns true if the receiver answered with an HTTP error status.
     #[must_use]
     pub const fn is_status(&self) -> bool {
@@ -385,6 +407,7 @@ mod tests {
                 text: "client error (Connect)",
                 cause: refused,
             }),
+            sent: false,
         };
         assert_eq!(
             error.to_string(),
@@ -419,6 +442,7 @@ mod tests {
         let timeout = Error::Timeout {
             request: "GET http://10.0.0.5/y".to_owned(),
             limit: Duration::from_secs(1),
+            sent: true,
         };
         assert_eq!(timeout.request(), Some("GET http://10.0.0.5/y"));
         assert!(timeout.is_timeout() && timeout.is_unreachable());
@@ -487,11 +511,25 @@ mod tests {
     }
 
     #[test]
+    fn only_errors_before_the_connection_are_not_sent() {
+        let timeout = |sent| Error::Timeout {
+            request: "x".to_owned(),
+            limit: Duration::from_secs(1),
+            sent,
+        };
+        assert!(timeout(false).is_not_sent());
+        assert!(!timeout(true).is_not_sent());
+        assert!(Error::NotConnected.is_not_sent());
+        assert!(!Error::NothingRead.is_not_sent());
+    }
+
+    #[test]
     fn transient_errors_can_work_on_another_try() {
         assert!(Error::NotConnected.is_transient());
         let timeout = Error::Timeout {
             request: "x".to_owned(),
             limit: Duration::from_secs(1),
+            sent: true,
         };
         assert!(timeout.is_transient());
         assert!(!Error::DiracNotSupported.is_transient());

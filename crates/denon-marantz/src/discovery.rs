@@ -182,6 +182,7 @@ pub async fn discover(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver
         return Err(Error::Network {
             request: "SSDP search".to_owned(),
             source: Box::new(error),
+            sent: false,
         });
     }
 
@@ -230,6 +231,7 @@ fn local_addresses() -> Result<Vec<Ipv4Addr>, Error> {
     let interfaces = if_addrs::get_if_addrs().map_err(|source| Error::Network {
         request: "reading the local addresses".to_owned(),
         source: Box::new(source),
+        sent: false,
     })?;
     let mut addresses: Vec<Ipv4Addr> = interfaces
         .iter()

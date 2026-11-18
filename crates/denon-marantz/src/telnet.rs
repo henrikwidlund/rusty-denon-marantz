@@ -159,6 +159,18 @@ impl From<Query> for Ask<'_> {
     }
 }
 
+/// The error for a line that may have been written, at least in part, before
+/// the connection ended.
+fn maybe_written(request: String) -> Error {
+    Error::Network {
+        request,
+        source: Box::new(std::io::Error::other(
+            "the connection ended while the line was sent",
+        )),
+        sent: true,
+    }
+}
+
 /// A line to send. The caller waits for `done`.
 struct Outgoing {
     line: String,
@@ -337,7 +349,10 @@ impl Telnet {
             done: Some(done),
         }))
         .await?;
-        written.await.unwrap_or(Err(Error::NotConnected))
+        // The task ended while the line waited or was written.
+        written
+            .await
+            .unwrap_or_else(|_| Err(maybe_written("telnet send".to_owned())))
     }
 
     /// Asks the task to query the state of the receiver again.
@@ -390,6 +405,7 @@ impl Telnet {
                 Err(Error::Timeout {
                     request: "telnet marker query".to_owned(),
                     limit,
+                    sent: true,
                 })
             },
             |answer| answer.unwrap_or(Err(Error::NotConnected)),
@@ -842,7 +858,7 @@ impl Worker {
             tokio::time::timeout(self.config.write_timeout, stream.write_all(text.as_bytes()));
         let Some(result) = until_stopped(shutdown, write).await else {
             if let Some(done) = done {
-                let _ = done.send(Err(Error::NotConnected));
+                let _ = done.send(Err(maybe_written(format!("telnet send to {}", self.host))));
             }
             return Err(End::Shutdown);
         };
@@ -861,6 +877,8 @@ impl Worker {
                 Err(error) => Err(Error::Network {
                     request: format!("telnet send to {}", self.host),
                     source: Box::new(std::io::Error::new(error.kind(), error.to_string())),
+                    // Part of the line can have been written.
+                    sent: true,
                 }),
             });
         }
@@ -942,10 +960,12 @@ async fn open(host: &str, config: &TelnetConfig) -> Result<TcpStream, Error> {
         Err(_) => Err(Error::Timeout {
             request: request(),
             limit: config.connect_timeout,
+            sent: false,
         }),
         Ok(Err(source)) => Err(Error::Network {
             request: request(),
             source: Box::new(source),
+            sent: false,
         }),
         Ok(Ok(stream)) => {
             // Commands are short. Do not wait to fill a packet.

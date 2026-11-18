@@ -2547,7 +2547,9 @@ async fn a_stop_does_not_wait_for_a_write_that_is_blocked() {
     let stopped = std::time::Instant::now();
     avr.telnet_disconnect().await;
     assert!(stopped.elapsed() < Duration::from_secs(2));
-    assert!(matches!(sender.await.unwrap(), Err(Error::NotConnected)));
+    // Part of the line was written.
+    let error = sender.await.unwrap().unwrap_err();
+    assert!(error.is_network() && !error.is_not_sent(), "{error:?}");
     holder.abort();
 }
 

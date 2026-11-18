@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
-use hyper::{Method, Request, StatusCode, Uri};
+use hyper::body::Incoming;
+use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::{Client, Error as ClientError};
 use hyper_util::rt::TokioExecutor;
@@ -36,7 +37,22 @@ pub struct HttpConfig {
     pub idle_timeout: Duration,
     /// Spacing between requests.
     pub pacing: Pacing,
+    /// How long a request tries again when the connection cannot be built,
+    /// for example while the network of the caller comes up. The request was
+    /// not sent then, so this is safe for commands too. A request that was
+    /// sent is never sent again. [`Duration::ZERO`] (the default) does not
+    /// try again. The tries stay within `request_timeout`. A short
+    /// `connect_timeout` makes a lost connect attempt end sooner, so that the
+    /// next try starts sooner.
+    pub connect_retry: Duration,
 }
+
+/// Pause before the first new try to build a connection. It doubles with each
+/// try, up to [`LAST_CONNECT_PAUSE`].
+const FIRST_CONNECT_PAUSE: Duration = Duration::from_millis(50);
+
+/// Longest pause between two tries to build a connection.
+const LAST_CONNECT_PAUSE: Duration = Duration::from_millis(250);
 
 impl HttpConfig {
     /// The same settings with another time for a whole request, but not more
@@ -58,6 +74,7 @@ impl Default for HttpConfig {
             max_response_bytes: 4 * 1024 * 1024,
             idle_timeout: Duration::from_secs(30),
             pacing: Pacing::Adaptive(Adaptive::default()),
+            connect_retry: Duration::ZERO,
         }
     }
 }
@@ -226,7 +243,6 @@ impl HttpClient {
 
     /// Sends a request with the time limit, after the wait.
     async fn timed(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
-        let started = Instant::now();
         tracing::trace!(host = self.authority(), %method, path, "request");
         let result = tokio::time::timeout(
             self.config.request_timeout,
@@ -237,11 +253,15 @@ impl HttpClient {
             Err(Error::Timeout {
                 request: self.describe(&method, path),
                 limit: self.config.request_timeout,
+                // The limit can end a connect too, but it is not known which.
+                sent: true,
             })
         });
         match result {
-            Ok(answer) => {
-                self.pacer.record_latency(started);
+            Ok((answer, try_started)) => {
+                // From the try that worked: the tries before it say nothing
+                // about the speed of the receiver.
+                self.pacer.record_latency(try_started);
                 Ok(answer)
             }
             Err(error) => {
@@ -251,24 +271,20 @@ impl HttpClient {
         }
     }
 
-    async fn exchange(&self, method: &Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+    /// The answer, and when the try that got it started.
+    async fn exchange(
+        &self,
+        method: &Method,
+        path: &str,
+        body: Bytes,
+    ) -> Result<(Bytes, Instant), Error> {
         let uri = Uri::builder()
             .scheme("http")
             .authority(self.authority.clone())
             .path_and_query(path)
             .build()
             .map_err(|e| invalid_path(path, &e))?;
-        let request = Request::builder()
-            .method(method.clone())
-            .uri(uri)
-            .body(Full::new(body))
-            .map_err(|e| invalid_path(path, &e))?;
-
-        let response = self
-            .client
-            .request(request)
-            .await
-            .map_err(|e| self.classify(e, method, path))?;
+        let (response, try_started) = self.request(method, path, &uri, body).await?;
         let status = response.status();
         if !status.is_success() {
             let request = self.describe(method, path);
@@ -286,7 +302,43 @@ impl HttpClient {
             .collect()
             .await
             .map_err(|e| self.classify_body(e, method, path))?;
-        Ok(collected.to_bytes())
+        Ok((collected.to_bytes(), try_started))
+    }
+
+    /// Sends the request. A connection that cannot be built is tried again
+    /// within [`HttpConfig::connect_retry`]. Also returns when the try that
+    /// worked started.
+    async fn request(
+        &self,
+        method: &Method,
+        path: &str,
+        uri: &Uri,
+        body: Bytes,
+    ) -> Result<(Response<Incoming>, Instant), Error> {
+        // `None` if the limit is too large for a time: no end then.
+        let deadline = Instant::now().checked_add(self.config.connect_retry);
+        let mut pause = FIRST_CONNECT_PAUSE;
+        loop {
+            let request = Request::builder()
+                .method(method.clone())
+                .uri(uri.clone())
+                .body(Full::new(body.clone()))
+                .map_err(|e| invalid_path(path, &e))?;
+            let try_started = Instant::now();
+            match self.client.request(request).await {
+                Ok(response) => return Ok((response, try_started)),
+                // The request was not sent, so it can be sent again.
+                Err(error)
+                    if error.is_connect()
+                        && deadline.is_none_or(|deadline| Instant::now() + pause <= deadline) =>
+                {
+                    tracing::debug!(host = self.authority(), %method, path, %error, "no connection, trying again");
+                    tokio::time::sleep(pause).await;
+                    pause = (pause * 2).min(LAST_CONNECT_PAUSE);
+                }
+                Err(error) => return Err(self.classify(error, method, path)),
+            }
+        }
     }
 
     fn describe(&self, method: &Method, path: &str) -> String {
@@ -295,6 +347,8 @@ impl HttpClient {
 
     fn classify(&self, error: ClientError, method: &Method, path: &str) -> Error {
         let request = self.describe(method, path);
+        // A connect error means that nothing was written.
+        let sent = !error.is_connect();
         let mut source: Option<&(dyn StdError + 'static)> = Some(&error);
         while let Some(cause) = source {
             if let Some(io) = cause.downcast_ref::<io::Error>()
@@ -303,10 +357,13 @@ impl HttpClient {
                 return Error::Timeout {
                     request,
                     limit: self.config.connect_timeout,
+                    sent,
                 };
             }
+            // A connection that is closed before the answer is a network
+            // error, so that another try is made. A garbled answer is not.
             if let Some(hyper) = cause.downcast_ref::<hyper::Error>()
-                && (hyper.is_parse() || hyper.is_parse_status() || hyper.is_incomplete_message())
+                && (hyper.is_parse() || hyper.is_parse_status())
             {
                 return Error::InvalidResponse {
                     request,
@@ -318,6 +375,7 @@ impl HttpClient {
         Error::Network {
             request,
             source: Box::new(error),
+            sent,
         }
     }
 
@@ -344,10 +402,12 @@ impl HttpClient {
             Ok(hyper) => Error::Network {
                 request,
                 source: hyper,
+                sent: true,
             },
             Err(other) => Error::Network {
                 request,
                 source: other,
+                sent: true,
             },
         }
     }

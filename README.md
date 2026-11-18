@@ -118,6 +118,14 @@ before the pages are read. `Avr::verify` does the same without a start. If
 the receiver gives other values, connect again with the new `Info`. The
 `serde` feature makes `Info` serializable.
 
+If the network of the caller can be down for a moment, for example after the
+device wakes up, set `HttpConfig::connect_retry`: a request whose connection
+cannot be built is tried again within that time. It was not sent, so this is
+safe for commands too. A short `HttpConfig::connect_timeout` makes a lost
+connect attempt end sooner. `Error::is_not_sent` tells if a failed request
+surely did not reach the receiver, so that sending it again cannot run a
+command twice.
+
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in
 `QueryGroup::START_ORDER` (core, names, toggles and signal). The other groups

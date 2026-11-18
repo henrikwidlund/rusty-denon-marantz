@@ -66,6 +66,7 @@ fn network_error(request: &str, source: mdns_sd::Error) -> Error {
     Error::Network {
         request: request.to_owned(),
         source: Box::new(source),
+        sent: false,
     }
 }
 
@@ -334,6 +335,7 @@ mod tests {
         Error::Network {
             request: "SSDP search".to_owned(),
             source: Box::new(std::io::Error::other("no route")),
+            sent: false,
         }
     }
 

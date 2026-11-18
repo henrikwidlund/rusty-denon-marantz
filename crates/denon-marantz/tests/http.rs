@@ -111,10 +111,11 @@ async fn silence_is_a_timeout() {
 }
 
 #[tokio::test]
-async fn closed_connection_is_an_invalid_response() {
+async fn a_connection_closed_before_the_answer_is_a_network_error() {
     let fake = Fake::start(|_| Reply::Close).await;
     let error = client(&fake, config()).get("/x").await.unwrap_err();
-    assert!(error.is_invalid_response(), "{error:?}");
+    assert!(error.is_network(), "{error:?}");
+    assert!(error.is_unreachable());
 }
 
 #[tokio::test]
@@ -295,4 +296,115 @@ async fn parsed_post_answers() {
         .unwrap_err();
     assert!(matches!(error, Error::Protocol { .. }), "{error:?}");
     assert!(error.to_string().contains("POST http://"), "{error}");
+}
+
+/// A port that refuses connections now. It is free, so a test can listen on
+/// it later.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Answers one request on `port` with `ok`, after `delay`.
+fn answer_later(port: u16, delay: Duration) {
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buffer = [0_u8; 1024];
+        let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buffer).await;
+        tokio::io::AsyncWriteExt::write_all(
+            &mut socket,
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+        )
+        .await
+        .unwrap();
+    });
+}
+
+#[tokio::test]
+async fn a_connection_that_cannot_be_built_is_tried_again() {
+    let port = free_port();
+    answer_later(port, Duration::from_millis(200));
+    let retrying = HttpConfig {
+        connect_retry: Duration::from_secs(2),
+        ..config()
+    };
+    let client = HttpClient::new("127.0.0.1", port, retrying).unwrap();
+    assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
+}
+
+#[tokio::test]
+async fn without_connect_retry_a_refused_connection_fails_at_once() {
+    let port = free_port();
+    let client = HttpClient::new("127.0.0.1", port, config()).unwrap();
+    let started = Instant::now();
+    let error = client.get("/x").await.unwrap_err();
+    assert!(error.is_network(), "{error:?}");
+    assert!(started.elapsed() < Duration::from_millis(200));
+}
+
+#[tokio::test]
+async fn connect_retry_ends_at_its_limit() {
+    let port = free_port();
+    let retrying = HttpConfig {
+        connect_retry: Duration::from_millis(300),
+        ..config()
+    };
+    let client = HttpClient::new("127.0.0.1", port, retrying).unwrap();
+    let started = Instant::now();
+    let error = client.get("/x").await.unwrap_err();
+    assert!(error.is_network(), "{error:?}");
+    let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_millis(150), "{elapsed:?}");
+    assert!(elapsed < Duration::from_millis(500), "{elapsed:?}");
+}
+
+#[tokio::test]
+async fn a_request_that_was_sent_is_not_sent_again() {
+    let fake = Fake::start(|_| Reply::Close).await;
+    let retrying = HttpConfig {
+        connect_retry: Duration::from_secs(2),
+        ..config()
+    };
+    let error = client(&fake, retrying)
+        .post("/goform/AppCommand.xml", Bytes::from_static(b"<tx/>"))
+        .await
+        .unwrap_err();
+    // Another try can work, but the client does not make it.
+    assert!(error.is_unreachable(), "{error:?}");
+    assert_eq!(fake.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_connect_retry_without_end_works() {
+    let port = free_port();
+    answer_later(port, Duration::from_millis(100));
+    let forever = HttpConfig {
+        connect_retry: Duration::MAX,
+        ..config()
+    };
+    let client = HttpClient::new("127.0.0.1", port, forever).unwrap();
+    assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
+}
+
+#[tokio::test]
+async fn only_a_connection_that_was_not_opened_is_not_sent() {
+    let refused = HttpClient::new("127.0.0.1", free_port(), config())
+        .unwrap()
+        .get("/x")
+        .await
+        .unwrap_err();
+    assert!(refused.is_not_sent(), "{refused:?}");
+    let closed = Fake::start(|_| Reply::Close).await;
+    let error = client(&closed, config()).get("/x").await.unwrap_err();
+    assert!(!error.is_not_sent(), "{error:?}");
+    let silent = Fake::start(|_| Reply::Hang).await;
+    let error = client(&silent, config()).get("/x").await.unwrap_err();
+    assert!(error.is_timeout() && !error.is_not_sent(), "{error:?}");
 }

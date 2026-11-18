@@ -209,6 +209,7 @@ const WEB_INTERFACE_CONFIG: HttpConfig = HttpConfig {
     pacing: Pacing::Fixed {
         interval: Duration::from_millis(50),
     },
+    connect_retry: Duration::ZERO,
 };
 
 /// Time allowed for one request of the device description. The receiver
