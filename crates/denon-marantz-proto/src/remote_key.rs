@@ -40,6 +40,8 @@ pub enum RemoteKey {
     /// Winds forward. On Marantz the key switches the wind mode on and off.
     FastForward,
     /// Switches Dolby Atmos on and off. Main zone only.
+    /// [`SoundSettingValue::DolbyAtmos`](crate::SoundSettingValue::DolbyAtmos)
+    /// sets it.
     DolbyAtmosToggle,
     /// Turns HDMI control (CEC) on. Main zone only.
     HdmiCecOn,

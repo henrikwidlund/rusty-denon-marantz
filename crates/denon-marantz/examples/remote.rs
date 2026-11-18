@@ -39,7 +39,7 @@
 //! (audio-delay, delay-time, dialog-control, dimension, center-width, center-width-cew, lfe, bass-sync, auro-strength,
 //! center-level, effect-level, center-image, center-gain, dialog-level, stage-width, stage-height,
 //! subwoofer1 to subwoofer4, for example lfe-up),
-//! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off,
+//! dimmer CODE (BRI, DIM, DAR, OFF), dimmer-next, eco CODE (ON, AUTO, OFF), remote-lock on or off, video-select on or off, video-source NAME (DVD, BD, GAME ... or LAST),
 //! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
 //! contrast-up, contrast-down, brightness-up, brightness-down, saturation-up, saturation-down,
 //! noise-reduction CODE (OFF, LOW, MID, HI), enhancer N, enhancer-up, enhancer-down,
@@ -53,7 +53,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL or ANALOG), front-speakers CODE (SPA, SPB, A+B), panorama on or off, dolby-atmos on or off, speaker-preset 1, 2 or toggle, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
 //! tuner-up, tuner-down, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! HD Radio receivers only: hd-up, hd-down, hd-multicast N (0 to 8, 0 is analog),
@@ -161,11 +161,13 @@ const VIDEO_COMMANDS: [&str; 21] = [
 ];
 
 /// Commands that the device control has methods for.
-const DEVICE_COMMANDS: [&str; 15] = [
+const DEVICE_COMMANDS: [&str; 17] = [
     "dimmer",
     "dimmer-next",
     "eco",
     "remote-lock",
+    "video-select",
+    "video-source",
     "panel-lock",
     "bluetooth",
     "bluetooth-output",
@@ -213,7 +215,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 52] = [
+const SOUND_COMMANDS: [&str; 53] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -237,6 +239,7 @@ const SOUND_COMMANDS: [&str; 52] = [
     "tactile-lpf",
     "front-speakers",
     "panorama",
+    "dolby-atmos",
     "speaker-preset",
     "effect",
     "effect-level",
@@ -406,11 +409,17 @@ async fn sound_command(
             let on = arg.on_off("panorama")?;
             avr.sound().set_panorama(on).await?;
         }
-        "speaker-preset" => {
-            let preset =
-                SpeakerPreset::from_code(arg.need()?).ok_or_else(|| arg.unknown("preset"))?;
-            avr.sound().set_speaker_preset(preset).await?;
+        "dolby-atmos" => {
+            let on = arg.on_off("Dolby Atmos")?;
+            avr.sound().set_dolby_atmos(on).await?;
         }
+        "speaker-preset" => match arg.need()? {
+            "toggle" => avr.sound().toggle_speaker_preset().await?,
+            code => {
+                let preset = SpeakerPreset::from_code(code).ok_or_else(|| arg.unknown("preset"))?;
+                avr.sound().set_speaker_preset(preset).await?;
+            }
+        },
         "tactile-up" => avr.sound().tactile_level_up().await?,
         "tactile-down" => avr.sound().tactile_level_down().await?,
         "tactile-lpf" => {
@@ -672,6 +681,8 @@ async fn device_command(
             device.set_eco_mode(mode).await?;
         }
         "remote-lock" => device.set_remote_lock(arg.on_off("remote lock")?).await?,
+        "video-select" => device.set_video_select(arg.on_off("video select")?).await?,
+        "video-source" => device.select_video_source(arg.need()?).await?,
         "panel-lock" => {
             let lock = match arg.need()? {
                 "off" => PanelLock::Off,

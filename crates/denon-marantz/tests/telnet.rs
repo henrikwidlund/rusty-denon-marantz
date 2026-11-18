@@ -1242,6 +1242,8 @@ async fn device_methods_send_their_commands() {
     device.dimmer_next().await.unwrap();
     device.set_eco_mode(EcoMode::Auto).await.unwrap();
     device.set_remote_lock(true).await.unwrap();
+    device.set_video_select(false).await.unwrap();
+    device.select_video_source("GAME").await.unwrap();
     device
         .set_panel_lock(PanelLock::PanelAndVolume)
         .await
@@ -1267,7 +1269,7 @@ async fn device_methods_send_their_commands() {
         .await
         .unwrap_err();
     assert!(error.is_unsupported(), "{error:?}");
-    wait_until("the commands", || commands_sent(&telnet).len() >= 11).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 13).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -1275,6 +1277,8 @@ async fn device_methods_send_their_commands() {
             "DIM SEL",
             "ECOAUTO",
             "SYREMOTE LOCK ON",
+            "SVOFF",
+            "SVGAME",
             "SYPANEL+V LOCK ON",
             "SYPANEL LOCK OFF",
             "MNCHL",
@@ -1650,11 +1654,13 @@ async fn sound_methods_send_their_commands() {
     sound.set_tactile_transducer(true).await.unwrap();
     sound.set_front_speakers(FrontSpeakers::B).await.unwrap();
     sound.set_speaker_preset(SpeakerPreset::Two).await.unwrap();
+    sound.toggle_speaker_preset().await.unwrap();
+    sound.set_dolby_atmos(false).await.unwrap();
     sound.tactile_level_up().await.unwrap();
     sound.set_tactile_low_pass(60).await.unwrap();
     let level = ChannelLevel::from_half_db(-1).unwrap();
     sound.set_subwoofer_level(2, level).await.unwrap();
-    wait_until("the commands", || commands_sent(&telnet).len() >= 13).await;
+    wait_until("the commands", || commands_sent(&telnet).len() >= 15).await;
     assert_eq!(
         commands_sent(&telnet),
         [
@@ -1668,6 +1674,8 @@ async fn sound_methods_send_their_commands() {
             "SSTTR ON",
             "PSFRONT SPB",
             "SPPR 2",
+            "SPPR TOGGLE",
+            "PSATM OFF",
             "SSTTRLEV UP",
             "SSTTRLPF 060",
             "PSSWL2 495"

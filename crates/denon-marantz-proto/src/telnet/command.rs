@@ -52,6 +52,9 @@ pub enum Command<'a> {
     SelectSoundMode(&'a str),
     /// Turns the all zone stereo mode on (`true`) or off (`false`).
     AllZoneStereo(bool),
+    /// Turns video select on and takes the video from a source, by its
+    /// telnet name, for example `DVD`. `LAST` takes the source from before.
+    VideoSelectSource(&'a str),
     /// Plays.
     Play,
     /// Pauses.
@@ -183,18 +186,11 @@ impl Command<'_> {
             }
             Self::Mute(true) => push_zone(out, zone, "", "MUON"),
             Self::Mute(false) => push_zone(out, zone, "", "MUOFF"),
-            Self::SelectSource(name) => {
-                check_text(name)?;
-                out.push_str(zone_prefix(zone, "SI"));
-                out.push_str(name);
-            }
-            Self::SelectSoundMode(name) => {
-                check_text(name)?;
-                out.push_str("MS");
-                out.push_str(name);
-            }
+            Self::SelectSource(name) => push_name(out, zone_prefix(zone, "SI"), name)?,
+            Self::SelectSoundMode(name) => push_name(out, "MS", name)?,
             Self::AllZoneStereo(true) => out.push_str("MNZST ON"),
             Self::AllZoneStereo(false) => out.push_str("MNZST OFF"),
+            Self::VideoSelectSource(name) => push_name(out, "SV", name)?,
             Self::Play => out.push_str("NS9A"),
             Self::Pause => out.push_str("NS9B"),
             Self::Stop => out.push_str("NS9C"),
@@ -312,6 +308,14 @@ fn push_trigger(out: &mut String, trigger: Trigger, on: bool) {
         trigger.number(),
         if on { "ON" } else { "OFF" }
     );
+}
+
+/// Appends the prefix and the name, if the name is valid text.
+fn push_name(out: &mut String, prefix: &str, name: &str) -> Result<(), Error> {
+    check_text(name)?;
+    out.push_str(prefix);
+    out.push_str(name);
+    Ok(())
 }
 
 fn check_text(text: &str) -> Result<(), Error> {
@@ -508,6 +512,7 @@ mod tests {
             (Command::SelectSoundMode("MOVIE"), "MSMOVIE\r"),
             (Command::AllZoneStereo(true), "MNZST ON\r"),
             (Command::AllZoneStereo(false), "MNZST OFF\r"),
+            (Command::VideoSelectSource("DVD"), "SVDVD\r"),
             (Command::SetTrigger(Trigger::One, true), "TR1 ON\r"),
             (Command::SetTrigger(Trigger::Three, false), "TR3 OFF\r"),
             (
@@ -563,6 +568,7 @@ mod tests {
             for command in [
                 Command::SelectSource(text),
                 Command::SelectSoundMode(text),
+                Command::VideoSelectSource(text),
                 Command::Raw(text),
             ] {
                 let mut out = String::from("KEEP");

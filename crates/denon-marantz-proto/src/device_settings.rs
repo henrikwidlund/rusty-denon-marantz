@@ -20,6 +20,9 @@ pub enum DeviceSettingValue {
     EcoMode(EcoMode),
     /// Locks (`true`) or unlocks (`false`) the remote control.
     RemoteLock(bool),
+    /// Turns video select on (`true`) or off (`false`). When it is on, the
+    /// video comes from the video select source.
+    VideoSelect(bool),
     /// Locks the panel buttons, with or without the master volume, or
     /// unlocks them.
     PanelLock(PanelLock),
@@ -79,6 +82,7 @@ impl DeviceSettingValue {
             Self::DimmerNext => write!(out, "DIM SEL"),
             Self::EcoMode(mode) => write!(out, "ECO{}", mode.telnet_code()),
             Self::RemoteLock(on) => write!(out, "SYREMOTE LOCK {}", on_off(on)),
+            Self::VideoSelect(on) => write!(out, "SV{}", on_off(on)),
             Self::PanelLock(PanelLock::Off) => write!(out, "SYPANEL LOCK OFF"),
             Self::PanelLock(PanelLock::Panel) => write!(out, "SYPANEL LOCK ON"),
             Self::PanelLock(PanelLock::PanelAndVolume) => write!(out, "SYPANEL+V LOCK ON"),
@@ -119,6 +123,8 @@ mod tests {
             (DeviceSettingValue::EcoMode(EcoMode::Off), "ECOOFF"),
             (DeviceSettingValue::RemoteLock(true), "SYREMOTE LOCK ON"),
             (DeviceSettingValue::RemoteLock(false), "SYREMOTE LOCK OFF"),
+            (DeviceSettingValue::VideoSelect(true), "SVON"),
+            (DeviceSettingValue::VideoSelect(false), "SVOFF"),
             (
                 DeviceSettingValue::PanelLock(PanelLock::Off),
                 "SYPANEL LOCK OFF",

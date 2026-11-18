@@ -76,6 +76,7 @@ impl Event {
                 | Self::Tm
                 | Self::Nse
                 | Self::Hd
+                | Self::Sv
         )
     }
 

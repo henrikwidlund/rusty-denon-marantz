@@ -342,6 +342,8 @@ pub enum SoundSettingValue {
     FrontSpeakers(FrontSpeakers),
     /// Speaker preset.
     SpeakerPreset(SpeakerPreset),
+    /// Switches to the other speaker preset.
+    SpeakerPresetToggle,
     /// Tactile transducer on (`true`) or off (`false`).
     TactileTransducer(bool),
     /// Raises the level of the tactile transducer by one step.
@@ -377,6 +379,10 @@ pub enum SoundSettingValue {
     CinemaEq(bool),
     /// Neural:X.
     NeuralX(bool),
+    /// Dolby Atmos on (`true`) or off (`false`).
+    /// [`RemoteKey::DolbyAtmosToggle`](crate::RemoteKey::DolbyAtmosToggle)
+    /// switches it.
+    DolbyAtmos(bool),
     /// Panorama.
     Panorama(bool),
     /// Dimension, from 0 to 6.
@@ -472,6 +478,7 @@ impl SoundSettingValue {
             Self::FrontSpeakers(v) => code(out, "PSFRONT ", v.code()),
             Self::Panorama(on) => code(out, "PSPAN ", on_off_code(on)),
             Self::SpeakerPreset(v) => code(out, "SPPR ", v.code()),
+            Self::SpeakerPresetToggle => code(out, "SPPR ", "TOGGLE"),
             Self::TactileTransducer(on) => code(out, "SSTTR ", on_off_code(on)),
             Self::TactileLevelUp => code(out, "SSTTRLEV ", "UP"),
             Self::TactileLevelDown => code(out, "SSTTRLEV ", "DOWN"),
@@ -528,6 +535,7 @@ impl SoundSettingValue {
             // No space before the value.
             Self::CinemaEq(on) => code(out, "PSCINEMA EQ.", on_off_code(on)),
             Self::NeuralX(on) => code(out, "PSNEURAL ", on_off_code(on)),
+            Self::DolbyAtmos(on) => code(out, "PSATM ", on_off_code(on)),
             Self::Dimension(v) => {
                 digits(out, "PSDIM ", "dimension", u16::from(v), MAX_DIMENSION, 2)
             }
@@ -1009,6 +1017,7 @@ mod tests {
                 SoundSettingValue::SpeakerPreset(SpeakerPreset::Two),
                 "SPPR 2",
             ),
+            (SoundSettingValue::SpeakerPresetToggle, "SPPR TOGGLE"),
             (SoundSettingValue::TactileLevelUp, "SSTTRLEV UP"),
             (SoundSettingValue::TactileLevelDown, "SSTTRLEV DOWN"),
             (SoundSettingValue::TactileLowPass(80), "SSTTRLPF 080"),
@@ -1099,6 +1108,8 @@ mod tests {
             (SoundSettingValue::HeadphoneEq(false), "PSHEQ OFF"),
             (SoundSettingValue::CinemaEq(true), "PSCINEMA EQ.ON"),
             (SoundSettingValue::NeuralX(true), "PSNEURAL ON"),
+            (SoundSettingValue::DolbyAtmos(true), "PSATM ON"),
+            (SoundSettingValue::DolbyAtmos(false), "PSATM OFF"),
             (SoundSettingValue::Panorama(false), "PSPAN OFF"),
             (SoundSettingValue::Dimension(3), "PSDIM 03"),
             (SoundSettingValue::BassSync(16), "PSBSC 16"),

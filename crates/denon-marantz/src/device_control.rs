@@ -113,6 +113,29 @@ impl<'a> DeviceControl<'a> {
         self.send(DeviceSettingValue::RemoteLock(locked)).await
     }
 
+    /// Turns video select on (`true`) or off (`false`). When it is on, the
+    /// video comes from the video select source, not from the selected source.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn set_video_select(&self, on: bool) -> Result<(), Error> {
+        self.send(DeviceSettingValue::VideoSelect(on)).await
+    }
+
+    /// Turns video select on and takes the video from a source, by its telnet
+    /// name, for example `DVD`. `LAST` takes the source from before.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidCommand`] if the name is empty or has a control
+    /// character. See also [`DeviceControl`].
+    pub async fn select_video_source(&self, name: &str) -> Result<(), Error> {
+        self.avr
+            .send(Zone::Main, Command::VideoSelectSource(name))
+            .await
+    }
+
     /// Locks the panel buttons, with or without the master volume, or unlocks
     /// them. The receiver still takes commands on the network.
     ///

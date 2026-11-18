@@ -173,6 +173,8 @@ pub enum Setting {
     QuickSelect,
     /// The speaker preset of the receiver.
     SpeakerPreset,
+    /// Video select of the receiver: on or off, or its source.
+    VideoSelect,
     /// The band, mode, frequency, preset or station of the tuner.
     Tuner,
     /// A video setting such as the video processing mode or the HDMI output.
@@ -369,6 +371,14 @@ pub struct DeviceState {
     pub now_playing: NowPlaying,
     /// The speaker preset. Telnet reports it.
     pub speaker_preset: Option<SpeakerPreset>,
+    /// Video select is on: the video comes from
+    /// [`video_select_source`](Self::video_select_source), not from the
+    /// selected source. Telnet reports it.
+    pub video_select: Option<bool>,
+    /// The source of the video when video select is on. Telnet reports it.
+    /// `None` when an older Marantz receiver reports `SOURCE`: the video of
+    /// the selected source.
+    pub video_select_source: Option<String>,
     /// Each trigger output is on. The first is trigger 1. Telnet reports them.
     pub triggers: [Option<bool>; 3],
     /// The video settings, for example the video processing mode. Telnet
@@ -1053,12 +1063,37 @@ impl State {
             Event::Dc => self.apply_digital_codec(parameter),
             Event::Ilb => self.apply_illumination(parameter),
             Event::Sp => self.apply_speaker_preset(parameter),
+            Event::Sv => self.apply_video_select(parameter),
             Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
             Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
             Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
             Event::Nse => self.apply_now_playing_event(|now| now.apply_net_audio_line(parameter)),
             Event::Hd => self.apply_now_playing_event(|now| now.apply_hd_radio(parameter)),
             _ => None,
+        }
+    }
+
+    /// Applies an `SV` event: `ON`, `OFF` or a source, for example `DVD`.
+    /// Older Marantz receivers send `SOURCE`: the video of the selected
+    /// source, so no video select source.
+    fn apply_video_select(&mut self, parameter: &str) -> Option<Change> {
+        let parameter = parameter.trim();
+        if let Some(on) = on_off(parameter) {
+            return self
+                .device_change(Setting::VideoSelect, |d| set(&mut d.video_select, Some(on)));
+        }
+        // `LAST` is a command only.
+        match parameter {
+            "" | "?" | "LAST" => None,
+            "SOURCE" => self.device_change(Setting::VideoSelect, |d| {
+                set(&mut d.video_select_source, None)
+            }),
+            source => {
+                let source = telnet_to_display_source(source);
+                self.device_change(Setting::VideoSelect, |d| {
+                    set_text(&mut d.video_select_source, source)
+                })
+            }
         }
     }
 
@@ -2608,7 +2643,30 @@ mod tests {
         assert_eq!(apply(&mut state, "SPPR 1"), None);
         assert_eq!(apply(&mut state, "SPPR 2"), changed());
         assert_eq!(state.device().speaker_preset, Some(SpeakerPreset::Two));
-        for line in ["SPPR 3", "SPPR ?", "SPXX 1"] {
+        for line in ["SPPR 3", "SPPR ?", "SPPR TOGGLE", "SPXX 1"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn video_select_follows_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::VideoSelect);
+        // The events of a real receiver.
+        assert_eq!(apply(&mut state, "SVMPLAY"), changed());
+        assert_eq!(apply(&mut state, "SVOFF"), changed());
+        assert_eq!(apply(&mut state, "SVOFF"), None);
+        assert_eq!(state.device().video_select, Some(false));
+        assert_eq!(state.device().video_select_source.as_deref(), Some("MPLAY"));
+        assert_eq!(apply(&mut state, "SVON"), changed());
+        assert_eq!(apply(&mut state, "SVGAME2"), changed());
+        assert_eq!(state.device().video_select, Some(true));
+        assert_eq!(state.device().video_select_source.as_deref(), Some("GAME2"));
+        // Older Marantz receivers: the video of the selected source.
+        assert_eq!(apply(&mut state, "SVSOURCE"), changed());
+        assert_eq!(state.device().video_select_source, None);
+        assert_eq!(apply(&mut state, "SVSOURCE"), None);
+        for line in ["SV?", "SVLAST"] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
     }

@@ -162,6 +162,10 @@ query_values! {
         DynamicVolume,
         /// Speaker preset.
         SpeakerPreset,
+        /// Remote control lock.
+        RemoteLock,
+        /// Video select: on or off, and its source.
+        VideoSelect,
         /// Picture mode.
         PictureMode,
         /// Digital codec.
@@ -372,8 +376,8 @@ impl QueryGroup {
     ///    A toggle needs the current value.
     /// 4. [`Signal`](Self::Signal): video and audio signal information, which
     ///    clients show.
-    /// 5. [`Device`](Self::Device): dimmer, eco, sleep, standby, video and
-    ///    picture settings.
+    /// 5. [`Device`](Self::Device): dimmer, eco, sleep, standby, remote lock,
+    ///    video select, video and picture settings.
     /// 6. [`Sound`](Self::Sound): the sound settings and levels.
     /// 7. [`Zones`](Self::Zones): the volume settings and levels of the zones.
     /// 8. [`Picture`](Self::Picture): the picture mode and the picture
@@ -489,7 +493,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Entry; 126] = [
+static QUERIES: [Entry; 128] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -532,6 +536,8 @@ static QUERIES: [Entry; 126] = [
     marantz(Device, Query::Zone2QuickSelect, "Z2SMART ?"), // Z2 SMART Select
     marantz(Device, Query::Zone3QuickSelect, "Z3SMART ?"), // Z3 SMART Select
     both(Device, Query::HdmiOutput, "VSMONI ?"), // HDMI Output
+    both(Device, Query::RemoteLock, "SYREMOTE LOCK ?"), // Remote lock
+    both(Device, Query::VideoSelect, "SV?"), // Video Select
     both(Sound, Query::AllZoneStereo, "MNZST?"), // All zone stereo
     both(Sound, Query::AudioDelay, "PSDELAY ?"), // Audio Delay
     both(Signal, Query::VideoResolution, "SSINFSIGRES ?"), // Video Signal
@@ -696,8 +702,8 @@ mod tests {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         assert!(denon.contains(&"OPALS ?") && !marantz.contains(&"OPALS ?"));
-        assert_eq!(denon.len(), 118);
-        assert_eq!(marantz.len(), 117);
+        assert_eq!(denon.len(), 120);
+        assert_eq!(marantz.len(), 119);
     }
 
     #[test]
