@@ -17,8 +17,8 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Avr, Error, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions, TelnetConfig,
-    TelnetStart, TelnetSync, UpdateMethod, Zone,
+    Avr, Error, InfoCheck, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions,
+    TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -980,5 +980,46 @@ async fn a_receiver_that_does_not_answer_appcommand_gets_the_audio_queries_later
     let sent = lines(&received);
     for query in ["SYSDA ?", "SYSMI ?", "SSINFAISFSV ?"] {
         assert!(sent.contains(&query), "{query}");
+    }
+}
+
+#[tokio::test]
+async fn the_start_checks_the_known_values() {
+    let (http, web) = (avr_x_receiver().await, web_interface().await);
+    let builder = || {
+        Avr::builder("127.0.0.1")
+            .http_config(config())
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+    };
+    let options = StartOptions::new().telnet(false);
+    let read = Arc::new(
+        builder()
+            .probes(&[(ReceiverType::AvrX, http.port)])
+            .description_port(http.port)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let info = read.info().clone();
+    let report = read.start_with(options).await.unwrap().basic_synced().await;
+    assert!(matches!(report.info_check, InfoCheck::NotNeeded));
+
+    let same = Arc::new(builder().known(info.clone()).connect().await.unwrap());
+    let report = same.start_with(options).await.unwrap().basic_synced().await;
+    assert!(matches!(report.info_check, InfoCheck::Same));
+
+    let mut old = info.clone();
+    old.friendly_name = "Old name".to_owned();
+    let changed = Arc::new(builder().known(old).connect().await.unwrap());
+    let report = changed
+        .start_with(options)
+        .await
+        .unwrap()
+        .basic_synced()
+        .await;
+    match report.info_check {
+        InfoCheck::Changed(new) => assert_eq!(*new, info),
+        other => panic!("{other:?}"),
     }
 }

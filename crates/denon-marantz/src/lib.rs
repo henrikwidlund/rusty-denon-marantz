@@ -121,7 +121,7 @@ pub use pacer::{Adaptive, Pacer, Pacing};
 pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{
-    Avr, AvrBuilder, FollowUpRead, Info, StartOptions, StartPages, StartReport, Started,
+    Avr, AvrBuilder, FollowUpRead, Info, InfoCheck, StartOptions, StartPages, StartReport, Started,
     TelnetStart, TelnetSync, UpdateMethod,
 };
 #[cfg(feature = "http")]

@@ -14,9 +14,9 @@ use denon_marantz_proto::{
 };
 use tokio::task::JoinHandle;
 
-use super::Avr;
 #[cfg(feature = "telnet")]
 use super::UpdateMethod;
+use super::{Avr, Info};
 use crate::details::{PageStatus, SettingsAvailabilityDetails, SkipReason};
 use crate::error::Error;
 #[cfg(feature = "telnet")]
@@ -135,9 +135,28 @@ pub enum TelnetSync {
     NoAnswer,
 }
 
+/// The check of the values from
+/// [`AvrBuilder::known`](crate::AvrBuilder::known) at the start, see
+/// [`Avr::verify`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum InfoCheck {
+    /// The values were read from the receiver at connect.
+    NotNeeded,
+    /// The receiver gives the same values.
+    Same,
+    /// The receiver gives other values. Connect again with them.
+    Changed(Box<Info>),
+    /// The check failed.
+    Failed(Error),
+}
+
 /// What the start did, when it is finished.
 #[derive(Debug)]
 pub struct StartReport {
+    /// The check of the values from
+    /// [`AvrBuilder::known`](crate::AvrBuilder::known).
+    pub info_check: InfoCheck,
     /// The telnet connection.
     pub telnet: TelnetStart,
     /// If the receiver answered the telnet queries. Only [`Started::all_synced`]
@@ -198,6 +217,7 @@ impl Started {
             Ok(report) => report,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(_) => StartReport {
+                info_check: InfoCheck::Failed(Error::Stopped),
                 telnet: TelnetStart::Unknown,
                 telnet_sync: TelnetSync::NotWaited,
                 signal: PageStatus::NoAnswer,
@@ -348,6 +368,16 @@ impl Avr {
     }
 
     async fn finish_start(&self, options: StartOptions, telnet: TelnetStart) -> StartReport {
+        // First, so that the caller soon knows if the known values are old.
+        let info_check = if self.known {
+            match self.verify().await {
+                Ok(None) => InfoCheck::Same,
+                Ok(Some(info)) => InfoCheck::Changed(Box::new(info)),
+                Err(error) => InfoCheck::Failed(error),
+            }
+        } else {
+            InfoCheck::NotNeeded
+        };
         // The receiver answers this one fast, and it has the channels, so it
         // is first.
         let signal = self
@@ -362,6 +392,7 @@ impl Avr {
             self.ask_for_signal(&web_interface).await;
         }
         StartReport {
+            info_check,
             telnet,
             telnet_sync: TelnetSync::NotWaited,
             signal,

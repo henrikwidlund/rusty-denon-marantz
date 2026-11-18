@@ -51,7 +51,9 @@ mod start;
 use follow_up::FollowUp;
 
 pub use follow_up::FollowUpRead;
-pub use start::{StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync};
+pub use start::{
+    InfoCheck, StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync,
+};
 
 /// Name of a receiver that has none.
 const DEFAULT_NAME: &str = "AVR";
@@ -126,6 +128,7 @@ const HTTP_ONLY_WITH_DEVICE_COMMANDS: [Definition; 4] = [
 ];
 
 /// How the state is read over HTTP.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum UpdateMethod {
@@ -137,6 +140,12 @@ pub enum UpdateMethod {
 }
 
 /// What is known about a receiver after [`AvrBuilder::connect`].
+///
+/// Store it to connect faster next time with [`AvrBuilder::known`]. The
+/// `serde` feature adds `Serialize` and `Deserialize`. A newer version of the
+/// library can have more fields, so a stored value may not deserialize then:
+/// connect without [`AvrBuilder::known`] in that case.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Info {
     /// Host that was given.
@@ -185,6 +194,9 @@ pub struct Info {
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
     pub zones: Vec<Zone>,
+    /// Number of zones that the device information lists. `None` if it does
+    /// not say: [`Info::zones`] has the main zone only then.
+    pub zone_count: Option<u8>,
 }
 
 /// Settings of the requests to the web interface. A receiver without it
@@ -213,6 +225,7 @@ pub struct AvrBuilder {
     probes: Option<Vec<(ReceiverType, u16)>>,
     description_port: Option<u16>,
     brand: Option<Brand>,
+    known: Option<Info>,
     follow_up_read: Option<FollowUpRead>,
     background_pause: Duration,
     #[cfg(feature = "telnet")]
@@ -262,6 +275,8 @@ pub struct Avr {
     priority: Arc<Priority>,
     /// Reads the values that a command over HTTP changed.
     follow_up: Option<FollowUp>,
+    /// The info came from [`AvrBuilder::known`], so the start checks it.
+    known: bool,
 }
 
 /// Reads that the receiver does not answer, so they are not asked again.
@@ -312,6 +327,7 @@ impl Avr {
             probes: None,
             description_port: None,
             brand: None,
+            known: None,
             follow_up_read: Some(FollowUpRead::default()),
             background_pause: Duration::from_millis(250),
             #[cfg(feature = "telnet")]
@@ -323,6 +339,54 @@ impl Avr {
     #[must_use]
     pub const fn info(&self) -> &Info {
         &self.info
+    }
+
+    /// Reads the device information and the update method again, and
+    /// compares them with [`Avr::info`]. Returns the new values if they
+    /// differ. Then connect again with them, see [`AvrBuilder::known`]. The
+    /// brand, the manufacturer, the model and the serial number are kept,
+    /// because the device description is not read again. A friendly name
+    /// that the receiver does not give is kept too.
+    ///
+    /// It asks only the type and the port of [`Avr::info`]. A receiver that
+    /// moved to another port gives an error then: connect again without
+    /// [`AvrBuilder::known`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receiver cannot be reached, and
+    /// [`Error::NothingRead`] if [`Avr::info`] has a proven type but the
+    /// device information is not readable now. That can be a short failure,
+    /// so it is not reported as a change.
+    pub async fn verify(&self) -> Result<Option<Info>, Error> {
+        let stored = &self.info;
+        let config = self.http.config();
+        let identified =
+            identify_on(&stored.host, &[(stored.receiver_type, stored.port)], config).await?;
+        if stored.type_proof.is_proven() && !identified.type_proof.is_proven() {
+            return Err(Error::NothingRead);
+        }
+        let other_port;
+        let http = if identified.port == stored.port {
+            &self.http
+        } else {
+            other_port = HttpClient::new(&stored.host, identified.port, config)?;
+            &other_port
+        };
+        let (update_method, friendly_name) =
+            detect_update_method(http, identified.receiver_type).await?;
+        let mut info = info_from(
+            stored.host.clone(),
+            identified,
+            update_method,
+            stored.brand,
+            friendly_name.unwrap_or_else(|| stored.friendly_name.clone()),
+            None,
+        );
+        info.manufacturer.clone_from(&stored.manufacturer);
+        info.model_name.clone_from(&stored.model_name);
+        info.serial_number.clone_from(&stored.serial_number);
+        Ok((info != *stored).then_some(info))
     }
 
     /// Watches the state. It is empty until the first [`Avr::start`] or
@@ -1544,6 +1608,21 @@ impl AvrBuilder {
         self
     }
 
+    /// Uses the [`Info`] of an earlier connection, so that
+    /// [`AvrBuilder::connect`] sends no request and commands can go out at
+    /// once. The host of the builder replaces [`Info::host`]. The probes,
+    /// the description port and the brand are not used then.
+    ///
+    /// [`Avr::start`] checks the values and gives the result in
+    /// [`StartReport::info_check`]; [`Avr::verify`] checks them without a
+    /// start. If the receiver gives other values, connect again with the new
+    /// [`Info`], or without this to look up everything again.
+    #[must_use]
+    pub fn known(mut self, info: Info) -> Self {
+        self.known = Some(info);
+        self
+    }
+
     /// Sets the telnet connection: port, timeouts and how soon to connect
     /// again.
     #[cfg(feature = "telnet")]
@@ -1553,7 +1632,9 @@ impl AvrBuilder {
         self
     }
 
-    /// Identifies the receiver and reads what it tells about itself.
+    /// Identifies the receiver and reads what it tells about itself. With
+    /// [`AvrBuilder::known`], it uses the values given there and sends no
+    /// request.
     ///
     /// The state is empty until [`Avr::update`] runs.
     ///
@@ -1563,73 +1644,62 @@ impl AvrBuilder {
     /// unusable device description is not an error: the brand is then the one
     /// from the device information, [`AvrBuilder::brand`] or [`Brand::Denon`],
     /// and the model is not known.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "connect runs the steps in order; splitting it hides the order"
-    )]
-    pub async fn connect(self) -> Result<Avr, Error> {
+    pub async fn connect(mut self) -> Result<Avr, Error> {
         #[cfg(feature = "telnet")]
         self.telnet.check()?;
-        let Identified {
-            receiver_type,
-            port,
-            device_info,
-            type_proof,
-        } = match &self.probes {
+        let priority = Arc::new(Priority::new(self.background_pause));
+        if let Some(mut info) = self.known.take() {
+            info.host.clone_from(&self.host);
+            let http =
+                HttpClient::new(&self.host, info.port, self.http)?.with_priority(priority.clone());
+            tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected with known values");
+            return self.assemble(info, http, priority, true);
+        }
+        let identified = match &self.probes {
             Some(probes) => identify_on(&self.host, probes, self.http).await?,
             None => identify(&self.host, self.http).await?,
         };
-        let priority = Arc::new(Priority::new(self.background_pause));
-        let http = HttpClient::new(&self.host, port, self.http)?.with_priority(priority.clone());
+        let http = HttpClient::new(&self.host, identified.port, self.http)?
+            .with_priority(priority.clone());
         // The brand from the receiver wins over the given one.
-        let brand = device_info.brand.or(self.brand);
-        let description = self.description(receiver_type, brand).await?;
-        let (update_method, friendly_name) = detect_update_method(&http, receiver_type).await?;
-
+        let brand = identified.device_info.brand.or(self.brand);
+        let description = self.description(identified.receiver_type, brand).await?;
+        let (update_method, friendly_name) =
+            detect_update_method(&http, identified.receiver_type).await?;
         let (brand, friendly_name) =
             brand_and_name(&self.host, description.as_ref(), brand, friendly_name);
-        let appcommand0300_commands = appcommand0300_commands(device_info.queries.as_ref());
-
-        let zone_count =
-            usize::from(device_info.device_zones.unwrap_or(1)).clamp(1, Zone::ALL.len());
-        let info = Info {
-            host: self.host,
-            receiver_type,
-            port,
-            type_proof,
+        let info = info_from(
+            self.host.clone(),
+            identified,
             update_method,
             brand,
-            manufacturer: description.as_ref().map(|d| d.manufacturer.to_string()),
-            model_name: description
-                .as_ref()
-                .and_then(|d| owned(d.model_name.as_ref())),
-            serial_number: description
-                .as_ref()
-                .and_then(|d| owned(d.serial_number.as_ref())),
             friendly_name,
-            comm_api_version: owned(device_info.comm_api_version.as_ref()),
-            mac_address: owned(device_info.mac_address.as_ref()),
-            dirac_live: device_info.dirac_live,
-            tuner: device_info.tuner,
-            quick_select_count: device_info.quick_select_count,
-            hdmi_output_over_http: appcommand0300_commands
-                .contains(&appcommand::GET_OUTPUT_SETTINGS),
-            queries: device_info.queries,
-            zones: Zone::ALL[..zone_count].to_vec(),
-        };
+            description.as_ref(),
+        );
         tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected");
+        self.assemble(info, http, priority, false)
+    }
 
-        let single_zone = device_info.device_zones == Some(1);
+    /// Builds the receiver from what is known about it.
+    fn assemble(
+        self,
+        info: Info,
+        http: HttpClient,
+        priority: Arc<Priority>,
+        known: bool,
+    ) -> Result<Avr, Error> {
+        let appcommand0300_commands = appcommand0300_commands(info.queries.as_ref());
+        let single_zone = info.zone_count == Some(1);
         let channels = Channels::new(State::new(single_zone));
         let missing = Arc::new(Missing::new(
-            receiver_type,
-            device_info.queries.as_ref(),
+            info.receiver_type,
+            info.queries.as_ref(),
             appcommand0300_commands.is_empty(),
         ));
         let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
         let appcommand0300_body = definitions_body(&appcommand0300_commands)?;
         #[cfg(feature = "telnet")]
-        let telnet = Telnet::new(self.telnet, self.background_pause, brand, single_zone);
+        let telnet = Telnet::new(self.telnet, self.background_pause, info.brand, single_zone);
         let follow_up = FollowUp::start(
             self.follow_up_read,
             &http,
@@ -1670,6 +1740,7 @@ impl AvrBuilder {
             reset_keys: ResetKeys::default(),
             priority,
             follow_up,
+            known,
         })
     }
 
@@ -1762,6 +1833,46 @@ async fn detect_update_method(
         .and_then(|body| parse_page(Some(body)))
         .and_then(|page| status_page::friendly_name(&page));
     Ok((UpdateMethod::StatusPages, name))
+}
+
+/// The info from the device information and the answers after it.
+fn info_from(
+    host: String,
+    identified: Identified,
+    update_method: UpdateMethod,
+    brand: Brand,
+    friendly_name: String,
+    description: Option<&DeviceDescription<'_>>,
+) -> Info {
+    let Identified {
+        receiver_type,
+        port,
+        device_info,
+        type_proof,
+    } = identified;
+    let zone_count = usize::from(device_info.device_zones.unwrap_or(1)).clamp(1, Zone::ALL.len());
+    Info {
+        host,
+        receiver_type,
+        port,
+        type_proof,
+        update_method,
+        brand,
+        manufacturer: description.map(|d| d.manufacturer.to_string()),
+        model_name: description.and_then(|d| owned(d.model_name.as_ref())),
+        serial_number: description.and_then(|d| owned(d.serial_number.as_ref())),
+        friendly_name,
+        comm_api_version: owned(device_info.comm_api_version.as_ref()),
+        mac_address: owned(device_info.mac_address.as_ref()),
+        dirac_live: device_info.dirac_live,
+        tuner: device_info.tuner,
+        quick_select_count: device_info.quick_select_count,
+        hdmi_output_over_http: appcommand0300_commands(device_info.queries.as_ref())
+            .contains(&appcommand::GET_OUTPUT_SETTINGS),
+        queries: device_info.queries,
+        zones: Zone::ALL[..zone_count].to_vec(),
+        zone_count: device_info.device_zones,
+    }
 }
 
 /// The brand from the description, or else the fallback (from the device

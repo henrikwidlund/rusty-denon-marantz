@@ -71,6 +71,7 @@ async fn connects_to_an_avr_x_receiver() {
     assert_eq!(info.mac_address.as_deref(), Some("0123456789AB"));
     assert_eq!(info.type_proof, TypeProof::Read);
     assert_eq!(info.zones, [Zone::Main, Zone::Zone2]);
+    assert_eq!(info.zone_count, Some(2));
     // Nothing is read until update.
     assert_eq!(avr.snapshot().zone(Zone::Main).power, None);
 }
@@ -227,6 +228,7 @@ async fn single_zone_receiver_has_one_zone_and_a_default_name() {
     .await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
     assert_eq!(avr.info().zones, [Zone::Main]);
+    assert_eq!(avr.info().zone_count, Some(1));
     // The default name has the brand.
     assert_eq!(avr.info().friendly_name, "Denon AVR");
 }
@@ -1418,4 +1420,123 @@ async fn a_receiver_that_lists_no_signal_query_is_not_asked() {
         PageStatus::NotFound
     );
     assert_eq!(signal_requests(&fake).len(), 0);
+}
+
+#[tokio::test]
+async fn known_values_connect_without_a_request() {
+    let fake = avr_x_receiver().await;
+    let info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let before = fake.seen.lock().unwrap().len();
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(info.clone())
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(fake.seen.lock().unwrap().len(), before);
+    assert_eq!(*avr.info(), info);
+    // The receiver gives the same values.
+    assert_eq!(avr.verify().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn verify_gives_the_values_that_changed() {
+    let fake = avr_x_receiver().await;
+    let info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let mut old = info.clone();
+    old.friendly_name = "Old name".to_owned();
+    old.quick_select_count = Some(9);
+    old.zones = vec![Zone::Main];
+    old.zone_count = Some(1);
+    old.host = "not used".to_owned();
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(old)
+        .connect()
+        .await
+        .unwrap();
+    // The host of the builder wins.
+    assert_eq!(avr.info().host, "127.0.0.1");
+    assert_eq!(avr.verify().await.unwrap(), Some(info));
+}
+
+#[tokio::test]
+async fn verify_keeps_what_only_the_description_gives() {
+    let fake = avr_x_receiver().await;
+    let info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let mut known = info.clone();
+    known.model_name = Some("Stored model".to_owned());
+    known.serial_number = None;
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(known)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.verify().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn verify_reports_a_receiver_that_does_not_answer() {
+    let fake = avr_x_receiver().await;
+    let mut info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    // Nothing listens on this port.
+    info.port = 9;
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(info)
+        .connect()
+        .await
+        .unwrap();
+    assert!(avr.verify().await.is_err());
+}
+
+#[tokio::test]
+async fn verify_does_not_report_a_device_information_that_fails() {
+    let fake = avr_x_receiver().await;
+    let mut info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let failing = Fake::start(|_| Reply::Status(500)).await;
+    info.port = failing.port;
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(info)
+        .connect()
+        .await
+        .unwrap();
+    assert!(matches!(avr.verify().await, Err(Error::NothingRead)));
+}
+
+#[cfg(feature = "serde")]
+#[tokio::test]
+async fn info_survives_serde() {
+    let fake = avr_x_receiver_with_info(AVR_X_OUTPUT_SETTINGS_INFO).await;
+    let info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    assert!(info.queries.is_some());
+    let text = serde_json::to_string(&info).unwrap();
+    let back: denon_marantz::Info = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, info);
 }

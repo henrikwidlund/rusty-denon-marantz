@@ -114,6 +114,11 @@ impl HttpClient {
         self
     }
 
+    /// The settings of this client.
+    pub(crate) const fn config(&self) -> HttpConfig {
+        self.config
+    }
+
     /// A client that shares the connections, the pacer and the commands of
     /// this one. Its requests wait for the commands, but not for the pause
     /// after them.

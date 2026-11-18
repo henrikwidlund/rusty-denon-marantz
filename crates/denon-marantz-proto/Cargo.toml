@@ -12,8 +12,13 @@ categories = ["network-programming", "parser-implementations"]
 # The test data are captured pages of receivers and are large.
 exclude = ["/tests", "/benches"]
 
+[features]
+# Serialize and Deserialize for the types that `denon-marantz` stores in `Info`.
+serde = ["dep:serde"]
+
 [dependencies]
 quick-xml.workspace = true
+serde = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]

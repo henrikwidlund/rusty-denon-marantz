@@ -107,6 +107,14 @@ More groups in `TelnetConfig::query_groups` are asked after the first queries,
 and `all_synced()` then takes longer. Commands go before the queries, and the
 queries wait 250 ms after a command (`AvrBuilder::background_pause`).
 
+`connect` asks the receiver for its type, its description and how to read
+it. To skip these requests, store `avr.info()` and pass it to
+`AvrBuilder::known` next time: `connect` then sends nothing, and commands can
+go out at once, over HTTP until telnet is open. `start` checks the stored
+values in the background (`StartReport::info_check`), and `Avr::verify` does
+the same without a start. If the receiver gives other values, connect again
+with the new `Info`. The `serde` feature makes `Info` serializable.
+
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in
 `QueryGroup::START_ORDER` (core, names, toggles and signal). The other groups
@@ -295,6 +303,7 @@ Notes about HEOS:
 | `discovery` | yes | Receiver search with SSDP. Needs `http`. |
 | `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
+| `serde` | no | `Serialize` and `Deserialize` for `Info`, to store it for `AvrBuilder::known`. |
 
 The `denon-marantz-heos` crate has one feature, `sensitive-logs` (off by
 default): full lines in trace logs. They can have personal data.
@@ -437,7 +446,7 @@ RUSTFLAGS="-D warnings" cargo clippy --locked --workspace --all-targets --all-fe
 cargo test --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
 cargo deny check
-for f in "" telnet http discovery mdns telnet,http; do
+for f in "" telnet http discovery mdns telnet,http serde http,serde; do
   cargo check --locked -p denon-marantz --no-default-features --features "$f"
 done
 ```

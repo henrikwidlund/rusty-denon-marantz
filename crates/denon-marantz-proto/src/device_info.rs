@@ -41,6 +41,7 @@ pub struct DeviceInfo<'a> {
 
 /// The `AppCommand` queries that `Deviceinfo.xml` lists as supported. Each
 /// field is true if the file lists the query with the value 1.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[expect(clippy::struct_excessive_bools, reason = "each field is one query")]
@@ -137,6 +138,7 @@ impl ListedQueries {
 ///
 /// It tells if the receiver has a tuner. It does not tell if the status page
 /// of the tuner has the band and the frequency.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TunerInfo {
@@ -152,6 +154,7 @@ pub enum TunerInfo {
 }
 
 /// The bands of a tuner that `Deviceinfo.xml` lists.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 #[expect(

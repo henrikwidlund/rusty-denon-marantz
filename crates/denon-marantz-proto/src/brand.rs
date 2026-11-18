@@ -1,6 +1,7 @@
 //! Receiver brand.
 
 /// Brand of a receiver. Some telnet commands and queries differ by brand.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Brand {
