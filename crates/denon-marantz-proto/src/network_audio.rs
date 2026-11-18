@@ -22,11 +22,10 @@ pub enum RepeatMode {
 /// A command for the network audio of older receivers.
 ///
 /// Network audio is for example internet radio, a media server or USB.
-/// They are for receivers with a `CommApiVers` below 0300 in
-/// `Deviceinfo.xml`. Receivers that use HEOS for network audio may ignore
-/// them. Play,
-/// pause and stop are [`Command::Play`](crate::telnet::Command::Play) and the
-/// commands after it.
+/// They are for receivers without HEOS, with a `CommApiVers` below 0301 in
+/// `Deviceinfo.xml`. Receivers with HEOS may ignore them. Play, pause and
+/// stop are [`Command::Play`](crate::telnet::Command::Play) and the commands after
+/// it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NetworkAudioCommand {
