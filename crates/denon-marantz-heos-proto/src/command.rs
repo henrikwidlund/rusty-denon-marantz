@@ -3,13 +3,10 @@
 use std::fmt::Write as _;
 
 use crate::error::Error;
-use crate::types::{PlayState, PlayerId, QueueId, RepeatMode, SourceId};
+use crate::types::{MAX_VOLUME, PlayState, PlayerId, QueueId, RepeatMode, SourceId};
 
 /// Highest quick select slot.
 const MAX_QUICK_SELECT: u8 = 6;
-
-/// Highest volume level.
-const MAX_VOLUME: u8 = 100;
 
 /// Highest volume step.
 const MAX_VOLUME_STEP: u8 = 10;

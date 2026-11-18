@@ -10,16 +10,13 @@ use crate::de;
 use crate::error::Error;
 use crate::event::Event;
 use crate::message::Message;
-use crate::types::{NowPlaying, PlayMode, PlayState, RepeatMode};
+use crate::types::{MAX_VOLUME, NowPlaying, PlayMode, PlayState, RepeatMode};
 
 /// Prefix of the command name of an event.
 const EVENT_PREFIX: &str = "event/";
 
 /// First part of the message while the CLI still works on a command.
 const UNDER_PROCESS: &str = "command under process";
-
-/// Highest volume level.
-const MAX_VOLUME: u8 = 100;
 
 /// A parsed line from the CLI.
 ///

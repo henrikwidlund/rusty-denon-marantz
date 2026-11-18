@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 use crate::error::Error;
 use crate::{
     AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, ChannelLevel, DacFilter,
-    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, HeightGain, ImaxAudio,
-    ImaxMode, ImaxSubwooferOutput, Mdax, RoomSize, SpeakerPreset, SurroundLevelCompensation,
+    DialogEnhancerLevel, Drc, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode,
+    ImaxSubwooferOutput, Mdax, PliizHeightGain, RoomSize, SpeakerPreset, SurroundLevelCompensation,
 };
 
 /// The name that a receiver uses for the center width: `PSCEN` in the protocol
@@ -403,7 +403,7 @@ pub enum SoundSettingValue {
     /// only.
     StageHeight(i8),
     /// Height gain of Dolby `PLIIz`. Older receivers only.
-    HeightGain(HeightGain),
+    HeightGain(PliizHeightGain),
 }
 
 impl SoundSettingValue {
@@ -1191,12 +1191,18 @@ mod tests {
                 SoundSettingValue::StepDown(SoundStep::StageHeight),
                 "PSSTH DOWN",
             ),
-            (SoundSettingValue::HeightGain(HeightGain::Low), "PSPHG LOW"),
             (
-                SoundSettingValue::HeightGain(HeightGain::Medium),
+                SoundSettingValue::HeightGain(PliizHeightGain::Low),
+                "PSPHG LOW",
+            ),
+            (
+                SoundSettingValue::HeightGain(PliizHeightGain::Medium),
                 "PSPHG MID",
             ),
-            (SoundSettingValue::HeightGain(HeightGain::High), "PSPHG HI"),
+            (
+                SoundSettingValue::HeightGain(PliizHeightGain::High),
+                "PSPHG HI",
+            ),
         ];
         for (value, expected) in cases {
             assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");

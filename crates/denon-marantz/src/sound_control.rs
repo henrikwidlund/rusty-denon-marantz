@@ -4,8 +4,8 @@ use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel,
     ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc,
-    EffectSpeakerSelection, FrontSpeakers, HeightGain, ImaxAudio, ImaxMode, ImaxSubwooferOutput,
-    InputMode, Mdax, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
+    EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode,
+    Mdax, PliizHeightGain, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
     SurroundLevelCompensation, Zone,
 };
 
@@ -108,7 +108,7 @@ impl<'a> SoundControl<'a> {
         set_audyssey_dsx(AudysseyDsx) => AudysseyDsx, "Audyssey DSX. Older receivers only";
         set_stage_width(i8) => StageWidth, "the stage width of Audyssey DSX in dB, from -10 to +10. Older receivers only";
         set_stage_height(i8) => StageHeight, "the stage height of Audyssey DSX in dB, from -10 to +10. Older receivers only";
-        set_height_gain(HeightGain) => HeightGain, "the height gain of Dolby `PLIIz`. Older receivers only";
+        set_height_gain(PliizHeightGain) => HeightGain, "the height gain of Dolby `PLIIz`. Older receivers only";
     }
 
     /// Sets the center width, from 0 to 7. Receivers use the name `PSCEN` or

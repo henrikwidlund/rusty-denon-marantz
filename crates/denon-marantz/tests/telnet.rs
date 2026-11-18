@@ -20,8 +20,8 @@ use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
     DigitalCodec, DimmerMode, DiracFilter, DynamicVolume, EcoMode, FrontSpeakers, HdmiAudioDecode,
-    HdmiOutput, HdmiUpscaler, HeightGain, Illumination, InputMode, MultiEq, MuteLevel,
-    NoiseReduction, PanelLock, PictureMode, Power, PowerOnVolume, ReceiverType,
+    HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction,
+    PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume, ReceiverType,
     ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, ToneLevel, Trigger,
     TunerBand, TunerMode, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
     ZoneChannelMode, ZoneHdmiAudio,
@@ -1441,7 +1441,10 @@ async fn dialog_level_dsx_and_height_gain_are_sent() {
     sound.stage_width_down().await.unwrap();
     sound.set_stage_height(-1).await.unwrap();
     sound.stage_height_up().await.unwrap();
-    sound.set_height_gain(HeightGain::Medium).await.unwrap();
+    sound
+        .set_height_gain(PliizHeightGain::Medium)
+        .await
+        .unwrap();
     let error = sound.set_dialog_level(13).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     let error = sound.set_stage_width(-11).await.unwrap_err();

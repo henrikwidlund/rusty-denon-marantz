@@ -324,7 +324,7 @@ code_enum! {
 
 code_enum! {
     /// Height gain of Dolby `PLIIz`.
-    pub enum HeightGain {
+    pub enum PliizHeightGain {
         Low = "LOW", "Low";
         Medium = "MID", "Medium";
         High = "HI", "High";
@@ -580,7 +580,7 @@ mod tests {
             Drc,
             EffectSpeakerSelection,
             HdmiAudioDecode,
-            HeightGain,
+            PliizHeightGain,
             MaxHdmiResolution,
             FrontSpeakers,
             Illumination,

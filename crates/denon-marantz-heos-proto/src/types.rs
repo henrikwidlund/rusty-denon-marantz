@@ -9,6 +9,9 @@ use serde::{Deserialize, Deserializer};
 
 use crate::de::{self, Number};
 
+/// Highest volume level of a player or a group.
+pub(crate) const MAX_VOLUME: u8 = 100;
+
 /// Id of a player (`pid`) or of a group (`gid`). It can be negative.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PlayerId(pub i64);
