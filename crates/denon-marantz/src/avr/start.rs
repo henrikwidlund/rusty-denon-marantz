@@ -12,6 +12,7 @@ use denon_marantz_proto::{
     AUDIO_CHANNELS_PATH, AudioChannelsPage, GroupAvailability, SettingsGroup, State,
     VIDEO_SIGNAL_PATH, VideoSignalPage,
 };
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 #[cfg(feature = "telnet")]
@@ -137,7 +138,7 @@ pub enum TelnetSync {
 
 /// The check of the values from
 /// [`AvrBuilder::known`](crate::AvrBuilder::known) at the start, see
-/// [`Avr::verify`].
+/// [`Started::info_check`] and [`Avr::verify`].
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum InfoCheck {
@@ -147,16 +148,14 @@ pub enum InfoCheck {
     Same,
     /// The receiver gives other values. Connect again with them.
     Changed(Box<Info>),
-    /// The check failed.
+    /// The check failed. [`Error::Stopped`] if the start was stopped before
+    /// the check ended.
     Failed(Error),
 }
 
 /// What the start did, when it is finished.
 #[derive(Debug)]
 pub struct StartReport {
-    /// The check of the values from
-    /// [`AvrBuilder::known`](crate::AvrBuilder::known).
-    pub info_check: InfoCheck,
     /// The telnet connection.
     pub telnet: TelnetStart,
     /// If the receiver answered the telnet queries. Only [`Started::all_synced`]
@@ -194,9 +193,18 @@ impl Drop for StartGuard {
 }
 
 /// A start that runs in the background. Dropping it does not stop the start.
+///
+/// The waits take `&mut self` and keep their result, so they can be called
+/// one after the other, and again. A wait that is dropped, for example by a
+/// timeout, can be called again.
 #[derive(Debug)]
 pub struct Started {
     handle: JoinHandle<StartReport>,
+    /// Set when the task of the start has ended.
+    report: Option<StartReport>,
+    /// Gives the check of the known values, until it is in `info_check`.
+    info_receiver: Option<oneshot::Receiver<InfoCheck>>,
+    info_check: Option<InfoCheck>,
     #[cfg(feature = "telnet")]
     avr: Arc<Avr>,
     #[cfg(feature = "telnet")]
@@ -204,26 +212,40 @@ pub struct Started {
 }
 
 impl Started {
+    /// Waits for the check of the values from
+    /// [`AvrBuilder::known`](crate::AvrBuilder::known). The start checks them
+    /// first, so this is there before the pages are read. Without known
+    /// values it is [`InfoCheck::NotNeeded`] at once.
+    pub async fn info_check(&mut self) -> &InfoCheck {
+        if let Some(receiver) = &mut self.info_receiver {
+            let check = receiver
+                .await
+                .unwrap_or_else(|_| InfoCheck::Failed(Error::Stopped));
+            self.info_receiver = None;
+            self.info_check = Some(check);
+        }
+        self.info_check.get_or_insert(InfoCheck::NotNeeded)
+    }
+
     /// Waits until the basic information is in the state: everything that the
     /// start reads over HTTP, the zones and the pages. It does not wait for the
     /// answers to the telnet queries, which can still be on their way:
-    /// [`Started::all_synced`] does. The report has [`TelnetSync::NotWaited`].
+    /// [`Started::all_synced`] does. The report has [`TelnetSync::NotWaited`]
+    /// until `all_synced` ends.
     ///
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn basic_synced(self) -> StartReport {
-        match self.handle.await {
-            Ok(report) => report,
-            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-            Err(_) => StartReport {
-                info_check: InfoCheck::Failed(Error::Stopped),
-                telnet: TelnetStart::Unknown,
-                telnet_sync: TelnetSync::NotWaited,
-                signal: PageStatus::NoAnswer,
-                web_interface: Err(Error::Stopped),
-            },
+    pub async fn basic_synced(&mut self) -> &StartReport {
+        if self.report.is_none() {
+            let report = match (&mut self.handle).await {
+                Ok(report) => report,
+                Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+                Err(_) => stopped_report(),
+            };
+            self.report = Some(report);
         }
+        self.report.get_or_insert_with(stopped_report)
     }
 
     /// Waits as [`Started::basic_synced`] does, and then until the receiver has
@@ -243,25 +265,51 @@ impl Started {
     /// # Panics
     ///
     /// Panics if the task of the start panicked.
-    pub async fn all_synced(self) -> StartReport {
-        #[cfg(feature = "telnet")]
-        let (avr, wait) = (Arc::clone(&self.avr), self.telnet_wait);
-        #[cfg_attr(not(feature = "telnet"), allow(unused_mut))]
-        let mut report = self.basic_synced().await;
-        #[cfg(feature = "telnet")]
-        if matches!(
-            report.telnet,
+    pub async fn all_synced(&mut self) -> &StartReport {
+        #[cfg_attr(not(feature = "telnet"), expect(unused_variables))]
+        let telnet_open = matches!(
+            self.basic_synced().await.telnet,
             TelnetStart::Open | TelnetStart::AlreadyRunning
-        ) {
-            report.telnet_sync = match avr.telnet_sync_within(wait).await {
-                Ok(()) => TelnetSync::Answered,
-                Err(error) if error.is_timeout() => TelnetSync::NoAnswer,
-                Err(_) => TelnetSync::Lost,
+        );
+        if self
+            .report
+            .as_ref()
+            .is_some_and(|report| report.telnet_sync == TelnetSync::NotWaited)
+        {
+            #[cfg(feature = "telnet")]
+            let sync = if telnet_open {
+                self.wait_for_telnet().await
+            } else {
+                TelnetSync::NotOpen
             };
-            return report;
+            // Without telnet, the start never opens it.
+            #[cfg(not(feature = "telnet"))]
+            let sync = TelnetSync::NotOpen;
+            if let Some(report) = &mut self.report {
+                report.telnet_sync = sync;
+            }
         }
-        report.telnet_sync = TelnetSync::NotOpen;
-        report
+        self.report.get_or_insert_with(stopped_report)
+    }
+
+    #[cfg(feature = "telnet")]
+    async fn wait_for_telnet(&self) -> TelnetSync {
+        match self.avr.telnet_sync_within(self.telnet_wait).await {
+            Ok(()) => TelnetSync::Answered,
+            Err(error) if error.is_timeout() => TelnetSync::NoAnswer,
+            Err(_) => TelnetSync::Lost,
+        }
+    }
+}
+
+/// The report of a start that was stopped before it ended. It happens only
+/// when the runtime shuts down.
+const fn stopped_report() -> StartReport {
+    StartReport {
+        telnet: TelnetStart::Unknown,
+        telnet_sync: TelnetSync::NotWaited,
+        signal: PageStatus::NoAnswer,
+        web_interface: Err(Error::Stopped),
     }
 }
 
@@ -320,12 +368,21 @@ impl Avr {
         let task = Arc::clone(&avr);
         #[cfg(feature = "telnet")]
         let telnet_wait = options.telnet_wait;
+        let (info_sender, info_receiver, info_check) = if self.known {
+            let (sender, receiver) = oneshot::channel();
+            (Some(sender), Some(receiver), None)
+        } else {
+            (None, None, Some(InfoCheck::NotNeeded))
+        };
         Ok(Started {
             handle: tokio::spawn(async move {
-                let report = task.finish_start(options, telnet).await;
+                let report = task.finish_start(options, telnet, info_sender).await;
                 drop(running);
                 report
             }),
+            report: None,
+            info_receiver,
+            info_check,
             #[cfg(feature = "telnet")]
             avr,
             #[cfg(feature = "telnet")]
@@ -367,17 +424,23 @@ impl Avr {
         }
     }
 
-    async fn finish_start(&self, options: StartOptions, telnet: TelnetStart) -> StartReport {
-        // First, so that the caller soon knows if the known values are old.
-        let info_check = if self.known {
-            match self.verify().await {
+    /// `info_sender` is set for known values, which are checked first, so
+    /// that [`Started::info_check`] has the result soon.
+    async fn finish_start(
+        &self,
+        options: StartOptions,
+        telnet: TelnetStart,
+        info_sender: Option<oneshot::Sender<InfoCheck>>,
+    ) -> StartReport {
+        if let Some(sender) = info_sender {
+            let check = match self.verify().await {
                 Ok(None) => InfoCheck::Same,
                 Ok(Some(info)) => InfoCheck::Changed(Box::new(info)),
                 Err(error) => InfoCheck::Failed(error),
-            }
-        } else {
-            InfoCheck::NotNeeded
-        };
+            };
+            // Fails only if the caller dropped `Started`.
+            let _ = sender.send(check);
+        }
         // The receiver answers this one fast, and it has the channels, so it
         // is first.
         let signal = self
@@ -392,7 +455,6 @@ impl Avr {
             self.ask_for_signal(&web_interface).await;
         }
         StartReport {
-            info_check,
             telnet,
             telnet_sync: TelnetSync::NotWaited,
             signal,

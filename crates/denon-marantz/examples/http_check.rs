@@ -188,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         phase.as_str(),
         "effects" | "power" | "main-power" | "switch" | "switch-telnet"
     );
-    let started = avr
+    let mut started = avr
         .start_with(StartOptions::new().signal_pages(false).telnet(telnet))
         .await?;
     let report = started.basic_synced().await;

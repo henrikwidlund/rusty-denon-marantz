@@ -1613,8 +1613,8 @@ impl AvrBuilder {
     /// once. The host of the builder replaces [`Info::host`]. The probes,
     /// the description port and the brand are not used then.
     ///
-    /// [`Avr::start`] checks the values and gives the result in
-    /// [`StartReport::info_check`]; [`Avr::verify`] checks them without a
+    /// [`Avr::start`] checks the values first and gives the result in
+    /// [`Started::info_check`]; [`Avr::verify`] checks them without a
     /// start. If the receiver gives other values, connect again with the new
     /// [`Info`], or without this to look up everything again.
     #[must_use]

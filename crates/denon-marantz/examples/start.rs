@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let secs = || begin.elapsed().as_secs_f64();
     let avr = Arc::new(Avr::builder(host).connect().await?);
     println!("RESULT connected_s={:.2}", secs());
-    let started = avr.start_with(options).await?;
+    let mut started = avr.start_with(options).await?;
     println!("RESULT started_s={:.2}", secs());
     // When the signal is in the state: the first value, and all of them.
     let mut first = None;

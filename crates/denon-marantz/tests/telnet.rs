@@ -2653,7 +2653,8 @@ async fn a_page_does_not_hide_the_next_telnet_event_with_the_old_value() {
     .await;
 
     // The start reads the page, and telnet is already open, so telnet is not asked.
-    let report = avr.start().await.unwrap().basic_synced().await;
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
     assert!(matches!(
         report.telnet,
         denon_marantz::TelnetStart::AlreadyRunning

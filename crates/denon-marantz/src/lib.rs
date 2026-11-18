@@ -41,7 +41,7 @@
 //! let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
 //! // Subscribe before the start, so that no change is missed.
 //! let mut changes = avr.changes();
-//! let started = avr.start().await?;
+//! let mut started = avr.start().await?;
 //! println!("{} is {:?}", avr.info().friendly_name, avr.snapshot().zone(Zone::Main).power);
 //!
 //! // Optional: wait until the start has read everything and the receiver has

@@ -73,7 +73,7 @@ use tokio::sync::broadcast::error::RecvError;
 
 let avr = Arc::new(Avr::builder("192.168.1.20").connect().await?);
 let mut changes = avr.changes(); // subscribe before the start, so no change is missed
-let started = avr.start().await?; // the zones are in the state when this returns
+let mut started = avr.start().await?; // the zones are in the state when this returns
 
 avr.zone(Zone::Main)?.set_volume_db(-35.0).await?;
 let report = started.all_synced().await; // optional: wait for the telnet answers too
@@ -103,6 +103,8 @@ long `all_synced` waits. A second `start` while one still runs gives
 reads and the pages are done. `all_synced()` also waits until the receiver has
 answered the telnet queries of the start, so the values that only telnet gives
 are in the state. Both are optional: values that arrive later come as events.
+Both keep the report, so `basic_synced()` and then `all_synced()` works, and a
+wait that was stopped by a timeout can be called again.
 More groups in `TelnetConfig::query_groups` are asked after the first queries,
 and `all_synced()` then takes longer. Commands go before the queries, and the
 queries wait 250 ms after a command (`AvrBuilder::background_pause`).
@@ -111,9 +113,10 @@ queries wait 250 ms after a command (`AvrBuilder::background_pause`).
 it. To skip these requests, store `avr.info()` and pass it to
 `AvrBuilder::known` next time: `connect` then sends nothing, and commands can
 go out at once, over HTTP until telnet is open. `start` checks the stored
-values in the background (`StartReport::info_check`), and `Avr::verify` does
-the same without a start. If the receiver gives other values, connect again
-with the new `Info`. The `serde` feature makes `Info` serializable.
+values first, in the background: `started.info_check()` gives the result
+before the pages are read. `Avr::verify` does the same without a start. If
+the receiver gives other values, connect again with the new `Info`. The
+`serde` feature makes `Info` serializable.
 
 Without `start`, `update()` reads the zones over HTTP and `telnet_connect()`
 opens telnet. The connection then fetches the groups in
