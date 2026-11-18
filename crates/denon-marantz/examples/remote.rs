@@ -294,9 +294,9 @@ async fn tone_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let arg = Argument { name, argument };
     let db = || -> Result<i8, String> {
-        argument
-            .ok_or_else(|| format!("{name} needs an argument"))?
+        arg.need()?
             .parse()
             .map_err(|_| format!("{name} is a whole number of dB"))
     };
@@ -321,93 +321,89 @@ async fn sound_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
-    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let arg = Argument { name, argument };
     let audyssey = avr.audyssey();
     match name {
         "dynamic-eq-on" => audyssey.set_dynamic_eq(true).await?,
         "dynamic-eq-off" => audyssey.set_dynamic_eq(false).await?,
         "multi-eq" => {
-            let mode = MultiEq::from_telnet(need()?).ok_or_else(|| unknown("MultEQ mode"))?;
+            let mode =
+                MultiEq::from_telnet(arg.need()?).ok_or_else(|| arg.unknown("MultEQ mode"))?;
             audyssey.set_multi_eq(mode).await?;
         }
         "ref-level" => {
-            let offset = ReferenceLevelOffset::from_telnet(need()?)
-                .ok_or_else(|| unknown("reference level offset"))?;
+            let offset = ReferenceLevelOffset::from_telnet(arg.need()?)
+                .ok_or_else(|| arg.unknown("reference level offset"))?;
             audyssey.set_reference_level_offset(offset).await?;
         }
         "dynamic-volume" => {
-            let volume =
-                DynamicVolume::from_telnet(need()?).ok_or_else(|| unknown("Dynamic Volume"))?;
+            let volume = DynamicVolume::from_telnet(arg.need()?)
+                .ok_or_else(|| arg.unknown("Dynamic Volume"))?;
             audyssey.set_dynamic_volume(volume).await?;
         }
         "lfc-on" => audyssey.set_lfc(true).await?,
         "lfc-off" => audyssey.set_lfc(false).await?,
         "containment" => {
-            let level = need()?.parse().map_err(|_| "containment is from 1 to 7")?;
+            let level = arg
+                .need()?
+                .parse()
+                .map_err(|_| "containment is from 1 to 7")?;
             audyssey.set_containment_level(level).await?;
         }
         "containment-up" => audyssey.containment_amount_up().await?,
         "containment-down" => audyssey.containment_amount_down().await?,
         "dirac" => {
-            let filter = DiracFilter::from_code(need()?).ok_or_else(|| unknown("Dirac filter"))?;
+            let filter =
+                DiracFilter::from_code(arg.need()?).ok_or_else(|| arg.unknown("Dirac filter"))?;
             avr.dirac()?.set_filter(filter).await?;
         }
-        "dirac-name" => avr.dirac()?.select_slot_by_name(need()?).await?,
+        "dirac-name" => avr.dirac()?.select_slot_by_name(arg.need()?).await?,
         "room-size" => {
-            let size = RoomSize::from_code(need()?).ok_or_else(|| unknown("room size"))?;
+            let size = RoomSize::from_code(arg.need()?).ok_or_else(|| arg.unknown("room size"))?;
             avr.sound().set_room_size(size).await?;
         }
         "audio-restorer" => {
-            let level =
-                AudioRestorer::from_code(need()?).ok_or_else(|| unknown("audio restorer"))?;
+            let level = AudioRestorer::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("audio restorer"))?;
             avr.sound().set_audio_restorer(level).await?;
         }
         "dialog-enhancer" => {
-            let level = DialogEnhancerLevel::from_code(need()?)
-                .ok_or_else(|| unknown("dialog enhancer"))?;
+            let level = DialogEnhancerLevel::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("dialog enhancer"))?;
             avr.sound().set_dialog_enhancer(level).await?;
         }
         "graphic-eq" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("graphic EQ").into()),
-            };
+            let on = arg.on_off("graphic EQ")?;
             avr.sound().set_graphic_eq(on).await?;
         }
         "input-mode" => {
-            let mode = InputMode::from_code(need()?).ok_or_else(|| unknown("input mode"))?;
+            let mode =
+                InputMode::from_code(arg.need()?).ok_or_else(|| arg.unknown("input mode"))?;
             avr.sound().set_input_mode(mode).await?;
         }
         "tactile" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("tactile transducer").into()),
-            };
+            let on = arg.on_off("tactile transducer")?;
             avr.sound().set_tactile_transducer(on).await?;
         }
         "front-speakers" => {
-            let speakers = FrontSpeakers::from_code(need()?).ok_or_else(|| unknown("speakers"))?;
+            let speakers =
+                FrontSpeakers::from_code(arg.need()?).ok_or_else(|| arg.unknown("speakers"))?;
             avr.sound().set_front_speakers(speakers).await?;
         }
         "panorama" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("panorama").into()),
-            };
+            let on = arg.on_off("panorama")?;
             avr.sound().set_panorama(on).await?;
         }
         "speaker-preset" => {
-            let preset = SpeakerPreset::from_code(need()?).ok_or_else(|| unknown("preset"))?;
+            let preset =
+                SpeakerPreset::from_code(arg.need()?).ok_or_else(|| arg.unknown("preset"))?;
             avr.sound().set_speaker_preset(preset).await?;
         }
         "tactile-up" => avr.sound().tactile_level_up().await?,
         "tactile-down" => avr.sound().tactile_level_down().await?,
         "tactile-lpf" => {
-            let hz = need()?
+            let hz = arg
+                .need()?
                 .parse()
                 .map_err(|_| "tactile-lpf is a number of Hz")?;
             avr.sound().set_tactile_low_pass(hz).await?;
@@ -455,43 +451,39 @@ async fn sound_extra_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
-    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let arg = Argument { name, argument };
     let small = |text: &str| -> Result<u8, String> {
         text.parse()
             .map_err(|_| "a whole number is needed".to_owned())
     };
     match name {
         "effect" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("effect").into()),
-            };
+            let on = arg.on_off("effect")?;
             avr.sound().set_effect(on).await?;
         }
-        "effect-level" => avr.sound().set_effect_level(small(need()?)?).await?,
-        "center-image" => avr.sound().set_center_image(small(need()?)?).await?,
-        "center-gain" => avr.sound().set_center_gain(small(need()?)?).await?,
+        "effect-level" => avr.sound().set_effect_level(small(arg.need()?)?).await?,
+        "center-image" => avr.sound().set_center_image(small(arg.need()?)?).await?,
+        "center-gain" => avr.sound().set_center_gain(small(arg.need()?)?).await?,
         "channel-volume" => {
-            let (code, db) = need()?
+            let (code, db) = arg
+                .need()?
                 .split_once(' ')
                 .ok_or("channel-volume is CHANNEL DB, for example FL -1.5")?;
-            let channel = Channel::from_code(code).ok_or_else(|| unknown("channel"))?;
+            let channel = Channel::from_code(code).ok_or_else(|| arg.unknown("channel"))?;
             let db: f32 = db.trim().parse().map_err(|_| "DB is a number in dB")?;
             let level = ChannelLevel::from_db(db).ok_or("DB is from -12 to 12 in steps of 0.5")?;
             avr.sound().set_channel_volume(channel, level).await?;
         }
         "channel-up" => {
-            let channel = Channel::from_code(need()?).ok_or_else(|| unknown("channel"))?;
+            let channel = Channel::from_code(arg.need()?).ok_or_else(|| arg.unknown("channel"))?;
             avr.sound().channel_volume_up(channel).await?;
         }
         "channel-down" => {
-            let channel = Channel::from_code(need()?).ok_or_else(|| unknown("channel"))?;
+            let channel = Channel::from_code(arg.need()?).ok_or_else(|| arg.unknown("channel"))?;
             avr.sound().channel_volume_down(channel).await?;
         }
         "channel-reset" => avr.sound().reset_channel_volumes().await?,
-        "sound-mode-entry" => select_sound_mode_entry(avr, need()?).await?,
+        "sound-mode-entry" => select_sound_mode_entry(avr, arg.need()?).await?,
         "now-playing" => {
             println!("page: {:?}", avr.update_now_playing().await?);
             println!("{:#?}", avr.snapshot().device().now_playing);
@@ -537,7 +529,7 @@ async fn sound_extra_command(
             println!("{:#?}", state.device().xlr_assign);
         }
         "step" => {
-            let (step, up) = parse_step(need()?)?;
+            let (step, up) = parse_step(arg.need()?)?;
             let value = if up {
                 SoundSettingValue::StepUp(step)
             } else {
@@ -557,34 +549,60 @@ async fn older_sound_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
-    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let arg = Argument { name, argument };
     let db = |text: &str| -> Result<i8, String> {
         text.parse().map_err(|_| "DB is a whole number".to_owned())
     };
     match name {
         "dialog-level-adjust" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("dialog level adjust").into()),
-            };
+            let on = arg.on_off("dialog level adjust")?;
             avr.sound().set_dialog_level_adjust(on).await?;
         }
-        "dialog-level" => avr.sound().set_dialog_level(db(need()?)?).await?,
+        "dialog-level" => avr.sound().set_dialog_level(db(arg.need()?)?).await?,
         "dsx" => {
-            let dsx = AudysseyDsx::from_code(need()?).ok_or_else(|| unknown("Audyssey DSX"))?;
+            let dsx =
+                AudysseyDsx::from_code(arg.need()?).ok_or_else(|| arg.unknown("Audyssey DSX"))?;
             avr.sound().set_audyssey_dsx(dsx).await?;
         }
-        "stage-width" => avr.sound().set_stage_width(db(need()?)?).await?,
-        "stage-height" => avr.sound().set_stage_height(db(need()?)?).await?,
+        "stage-width" => avr.sound().set_stage_width(db(arg.need()?)?).await?,
+        "stage-height" => avr.sound().set_stage_height(db(arg.need()?)?).await?,
         "height-gain" => {
-            let gain = PliizHeightGain::from_code(need()?).ok_or_else(|| unknown("height gain"))?;
+            let gain = PliizHeightGain::from_code(arg.need()?)
+                .ok_or_else(|| arg.unknown("height gain"))?;
             avr.sound().set_height_gain(gain).await?;
         }
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
+}
+
+/// The argument of a command, for the error texts.
+#[derive(Clone, Copy)]
+struct Argument<'a> {
+    name: &'a str,
+    argument: Option<&'a str>,
+}
+
+impl<'a> Argument<'a> {
+    /// The argument, or an error if the command has none.
+    fn need(self) -> Result<&'a str, String> {
+        self.argument
+            .ok_or_else(|| format!("{} needs an argument", self.name))
+    }
+
+    /// The error for an argument that is not a known value of `what`.
+    fn unknown(self, what: &str) -> String {
+        format!("{what} is not known: {}", self.argument.unwrap_or_default())
+    }
+
+    /// `on` is true and `off` is false.
+    fn on_off(self, what: &str) -> Result<bool, String> {
+        match self.need()? {
+            "on" => Ok(true),
+            "off" => Ok(false),
+            _ => Err(self.unknown(what)),
+        }
+    }
 }
 
 /// A step like `lfe-up` or `subwoofer2-down`: the setting, and up (`true`) or down.
@@ -628,25 +646,22 @@ async fn device_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let arg = Argument { name, argument };
     let device = avr.device();
     match name {
         "dimmer" => {
-            let mode = DimmerMode::from_telnet(need()?).ok_or("dimmer is BRI, DIM, DAR or OFF")?;
+            let mode =
+                DimmerMode::from_telnet(arg.need()?).ok_or("dimmer is BRI, DIM, DAR or OFF")?;
             device.set_dimmer(mode).await?;
         }
         "dimmer-next" => device.dimmer_next().await?,
         "eco" => {
-            let mode = EcoMode::from_telnet(need()?).ok_or("eco is ON, AUTO or OFF")?;
+            let mode = EcoMode::from_telnet(arg.need()?).ok_or("eco is ON, AUTO or OFF")?;
             device.set_eco_mode(mode).await?;
         }
-        "remote-lock" => match need()? {
-            "on" => device.set_remote_lock(true).await?,
-            "off" => device.set_remote_lock(false).await?,
-            _ => return Err("use on or off".into()),
-        },
+        "remote-lock" => device.set_remote_lock(arg.on_off("remote lock")?).await?,
         "panel-lock" => {
-            let lock = match need()? {
+            let lock = match arg.need()? {
                 "off" => PanelLock::Off,
                 "panel" => PanelLock::Panel,
                 "panel-volume" => PanelLock::PanelAndVolume,
@@ -654,32 +669,31 @@ async fn device_command(
             };
             device.set_panel_lock(lock).await?;
         }
-        "bluetooth" => match need()? {
-            "on" => device.set_bluetooth_transmitter(true).await?,
-            "off" => device.set_bluetooth_transmitter(false).await?,
-            _ => return Err("use on or off".into()),
-        },
+        "bluetooth" => {
+            let on = arg.on_off("Bluetooth transmitter")?;
+            device.set_bluetooth_transmitter(on).await?;
+        }
         "bluetooth-output" => {
-            let mode = BluetoothOutputMode::from_code(need()?).ok_or("output is SP or BT")?;
+            let mode = BluetoothOutputMode::from_code(arg.need()?).ok_or("output is SP or BT")?;
             device.set_bluetooth_output(mode).await?;
         }
         "illumination" => {
-            let mode = Illumination::from_code(need()?)
+            let mode = Illumination::from_code(arg.need()?)
                 .ok_or("illumination is AUTO, BRI, DIM, DAR or OFF")?;
             device.set_illumination(mode).await?;
         }
         "illumination-next" => device.illumination_next().await?,
         "digital-codec" => {
             let mode =
-                DigitalCodec::from_code(need()?).ok_or("digital codec is AUTO, PCM or DTS")?;
+                DigitalCodec::from_code(arg.need()?).ok_or("digital codec is AUTO, PCM or DTS")?;
             device.set_digital_codec(mode).await?;
         }
         "favorite" => {
-            let number = need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 3")?;
             device.select_favorite(number).await?;
         }
         "favorite-store" => {
-            let number = need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 3")?;
             device.store_favorite(number).await?;
         }
         "channel-level-menu" => device.channel_level_menu().await?,
@@ -696,10 +710,9 @@ async fn tuner_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
-    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let arg = Argument { name, argument };
     let number = || -> Result<u8, String> {
-        need()?
+        arg.need()?
             .parse()
             .map_err(|_| format!("{name} needs a preset number"))
     };
@@ -708,11 +721,11 @@ async fn tuner_command(
         "tuner-up" => tuner.frequency_up().await?,
         "tuner-down" => tuner.frequency_down().await?,
         "tuner-band" => {
-            let band = TunerBand::from_code(need()?).ok_or_else(|| unknown("band"))?;
+            let band = TunerBand::from_code(arg.need()?).ok_or_else(|| arg.unknown("band"))?;
             tuner.set_band(band).await?;
         }
         "tuner-mode" => {
-            let mode = TunerMode::from_code(need()?).ok_or_else(|| unknown("mode"))?;
+            let mode = TunerMode::from_code(arg.need()?).ok_or_else(|| arg.unknown("mode"))?;
             tuner.set_mode(mode).await?;
         }
         "tuner-preset-up" => tuner.preset_up().await?,
@@ -730,41 +743,41 @@ async fn video_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
-    let unknown = |what: &str| format!("{what} is not known: {}", argument.unwrap_or_default());
+    let arg = Argument { name, argument };
     let video = avr.video();
     match name {
         "video-mode" => {
-            let mode = VideoProcessingMode::from_code(need()?).ok_or_else(|| unknown("mode"))?;
+            let mode =
+                VideoProcessingMode::from_code(arg.need()?).ok_or_else(|| arg.unknown("mode"))?;
             video.set_processing_mode(mode).await?;
         }
         "hdmi-output" => {
-            let output = HdmiOutput::from_telnet(need()?).ok_or_else(|| unknown("output"))?;
+            let output =
+                HdmiOutput::from_telnet(arg.need()?).ok_or_else(|| arg.unknown("output"))?;
             video.set_hdmi_output(output).await?;
         }
         "hdmi-audio" => {
-            let decode = HdmiAudioDecode::from_code(need()?).ok_or_else(|| unknown("audio"))?;
+            let decode =
+                HdmiAudioDecode::from_code(arg.need()?).ok_or_else(|| arg.unknown("audio"))?;
             video.set_hdmi_audio(decode).await?;
         }
         "aspect" => {
-            let aspect = AspectRatio::from_code(need()?).ok_or_else(|| unknown("aspect"))?;
+            let aspect =
+                AspectRatio::from_code(arg.need()?).ok_or_else(|| arg.unknown("aspect"))?;
             video.set_aspect_ratio(aspect).await?;
         }
         "vertical-stretch" => {
-            let on = match need()? {
-                "on" => true,
-                "off" => false,
-                _ => return Err(unknown("vertical stretch").into()),
-            };
+            let on = arg.on_off("vertical stretch")?;
             video.set_vertical_stretch(on).await?;
         }
         "resolution" => {
             let resolution =
-                VideoResolution::from_code(need()?).ok_or_else(|| unknown("resolution"))?;
+                VideoResolution::from_code(arg.need()?).ok_or_else(|| arg.unknown("resolution"))?;
             video.set_resolution(resolution).await?;
         }
         "upscaler" => {
-            let upscaler = HdmiUpscaler::from_code(need()?).ok_or_else(|| unknown("upscaler"))?;
+            let upscaler =
+                HdmiUpscaler::from_code(arg.need()?).ok_or_else(|| arg.unknown("upscaler"))?;
             video.set_hdmi_upscaler(upscaler).await?;
         }
         other => return picture_command(&video, other, argument).await,
@@ -778,7 +791,7 @@ async fn zone_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let arg = Argument { name, argument };
     let digit = |text: &str| -> Result<u8, String> {
         text.parse()
             .map_err(|_| "a quick select is a number from 1 to 5".to_owned())
@@ -789,23 +802,26 @@ async fn zone_command(
         "volume-up" => zone.volume_up().await?,
         "volume-down" => zone.volume_down().await?,
         "volume" => {
-            let db: f32 = need()?.parse().map_err(|_| "volume is a number in dB")?;
+            let db: f32 = arg
+                .need()?
+                .parse()
+                .map_err(|_| "volume is a number in dB")?;
             zone.set_volume_db(db).await?;
         }
         "mute" => zone.set_mute(true).await?,
         "unmute" => zone.set_mute(false).await?,
-        "source" => zone.select_source(need()?).await?,
-        "sound-mode" => zone.select_sound_mode(need()?).await?,
-        "quick-select" => zone.select_quick_select(digit(need()?)?).await?,
-        "quick-select-store" => zone.store_quick_select(digit(need()?)?).await?,
+        "source" => zone.select_source(arg.need()?).await?,
+        "sound-mode" => zone.select_sound_mode(arg.need()?).await?,
+        "quick-select" => zone.select_quick_select(digit(arg.need()?)?).await?,
+        "quick-select-store" => zone.store_quick_select(digit(arg.need()?)?).await?,
         "sound-mode-next" => zone.sound_mode_next().await?,
         "sound-mode-previous" => zone.sound_mode_previous().await?,
-        "key" => zone.press(remote_key(need()?)?).await?,
+        "key" => zone.press(remote_key(arg.need()?)?).await?,
         "denon-code" => {
-            let code = need()?.parse().map_err(|_| "denon-code is a number")?;
+            let code = arg.need()?.parse().map_err(|_| "denon-code is a number")?;
             zone.press_denon_code(code).await?;
         }
-        "marantz-code" => zone.press_marantz_code(need()?).await?,
+        "marantz-code" => zone.press_marantz_code(arg.need()?).await?,
         other => return zone_setting_command(zone, other, argument).await,
     }
     Ok(())
@@ -817,27 +833,27 @@ async fn picture_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let arg = Argument { name, argument };
     let whole = || -> Result<i8, String> {
-        need()?
+        arg.need()?
             .parse()
             .map_err(|_| format!("{name} needs a whole number"))
     };
     match name {
         "picture-mode" => {
-            let mode = PictureMode::from_telnet(need()?).ok_or("picture mode is not known")?;
+            let mode = PictureMode::from_telnet(arg.need()?).ok_or("picture mode is not known")?;
             video.set_picture_mode(mode).await?;
         }
         "contrast" => video.set_contrast(whole()?).await?,
         "brightness" => video.set_brightness(whole()?).await?,
         "saturation" => video.set_saturation(whole()?).await?,
         "noise-reduction" => {
-            let level = NoiseReduction::from_code(need()?)
+            let level = NoiseReduction::from_code(arg.need()?)
                 .ok_or("noise reduction is OFF, LOW, MID or HI")?;
             video.set_noise_reduction(level).await?;
         }
         "enhancer" => {
-            let level = need()?.parse().map_err(|_| "enhancer is 0 to 12")?;
+            let level = arg.need()?.parse().map_err(|_| "enhancer is 0 to 12")?;
             video.set_enhancer(level).await?;
         }
         "contrast-up" => video.contrast_up().await?,
@@ -859,7 +875,7 @@ async fn zone_setting_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let need = || argument.ok_or_else(|| format!("{name} needs an argument"));
+    let arg = Argument { name, argument };
     let tone = |text: &str| -> Result<ToneLevel, String> {
         let db: i8 = text.parse().map_err(|_| "a level is whole dB")?;
         ToneLevel::from_db(db).ok_or_else(|| "a level is from -10 to 10 dB".to_owned())
@@ -867,48 +883,44 @@ async fn zone_setting_command(
     let whole = |text: &str| -> Result<i8, String> {
         text.parse().map_err(|_| "a level is whole dB".to_owned())
     };
-    let on_off = |text: &str| -> Result<bool, String> {
-        match text {
-            "on" => Ok(true),
-            "off" => Ok(false),
-            _ => Err("use on or off".to_owned()),
-        }
-    };
     let volume = |text: &str| -> Result<Volume, String> {
         let db: f32 = text.parse().map_err(|_| "a volume is in dB")?;
         Volume::from_db_rounded(db).ok_or_else(|| "a volume is from -80 to 18 dB".to_owned())
     };
     match name {
-        "zone-bass" => zone.set_bass(tone(need()?)?).await?,
+        "zone-bass" => zone.set_bass(tone(arg.need()?)?).await?,
         "zone-bass-up" => zone.bass_up().await?,
         "zone-bass-down" => zone.bass_down().await?,
-        "zone-treble" => zone.set_treble(tone(need()?)?).await?,
+        "zone-treble" => zone.set_treble(tone(arg.need()?)?).await?,
         "zone-treble-up" => zone.treble_up().await?,
         "zone-treble-down" => zone.treble_down().await?,
-        "zone-left" => zone.set_left_level(whole(need()?)?).await?,
+        "zone-left" => zone.set_left_level(whole(arg.need()?)?).await?,
         "zone-left-up" => zone.left_level_up().await?,
         "zone-left-down" => zone.left_level_down().await?,
-        "zone-right" => zone.set_right_level(whole(need()?)?).await?,
+        "zone-right" => zone.set_right_level(whole(arg.need()?)?).await?,
         "zone-right-up" => zone.right_level_up().await?,
         "zone-right-down" => zone.right_level_down().await?,
-        "zone-hpf" => zone.set_high_pass_filter(on_off(need()?)?).await?,
+        "zone-hpf" => {
+            let on = arg.on_off("high pass filter")?;
+            zone.set_high_pass_filter(on).await?;
+        }
         "zone-channel" => {
-            let mode = ZoneChannelMode::from_code(need()?).ok_or("channel is ST or MONO")?;
+            let mode = ZoneChannelMode::from_code(arg.need()?).ok_or("channel is ST or MONO")?;
             zone.set_channel_mode(mode).await?;
         }
         "zone-hdmi-audio" => {
-            let mode = ZoneHdmiAudio::from_code(need()?).ok_or("HDMI audio is THR or PCM")?;
+            let mode = ZoneHdmiAudio::from_code(arg.need()?).ok_or("HDMI audio is THR or PCM")?;
             zone.set_hdmi_audio(mode).await?;
         }
         "volume-limit" => {
-            let limit = match need()? {
+            let limit = match arg.need()? {
                 "off" => None,
                 db => Some(volume(db)?),
             };
             zone.set_volume_limit(limit).await?;
         }
         "power-on-volume" => {
-            let setting = match need()? {
+            let setting = match arg.need()? {
                 "muted" => PowerOnVolume::Muted,
                 "last" => PowerOnVolume::Last,
                 db => PowerOnVolume::Level(volume(db)?),
@@ -916,23 +928,23 @@ async fn zone_setting_command(
             zone.set_power_on_volume(setting).await?;
         }
         "mute-level" => {
-            let level = MuteLevel::from_code(need()?).ok_or("mute level is MUT, 040 or 060")?;
+            let level = MuteLevel::from_code(arg.need()?).ok_or("mute level is MUT, 040 or 060")?;
             zone.set_mute_level(level).await?;
         }
         "volume-mode" => {
-            let mode = match need()? {
+            let mode = match arg.need()? {
                 "variable" => VolumeMode::Variable,
                 db => VolumeMode::Fixed(volume(db)?),
             };
             zone.set_volume_mode(mode).await?;
         }
         "auto-standby" => {
-            let standby = AutoStandby::from_telnet(need()?)
+            let standby = AutoStandby::from_telnet(arg.need()?)
                 .ok_or("auto standby is OFF, 15M, 30M, 60M, 2H, 4H or 8H")?;
             zone.set_auto_standby(standby).await?;
         }
         "sleep" => {
-            let sleep = match need()? {
+            let sleep = match arg.need()? {
                 "off" => Sleep::Off,
                 minutes => minutes
                     .parse()
@@ -943,7 +955,7 @@ async fn zone_setting_command(
             zone.set_sleep(sleep).await?;
         }
         "volume-display" => {
-            let display = VolumeDisplay::from_code(need()?).ok_or("display is REL or ABS")?;
+            let display = VolumeDisplay::from_code(arg.need()?).ok_or("display is REL or ABS")?;
             zone.set_volume_display(display).await?;
         }
         other => return Err(format!("unknown command {other}").into()),
