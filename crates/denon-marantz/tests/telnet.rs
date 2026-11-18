@@ -1087,6 +1087,35 @@ async fn triggers_are_sent_and_read() {
 }
 
 #[tokio::test]
+async fn presets_use_the_form_that_the_receiver_reports() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let tuner = avr.tuner();
+    telnet.send(b"TPANA2\rTPHDB1\r");
+    wait_until("the lettered forms", || {
+        let state = avr.snapshot();
+        let tuner = &state.device().tuner;
+        tuner.presets_lettered == Some(true) && tuner.hd.presets_lettered == Some(true)
+    })
+    .await;
+    tuner.select_preset(3).await.unwrap();
+    tuner.store_preset(56).await.unwrap();
+    tuner.select_hd_preset(9).await.unwrap();
+    tuner.store_hd_preset(1).await.unwrap();
+    telnet.send(b"TPAN02\r");
+    wait_until("the numbered form", || {
+        avr.snapshot().device().tuner.presets_lettered == Some(false)
+    })
+    .await;
+    tuner.select_preset(3).await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 5).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["TPANA3", "TPANMEMG8", "TPHDB1", "TPHDMEMA1", "TPAN03"]
+    );
+}
+
+#[tokio::test]
 async fn tuner_methods_send_their_commands_and_events_fill_the_state() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;

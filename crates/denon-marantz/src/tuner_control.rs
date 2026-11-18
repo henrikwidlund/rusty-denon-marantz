@@ -83,29 +83,45 @@ impl<'a> TunerControl<'a> {
         self.send(TunerCommand::PresetDown).await
     }
 
-    /// Goes to a preset, from 1 to 56.
+    /// Goes to a preset, from 1 to 56. It sends the form A1 to G8 if the
+    /// receiver has reported its presets that way, and 01 to 56 otherwise.
+    /// A new [`Avr`] does not know the form until the receiver reports a
+    /// preset; before that, use [`TunerControl::select_lettered_preset`] for
+    /// receivers that use A1 to G8.
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
     pub async fn select_preset(&self, number: u8) -> Result<(), Error> {
-        self.send(TunerCommand::Preset(number)).await
+        let command = if self.presets_lettered(false) {
+            TunerCommand::LetteredPreset(number)
+        } else {
+            TunerCommand::Preset(number)
+        };
+        self.send(command).await
     }
 
     /// Stores the station that is tuned in a preset, from 1 to 56. This
-    /// replaces the station that the preset had.
+    /// replaces the station that the preset had. The form is chosen as in
+    /// [`TunerControl::select_preset`].
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
     pub async fn store_preset(&self, number: u8) -> Result<(), Error> {
-        self.send(TunerCommand::StorePreset(number)).await
+        let command = if self.presets_lettered(false) {
+            TunerCommand::StoreLetteredPreset(number)
+        } else {
+            TunerCommand::StorePreset(number)
+        };
+        self.send(command).await
     }
 
-    /// Goes to a preset, from 1 to 56, in the form A1 to G8 of Marantz
-    /// receivers of about 2011. Preset 1 is A1, 9 is B1 and 56 is G8.
-    /// Receivers that report presets as A1 to G8 need this form. The tuner
-    /// state has the number for both forms.
+    /// Goes to a preset, from 1 to 56, always in the form A1 to G8 of older
+    /// receivers, for example Marantz of 2011 and some Denon of 2011 to 2013.
+    /// Preset 1 is A1, 9 is B1 and 56 is G8. [`TunerControl::select_preset`]
+    /// chooses the form by itself once the receiver has reported a preset;
+    /// use this before that.
     ///
     /// # Errors
     ///
@@ -221,23 +237,35 @@ impl<'a> TunerControl<'a> {
         self.send(TunerCommand::HdPresetDown).await
     }
 
-    /// Goes to an HD Radio preset, from 1 to 56.
+    /// Goes to an HD Radio preset, from 1 to 56. The form is chosen as in
+    /// [`TunerControl::select_preset`], from the HD Radio presets.
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
     pub async fn select_hd_preset(&self, number: u8) -> Result<(), Error> {
-        self.send(TunerCommand::HdPreset(number)).await
+        let command = if self.presets_lettered(true) {
+            TunerCommand::HdLetteredPreset(number)
+        } else {
+            TunerCommand::HdPreset(number)
+        };
+        self.send(command).await
     }
 
     /// Stores the HD Radio station that is tuned in a preset, from 1 to 56.
-    /// This replaces the station that the preset had.
+    /// This replaces the station that the preset had. The form is chosen as
+    /// in [`TunerControl::select_preset`], from the HD Radio presets.
     ///
     /// # Errors
     ///
     /// See [`TunerControl`].
     pub async fn store_hd_preset(&self, number: u8) -> Result<(), Error> {
-        self.send(TunerCommand::HdStorePreset(number)).await
+        let command = if self.presets_lettered(true) {
+            TunerCommand::HdStoreLetteredPreset(number)
+        } else {
+            TunerCommand::HdStorePreset(number)
+        };
+        self.send(command).await
     }
 
     /// Asks the receiver for the frequency, the preset and the tuning mode.
@@ -284,6 +312,19 @@ impl<'a> TunerControl<'a> {
         self.avr
             .send(Zone::Main, Command::Raw(TUNER_PRESETS_QUERY))
             .await
+    }
+
+    /// The receiver reported its presets (of HD Radio with `hd`) as A1 to G8.
+    fn presets_lettered(self, hd: bool) -> bool {
+        let state = self.avr.state();
+        let state = state.borrow();
+        let tuner = &state.device().tuner;
+        let lettered = if hd {
+            tuner.hd.presets_lettered
+        } else {
+            tuner.presets_lettered
+        };
+        lettered == Some(true)
     }
 
     async fn send(&self, command: TunerCommand) -> Result<(), Error> {

@@ -126,6 +126,9 @@ pub struct TunerState {
     pub frequency: Option<TunerFrequency>,
     /// Preset number from 1 to 56. `None` if the tuner is not on a preset.
     pub preset: Option<u8>,
+    /// The receiver reports presets as A1 to G8 (`true`) or as 01 to 56
+    /// (`false`). `None` until it reports a preset.
+    pub presets_lettered: Option<bool>,
     /// Name of the station from RDS, in Europe and Asia Pacific models.
     pub station_name: Option<String>,
     /// The HD Radio tuner.
@@ -162,6 +165,9 @@ pub struct HdRadioState {
     pub multicast_count: Option<u8>,
     /// Preset number from 1 to 56. `None` if the tuner is not on a preset.
     pub preset: Option<u8>,
+    /// The receiver reports HD Radio presets as A1 to G8 (`true`) or as 01
+    /// to 56 (`false`). `None` until it reports a preset.
+    pub presets_lettered: Option<bool>,
     /// Signal level from 0 to 6.
     pub signal_level: Option<u8>,
     /// The station plays digital (`true`) or analog (`false`).
@@ -296,19 +302,22 @@ impl TunerState {
         Some(true)
     }
 
-    /// Applies the text of a `TP` event, for example `AN01` or `ANOFF`.
+    /// Applies the text of a `TP` event, for example `AN01`, `ANA1` or
+    /// `ANOFF`.
     pub(crate) fn apply_preset(&mut self, parameter: &str) -> Option<bool> {
-        let (slot, rest) = if let Some(rest) = parameter.strip_prefix("HD") {
-            (&mut self.hd.preset, rest)
+        let (slot, lettered, rest) = if let Some(rest) = parameter.strip_prefix("HD") {
+            (&mut self.hd.preset, &mut self.hd.presets_lettered, rest)
         } else {
-            (&mut self.preset, parameter.strip_prefix("AN")?)
+            let rest = parameter.strip_prefix("AN")?;
+            (&mut self.preset, &mut self.presets_lettered, rest)
         };
-        let preset = if rest == "OFF" {
-            None
-        } else {
-            Some(parse_preset(rest)?)
-        };
-        Some(replace(slot, preset))
+        if rest == "OFF" {
+            return Some(replace(slot, None));
+        }
+        let preset = parse_preset(rest)?;
+        let form = rest.as_bytes()[0].is_ascii_uppercase();
+        let form_changed = replace(lettered, Some(form));
+        Some(replace(slot, Some(preset)) | form_changed)
     }
 
     /// Applies the text of a `TM` event, for example `ANFM` or `ANAUTO`.
@@ -431,10 +440,11 @@ pub enum TunerCommand {
     Preset(u8),
     /// Stores the station in a preset, from 1 to 56.
     StorePreset(u8),
-    /// Goes to a preset, from 1 to 56, in the form A1 to G8 of Marantz
-    /// receivers of about 2011. Preset 1 is A1, 9 is B1 and 56 is G8.
-    /// Receivers that report presets as A1 to G8 need this form.
-    /// [`TunerState::preset`] has the number for both forms.
+    /// Goes to a preset, from 1 to 56, in the form A1 to G8 of older
+    /// receivers, for example Marantz of 2011 and some Denon of 2011 to 2013.
+    /// Preset 1 is A1, 9 is B1 and 56 is G8. Receivers that report presets
+    /// as A1 to G8 need this form. [`TunerState::presets_lettered`] says
+    /// which form the receiver uses.
     LetteredPreset(u8),
     /// Stores the station in a preset, from 1 to 56, in the form A1 to G8.
     /// See [`TunerCommand::LetteredPreset`].
@@ -463,6 +473,12 @@ pub enum TunerCommand {
     HdPreset(u8),
     /// Stores the HD Radio station in a preset, from 1 to 56.
     HdStorePreset(u8),
+    /// Goes to an HD Radio preset, from 1 to 56, in the form A1 to G8. See
+    /// [`TunerCommand::LetteredPreset`].
+    HdLetteredPreset(u8),
+    /// Stores the HD Radio station in a preset, from 1 to 56, in the form A1
+    /// to G8. See [`TunerCommand::LetteredPreset`].
+    HdStoreLetteredPreset(u8),
 }
 
 impl TunerCommand {
@@ -520,6 +536,10 @@ impl TunerCommand {
             Self::HdPresetDown => out.push_str("TPHDDOWN"),
             Self::HdPreset(number) => write_preset(out, "TPHD", number)?,
             Self::HdStorePreset(number) => write_preset(out, "TPHDMEM", number)?,
+            Self::HdLetteredPreset(number) => write_lettered_preset(out, "TPHD", number)?,
+            Self::HdStoreLetteredPreset(number) => {
+                write_lettered_preset(out, "TPHDMEM", number)?;
+            }
         }
         Ok(())
     }
@@ -658,6 +678,8 @@ mod tests {
             (TunerCommand::HdPreset(1), "TPHD01"),
             (TunerCommand::HdPreset(56), "TPHD56"),
             (TunerCommand::HdStorePreset(1), "TPHDMEM01"),
+            (TunerCommand::HdLetteredPreset(10), "TPHDB2"),
+            (TunerCommand::HdStoreLetteredPreset(56), "TPHDMEMG8"),
         ];
         for (command, expected) in cases {
             assert_eq!(text(command).as_deref(), Ok(expected), "{command:?}");
@@ -674,6 +696,8 @@ mod tests {
                 TunerCommand::StoreLetteredPreset(number),
                 TunerCommand::HdPreset(number),
                 TunerCommand::HdStorePreset(number),
+                TunerCommand::HdLetteredPreset(number),
+                TunerCommand::HdStoreLetteredPreset(number),
             ] {
                 assert_eq!(
                     text(command),
@@ -849,9 +873,22 @@ mod tests {
         }
         assert_eq!(state.apply_preset("ANA1"), Some(true));
         assert_eq!(state.preset, Some(1));
+        assert_eq!(state.presets_lettered, Some(true));
         assert_eq!(state.apply_preset("ANG8"), Some(true));
         assert_eq!(state.preset, Some(56));
+        // OFF keeps the form.
+        assert_eq!(state.apply_preset("ANOFF"), Some(true));
+        assert_eq!(state.presets_lettered, Some(true));
+        // The same preset in the other form is a change.
+        assert_eq!(state.apply_preset("AN56"), Some(true));
+        assert_eq!(state.presets_lettered, Some(false));
+        assert_eq!(state.apply_preset("AN56"), Some(false));
+        assert_eq!(state.apply_preset("HDB2"), Some(true));
+        assert_eq!(state.hd.preset, Some(10));
+        assert_eq!(state.hd.presets_lettered, Some(true));
         state.preset = None;
+        state.presets_lettered = None;
+        state.hd = HdRadioState::default();
         for text in ["ANA0", "ANA9", "ANH1", "ANa1"] {
             assert_eq!(state.apply_preset(text), None, "{text:?}");
         }
