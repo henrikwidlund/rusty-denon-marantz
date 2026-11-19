@@ -684,7 +684,9 @@ impl Avr {
                     .unwrap_or(PageStatus::NoAnswer)
             };
             let video_signal = if after_video == VideoPage::NotSent {
-                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer)
+                let result = self.read_video_page().await;
+                tracing::debug!(host = %self.info.host, ?result, "video signal page read again");
+                result.unwrap_or(PageStatus::NoAnswer)
             } else {
                 video_signal
             };
