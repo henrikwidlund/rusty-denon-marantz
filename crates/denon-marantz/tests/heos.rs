@@ -9,7 +9,7 @@ mod heos_fake;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Fake as FakeReceiver, avr_x_receiver, avr_x_receiver_with_info, builder};
+use common::{Fake as FakeReceiver, avr_x_receiver, avr_x_receiver_with_info, builder, no_heos};
 use denon_marantz::heos::{Change, Error as HeosError, HeosConfig, HeosStatus, PlayerState};
 use denon_marantz::{
     Avr, Error, HeosFailure, HeosPlayerStatus, HeosStart, ReceiverType, StartOptions,
@@ -64,10 +64,20 @@ const fn options() -> StartOptions {
     StartOptions::new().telnet(false).signal_pages(false)
 }
 
-/// Waits until the status is `wanted`. Fails the test after two seconds.
+/// HEOS settings with no fake on the port, and a connect limit long enough
+/// for the refusal: Windows refuses only after about 2 s.
+fn refusing_heos() -> HeosConfig {
+    HeosConfig {
+        connect_timeout: Duration::from_secs(5),
+        ..no_heos()
+    }
+}
+
+/// Waits until the status is `wanted`. Fails the test after five seconds,
+/// which leaves time for a refusal on Windows.
 async fn status_is(status: &mut watch::Receiver<HeosPlayerStatus>, wanted: HeosPlayerStatus) {
     let wait = async { status.wait_for(|now| *now == wanted).await.is_ok() };
-    let reached = tokio::time::timeout(Duration::from_secs(2), wait).await;
+    let reached = tokio::time::timeout(Duration::from_secs(5), wait).await;
     assert_eq!(reached, Ok(true), "{wanted:?}, now {:?}", *status.borrow());
 }
 
@@ -261,7 +271,13 @@ async fn a_dropped_connect_leaves_heos_disconnected() {
 async fn a_failed_start_shows_in_the_status_and_keeps_the_error() {
     // No fake listens on the HEOS port.
     let http = avr_x_receiver().await;
-    let avr = Arc::new(builder(&http, ReceiverType::AvrX).connect().await.unwrap());
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .heos_config(refusing_heos())
+            .connect()
+            .await
+            .unwrap(),
+    );
     let mut status = avr.watch_heos_status();
     let failed = HeosPlayerStatus::Failed(HeosFailure::Refused);
     // The error is there as soon as the status says that it failed.
@@ -294,6 +310,8 @@ async fn the_start_does_not_wait_for_heos_that_never_answers() {
     let http = avr_x_receiver().await;
     let avr = Arc::new(
         builder(&http, ReceiverType::AvrX)
+            // A closed port takes about 2 s to refuse on Windows.
+            .web_interface_port(http.port)
             .heos_config(HeosConfig {
                 command_timeout: Duration::from_secs(3),
                 ..config(heos.port)
@@ -411,7 +429,11 @@ async fn a_connect_waits_for_the_connect_of_the_start() {
 #[tokio::test]
 async fn a_failed_connect_returns_its_error() {
     let http = avr_x_receiver().await;
-    let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
+    let avr = builder(&http, ReceiverType::AvrX)
+        .heos_config(refusing_heos())
+        .connect()
+        .await
+        .unwrap();
     let error = avr.heos_connect().await.unwrap_err();
     assert!(matches!(error, Error::Heos(_)), "{error:?}");
     assert_eq!(

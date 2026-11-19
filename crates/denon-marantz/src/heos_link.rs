@@ -48,7 +48,9 @@ pub enum HeosFailure {
     /// There is no route to the receiver, for example because the network is
     /// not ready yet.
     Unreachable,
-    /// The receiver refused the connection.
+    /// The receiver refused the connection. Windows reports this only after
+    /// about 2 s, so a shorter `HeosConfig::connect_timeout` gives `Timeout`
+    /// there.
     Refused,
     /// The receiver did not answer in time, for example because a firewall
     /// drops the packets.
