@@ -174,6 +174,7 @@ pub enum UpdateMethod {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Info {
     /// Host that was given. An IPv6 address is without brackets.
+    /// Link-local IPv6 addresses with a zone are not supported.
     pub host: String,
     /// Generation of the receiver.
     pub receiver_type: ReceiverType,
@@ -362,7 +363,8 @@ impl Missing {
 
 impl Avr {
     /// Starts the settings for a receiver at `host`: a host name or an IP
-    /// address. An IPv6 address can have brackets.
+    /// address. An IPv6 address can have brackets. Link-local IPv6 addresses
+    /// with a zone, for example `fe80::1%en0`, are not supported.
     #[must_use]
     pub fn builder(host: impl Into<String>) -> AvrBuilder {
         AvrBuilder {

@@ -106,8 +106,9 @@ impl Default for DiscoveryConfig {
 /// A receiver that answered a search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredReceiver {
-    /// Address of the receiver. An IPv6 address is without brackets. Give it
-    /// to [`Avr::builder`](crate::Avr::builder).
+    /// Address of the receiver, for [`Avr::builder`](crate::Avr::builder).
+    /// An IPv6 address is without brackets. A link-local IPv6 address comes
+    /// without its zone, so it does not work.
     pub host: String,
     /// Brand, from the manufacturer.
     pub brand: Brand,

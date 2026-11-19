@@ -95,7 +95,8 @@ pub struct HttpClient {
 
 impl HttpClient {
     /// Creates a client. It does not connect yet. An IPv6 address in `host`
-    /// can have brackets.
+    /// can have brackets. Link-local IPv6 addresses with a zone, for example
+    /// `fe80::1%en0`, are not supported.
     ///
     /// # Errors
     ///

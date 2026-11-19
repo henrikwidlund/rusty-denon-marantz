@@ -155,7 +155,8 @@ impl Heos {
     /// when the state is read. It is an error if the players cannot be read.
     ///
     /// `host` is a host name or an IP address. An IPv6 address can have
-    /// brackets.
+    /// brackets. Link-local IPv6 addresses with a zone, for example
+    /// `fe80::1%en0`, are not supported.
     pub async fn connect_with(host: impl Into<String>, config: HeosConfig) -> Result<Self, Error> {
         config.check()?;
         let host = crate::host::into_bare(host.into());
