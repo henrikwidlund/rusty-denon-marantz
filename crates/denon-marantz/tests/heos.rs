@@ -14,7 +14,9 @@ use denon_marantz::heos::{Change, Error as HeosError, HeosConfig, HeosStatus, Pl
 use denon_marantz::{
     Avr, Error, HeosFailure, HeosPlayerStatus, HeosStart, ReceiverType, StartOptions,
 };
-use heos_fake::{Fake, IP, PID, Reply, answer_lines, config, counter, event, from_data, name};
+use heos_fake::{
+    Fake, IP, PID, Reply, answer_lines, config, counter, event, from_data, name, wait_until,
+};
 use tokio::sync::watch;
 
 /// The receiver without HEOS.
@@ -24,12 +26,15 @@ const NO_HEOS_INFO: &[u8] = b"<Device_Info><CommApiVers>0300</CommApiVers>\
 /// Answers from the recorded data, with the player at the address of the
 /// fake receiver.
 fn player_here(line: &str) -> Reply {
-    Reply::Lines(
-        answer_lines(name(line))
-            .into_iter()
-            .map(|line| line.replace(IP, "127.0.0.1"))
-            .collect(),
-    )
+    Reply::Lines(player_here_lines(line))
+}
+
+/// The lines of [`player_here`].
+fn player_here_lines(line: &str) -> Vec<String> {
+    answer_lines(name(line))
+        .into_iter()
+        .map(|line| line.replace(IP, "127.0.0.1"))
+        .collect()
 }
 
 /// Answers from the recorded data, with a player that has neither the
@@ -330,6 +335,77 @@ async fn the_connect_of_the_start_does_not_keep_the_avr() {
     drop(started);
     drop(avr);
     assert!(weak.upgrade().is_none());
+}
+
+/// An `Avr` whose HEOS device never answers the player list, so that the
+/// connect of the start does not end by itself during a test.
+async fn avr_with_hanging_heos() -> (Arc<Avr>, FakeReceiver, Fake) {
+    let heos = Fake::start(|line| match name(line) {
+        "player/get_players" => Reply::Hang,
+        _ => player_here(line),
+    })
+    .await;
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .heos_config(HeosConfig {
+            command_timeout: Duration::from_secs(30),
+            ..config(heos.port)
+        })
+        .connect()
+        .await
+        .unwrap();
+    (Arc::new(avr), http, heos)
+}
+
+#[tokio::test]
+async fn a_disconnect_stops_the_connect_of_the_start() {
+    let (avr, _http, heos) = avr_with_hanging_heos().await;
+    let mut status = avr.watch_heos_status();
+    let mut started = avr.start_with(options()).await.unwrap();
+    assert_eq!(started.basic_synced().await.heos, HeosStart::Started);
+    wait_until(|| heos.count("player/get_players") == 1).await;
+    tokio::time::timeout(Duration::from_secs(1), avr.heos_disconnect())
+        .await
+        .expect("the disconnect waited for the connect");
+    assert_eq!(*status.borrow_and_update(), HeosPlayerStatus::Disconnected);
+    wait_until(|| heos.closed() == heos.connections()).await;
+    assert!(avr.heos().is_none());
+    assert!(avr.heos_start_error().is_none());
+    assert!(!status.has_changed().unwrap());
+}
+
+#[tokio::test]
+async fn dropping_the_avr_stops_the_connect_of_the_start() {
+    let (avr, _http, heos) = avr_with_hanging_heos().await;
+    let mut started = avr.start_with(options()).await.unwrap();
+    assert_eq!(started.basic_synced().await.heos, HeosStart::Started);
+    wait_until(|| heos.count("player/get_players") == 1).await;
+    let status = avr.watch_heos_status();
+    drop(started);
+    drop(avr);
+    wait_until(|| heos.closed() == heos.connections()).await;
+    assert_eq!(*status.borrow(), HeosPlayerStatus::Disconnected);
+}
+
+#[tokio::test]
+async fn a_connect_waits_for_the_connect_of_the_start() {
+    let calls = counter();
+    let heos = Fake::start(move |line| match name(line) {
+        "player/get_players" if calls() == 0 => {
+            Reply::Paced(Duration::from_millis(300), player_here_lines(line))
+        }
+        _ => player_here(line),
+    })
+    .await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut status = avr.watch_heos_status();
+    let mut started = avr.start_with(options()).await.unwrap();
+    assert_eq!(started.basic_synced().await.heos, HeosStart::Started);
+    wait_until(|| heos.count("player/get_players") == 1).await;
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    // Two connections: commands and events.
+    assert_eq!(heos.connections(), 2);
 }
 
 #[tokio::test]

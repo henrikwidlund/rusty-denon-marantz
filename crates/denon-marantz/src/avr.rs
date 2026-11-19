@@ -34,7 +34,7 @@ use crate::device_control::{DeviceControl, ResetKeys};
 use crate::dirac::Dirac;
 use crate::error::Error;
 #[cfg(feature = "heos")]
-use crate::heos_link::{HeosLink, HeosPlayer, HeosPlayerStatus};
+use crate::heos_link::{HeosLink, HeosOwner, HeosPlayer, HeosPlayerStatus};
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, TypeProof, identify, identify_on};
 use crate::pacer::Pacing;
@@ -314,7 +314,7 @@ pub struct Avr {
     #[cfg(feature = "telnet")]
     telnet: Telnet,
     #[cfg(feature = "heos")]
-    heos: Arc<HeosLink>,
+    heos: HeosOwner,
     /// The reset key that was given out last.
     reset_keys: ResetKeys,
     /// Commands over HTTP go one after the other, and before the HTTP reads.
@@ -983,8 +983,8 @@ impl Avr {
     /// Opens the HEOS connection and keeps it open, for the playback of the
     /// HEOS player of the receiver: see [`Avr::heos`]. Volume and mute stay on
     /// telnet and HTTP. If the connection is lost, a task connects again.
-    /// Does nothing while the connection is open. Dropping the `Avr` closes
-    /// it.
+    /// Does nothing while the connection is open. Waits for a connect that
+    /// runs, also the one of the start. Dropping the `Avr` closes it.
     ///
     /// # Errors
     ///
@@ -1009,7 +1009,8 @@ impl Avr {
     }
 
     /// Closes the HEOS connection, also for a client from
-    /// [`HeosPlayer::client`] that is kept.
+    /// [`HeosPlayer::client`] that is kept. Stops a connect that the start
+    /// runs in the background.
     #[cfg(feature = "heos")]
     pub async fn heos_disconnect(&self) {
         self.heos.disconnect().await;
@@ -1919,7 +1920,7 @@ impl AvrBuilder {
             telnet.watch_status(),
         )?;
         #[cfg(feature = "heos")]
-        let heos = Arc::new(HeosLink::new(
+        let heos = HeosOwner::new(HeosLink::new(
             info.host.clone(),
             info.serial_number.clone(),
             self.heos,

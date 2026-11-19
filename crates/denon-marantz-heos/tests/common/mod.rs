@@ -132,6 +132,7 @@ pub(crate) struct Fake {
     pub(crate) port: u16,
     seen: Arc<Mutex<Vec<String>>>,
     connections: Arc<AtomicUsize>,
+    closed: Arc<AtomicUsize>,
     events: broadcast::Sender<String>,
     close: broadcast::Sender<()>,
 }
@@ -152,22 +153,32 @@ impl Fake {
             port,
             seen: Arc::default(),
             connections: Arc::default(),
+            closed: Arc::default(),
             events: broadcast::Sender::new(64),
             close: broadcast::Sender::new(4),
         };
         let handler = Arc::new(handler);
-        let (seen, connections) = (fake.seen.clone(), fake.connections.clone());
+        let (seen, connections, closed) = (
+            fake.seen.clone(),
+            fake.connections.clone(),
+            fake.closed.clone(),
+        );
         let (events, close) = (fake.events.clone(), fake.close.clone());
         tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 connections.fetch_add(1, Ordering::SeqCst);
-                tokio::spawn(serve(
+                let served = serve(
                     socket,
                     handler.clone(),
                     seen.clone(),
                     events.clone(),
                     close.subscribe(),
-                ));
+                );
+                let closed = closed.clone();
+                tokio::spawn(async move {
+                    served.await;
+                    closed.fetch_add(1, Ordering::SeqCst);
+                });
             }
         });
         fake
@@ -191,6 +202,11 @@ impl Fake {
     /// How many connections were opened.
     pub(crate) fn connections(&self) -> usize {
         self.connections.load(Ordering::SeqCst)
+    }
+
+    /// How many connections were closed.
+    pub(crate) fn closed(&self) -> usize {
+        self.closed.load(Ordering::SeqCst)
     }
 
     /// Sends a line on every connection that registered for events.

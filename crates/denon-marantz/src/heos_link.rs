@@ -2,6 +2,7 @@
 //! playback. Volume and mute stay on telnet and HTTP.
 
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use denon_marantz_heos::{
@@ -9,8 +10,8 @@ use denon_marantz_heos::{
     PlayerId, PlayerState, QueueId, QueueItem, QuickSelect,
 };
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::{broadcast, watch};
-use tokio::task::JoinHandle;
+use tokio::sync::{OwnedMutexGuard, broadcast, watch};
+use tokio::task::{AbortHandle, JoinHandle};
 
 use crate::error::Error;
 
@@ -271,7 +272,7 @@ pub(crate) struct HeosLink {
     /// The changes of all connections, see `Avr::heos_changes`.
     changes: broadcast::Sender<Change>,
     /// Lets one connect or disconnect run at a time.
-    gate: tokio::sync::Mutex<()>,
+    gate: Arc<tokio::sync::Mutex<()>>,
     running: Mutex<Option<Running>>,
     /// The error of the last connect that the start ran in the background.
     start_error: Mutex<Option<Arc<Error>>>,
@@ -303,37 +304,13 @@ impl HeosLink {
             supported,
             status: Arc::new(watch::Sender::new(first)),
             changes: broadcast::Sender::new(CHANGE_CAPACITY),
-            gate: tokio::sync::Mutex::new(()),
+            gate: Arc::new(tokio::sync::Mutex::new(())),
             running: Mutex::new(None),
             start_error: Mutex::new(None),
         }
     }
 
-    /// Opens the connection in a task, for the start. Returns false if a
-    /// connection is open or being opened already. A failure is kept for
-    /// [`HeosLink::start_error`]. The task does not keep the `Avr`.
-    pub(crate) fn connect_in_background(self: &Arc<Self>) -> bool {
-        if self.lock().is_some() || self.gate.try_lock().is_err() {
-            return false;
-        }
-        // At once, so that the status is not `Disconnected` after the start.
-        set_status(&self.status, HeosPlayerStatus::Connecting);
-        let link = Arc::clone(self);
-        tokio::spawn(async move {
-            // The error is kept before the status says that it failed.
-            let _ = link
-                .open(|error| {
-                    *link
-                        .start_error
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(error));
-                })
-                .await;
-        });
-        true
-    }
-
-    /// See [`HeosLink::connect_in_background`].
+    /// See [`HeosOwner::connect_in_background`].
     pub(crate) fn start_error(&self) -> Option<Arc<Error>> {
         self.start_error
             .lock()
@@ -344,16 +321,20 @@ impl HeosLink {
     /// Opens the connection and starts the task that finds the player.
     /// Returns false if a connection is open already.
     pub(crate) async fn connect(&self) -> Result<bool, Error> {
-        self.open(|error| error).await
+        let gate = Arc::clone(&self.gate).lock_owned().await;
+        self.open(gate, |error| error).await
     }
 
-    /// As [`HeosLink::connect`]. `failed` takes the error before the status
-    /// says that the connect failed.
-    async fn open<E>(&self, failed: impl FnOnce(Error) -> E) -> Result<bool, E> {
+    /// As [`HeosLink::connect`], with `gate` held. `failed` takes the error
+    /// before the status says that the connect failed.
+    async fn open<E>(
+        &self,
+        _gate: OwnedMutexGuard<()>,
+        failed: impl FnOnce(Error) -> E,
+    ) -> Result<bool, E> {
         if !self.supported {
             return Err(failed(Error::HeosNotSupported));
         }
-        let _gate = self.gate.lock().await;
         if self.lock().is_some() {
             return Ok(false);
         }
@@ -403,7 +384,7 @@ impl HeosLink {
     }
 
     /// Closes the connection, also for a kept [`HeosPlayer::client`].
-    pub(crate) async fn disconnect(&self) {
+    async fn close(&self) {
         let _gate = self.gate.lock().await;
         let running = self.lock().take();
         if let Some(Running { heos, watcher }) = running {
@@ -455,6 +436,88 @@ impl HeosLink {
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
         self.running.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// The [`HeosLink`] of an `Avr`. Stops the connect of the start when it is
+/// dropped or when HEOS is closed.
+#[derive(Debug)]
+pub(crate) struct HeosOwner {
+    link: Arc<HeosLink>,
+    /// The task of [`HeosOwner::connect_in_background`].
+    start_task: Mutex<Option<AbortHandle>>,
+}
+
+impl HeosOwner {
+    pub(crate) fn new(link: HeosLink) -> Self {
+        Self {
+            link: Arc::new(link),
+            start_task: Mutex::new(None),
+        }
+    }
+
+    /// Opens the connection in a task, for the start. Returns false if a
+    /// connection is open or being opened already. A failure is kept for
+    /// [`HeosLink::start_error`]. The task does not keep the `Avr`.
+    pub(crate) fn connect_in_background(&self) -> bool {
+        if self.link.lock().is_some() {
+            return false;
+        }
+        // The task keeps the gate, so that a disconnect cannot run before it.
+        let Ok(gate) = Arc::clone(&self.link.gate).try_lock_owned() else {
+            return false;
+        };
+        // At once, so that the status is not `Disconnected` after the start.
+        set_status(&self.link.status, HeosPlayerStatus::Connecting);
+        let link = Arc::clone(&self.link);
+        // Held until the handle is stored, so that `disconnect` finds it.
+        let mut start_task = self.start_task();
+        let task = tokio::spawn(async move {
+            // The error is kept before the status says that it failed.
+            let _ = link
+                .open(gate, |error| {
+                    *link
+                        .start_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(error));
+                })
+                .await;
+        });
+        *start_task = Some(task.abort_handle());
+        true
+    }
+
+    /// Stops the connect of the start, then closes the connection.
+    pub(crate) async fn disconnect(&self) {
+        self.stop_start();
+        self.link.close().await;
+    }
+
+    fn stop_start(&self) {
+        let task = self.start_task().take();
+        if let Some(task) = task {
+            task.abort();
+        }
+    }
+
+    fn start_task(&self) -> std::sync::MutexGuard<'_, Option<AbortHandle>> {
+        self.start_task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+impl Deref for HeosOwner {
+    type Target = HeosLink;
+
+    fn deref(&self) -> &HeosLink {
+        &self.link
+    }
+}
+
+impl Drop for HeosOwner {
+    fn drop(&mut self) {
+        self.stop_start();
     }
 }
 
