@@ -205,8 +205,25 @@ enum Request {
     /// Ask the receiver these queries.
     Queries(Vec<Cow<'static, str>>),
     /// Tell the caller when the receiver has answered the queries, or was
-    /// quiet for too long. It gives the queries that were not answered.
-    Synced(oneshot::Sender<Result<Vec<Cow<'static, str>>, Error>>),
+    /// quiet for too long, or at `deadline`, see [`SyncResult`].
+    /// `start` is true for the wait of the start, see [`Queue::start_missed`].
+    Synced {
+        done: oneshot::Sender<Result<SyncResult, Error>>,
+        deadline: Instant,
+        start: bool,
+    },
+}
+
+/// How a wait for the answers ended.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SyncResult {
+    /// No query waits for a write and none for its answer. Gives the queries
+    /// that were not answered.
+    Done(Vec<Cow<'static, str>>),
+    /// The time limit came first. Gives the queries that were open then: not
+    /// answered, written without an answer yet, lists without their `END`
+    /// line, and not written yet.
+    TimedOut(Vec<Cow<'static, str>>),
 }
 
 /// The telnet connection of one receiver.
@@ -402,26 +419,34 @@ impl Telnet {
     /// answered. It is an error if the connection ends first, or if this takes
     /// longer than the keep-alive time.
     pub(crate) async fn sync(&self) -> Result<Vec<Cow<'static, str>>, Error> {
-        self.sync_within(self.config.keep_alive).await
+        let limit = self.config.keep_alive;
+        match self.wait_for_answers(limit, false).await? {
+            SyncResult::Done(not_answered) => Ok(not_answered),
+            SyncResult::TimedOut(_) => Err(Error::Timeout {
+                request: "telnet answers".to_owned(),
+                limit,
+                sent: true,
+            }),
+        }
     }
 
-    /// As `sync`, with another limit.
-    pub(crate) async fn sync_within(
-        &self,
-        limit: Duration,
-    ) -> Result<Vec<Cow<'static, str>>, Error> {
+    /// As `sync`, for the start, with another limit. Gives the open queries
+    /// if the limit comes first. The queries that were not answered before
+    /// this call count too.
+    pub(crate) async fn sync_start(&self, limit: Duration) -> Result<SyncResult, Error> {
+        self.wait_for_answers(limit, true).await
+    }
+
+    async fn wait_for_answers(&self, limit: Duration, start: bool) -> Result<SyncResult, Error> {
         let (done, answered) = oneshot::channel();
-        self.request(Request::Synced(done)).await?;
-        tokio::time::timeout(limit, answered).await.map_or_else(
-            |_| {
-                Err(Error::Timeout {
-                    request: "telnet answers".to_owned(),
-                    limit,
-                    sent: true,
-                })
-            },
-            |answer| answer.unwrap_or(Err(Error::NotConnected)),
-        )
+        let deadline = Instant::now() + limit;
+        self.request(Request::Synced {
+            done,
+            deadline,
+            start,
+        })
+        .await?;
+        answered.await.unwrap_or(Err(Error::NotConnected))
     }
 
     /// Asks the task to send these queries after the ones that wait.
@@ -537,13 +562,22 @@ struct Queue {
     last_activity: Instant,
     /// Callers that wait until the queries are answered.
     waiters: Vec<Waiter>,
+    /// Queries that were not answered while no wait of the start waited,
+    /// since the connection opened or since the last such wait began. The
+    /// start begins its wait after its pages, so a query can count as not
+    /// answered before.
+    start_missed: Vec<Cow<'static, str>>,
 }
 
 /// A caller that waits until the queries are answered.
 struct Waiter {
-    done: oneshot::Sender<Result<Vec<Cow<'static, str>>, Error>>,
+    done: oneshot::Sender<Result<SyncResult, Error>>,
     /// Queries that were not answered while it waited.
     missed: Vec<Cow<'static, str>>,
+    /// When it stops waiting and gets the open queries.
+    deadline: Instant,
+    /// The wait of the start.
+    start: bool,
 }
 
 /// Time without a line of an answer after which the answers count as complete.
@@ -566,6 +600,7 @@ impl Queue {
             last_answer: now,
             last_activity: now,
             waiters: Vec::new(),
+            start_missed: Vec::new(),
         }
     }
 
@@ -631,21 +666,25 @@ impl Queue {
 
     /// When [`Queue::check_answers`] has work. `None` if there is none. A
     /// caller that waits has no work while a query waits for a write: the
-    /// write opens it.
+    /// write opens it. Its deadline is work too.
     fn answer_time(&self, quiet: Duration) -> Option<Instant> {
         let waits = !self.waiters.is_empty() && !self.has_query_work();
-        if !self.answers.is_idle() {
+        let check = if !self.answers.is_idle() {
             Some(self.last_answer + quiet)
         } else if waits || self.answers.has_answered() {
             Some(self.last_activity + ANSWER_SETTLE)
         } else {
             None
-        }
+        };
+        let deadline = self.waiters.iter().map(|waiter| waiter.deadline).min();
+        check.into_iter().chain(deadline).min()
     }
 
     /// Counts the open queries as not answered after the quiet time. Tells the
-    /// callers that wait when no query waits and the answers are complete.
+    /// callers that wait when no query waits and the answers are complete,
+    /// or when their deadline came.
     fn check_answers(&mut self, now: Instant, quiet: Duration) {
+        self.end_late_waiters(now);
         if !self.answers.is_idle() {
             if now < self.last_answer + quiet {
                 return;
@@ -656,6 +695,13 @@ impl Queue {
             for waiter in &mut self.waiters {
                 waiter.missed.extend(missed.iter().cloned());
             }
+            if !self.waiters.iter().any(|waiter| waiter.start) {
+                for query in missed {
+                    if !self.start_missed.contains(&query) {
+                        self.start_missed.push(query);
+                    }
+                }
+            }
         }
         if now < self.last_activity + ANSWER_SETTLE {
             return;
@@ -665,7 +711,42 @@ impl Queue {
             return;
         }
         for waiter in self.waiters.drain(..) {
-            let _ = waiter.done.send(Ok(waiter.missed));
+            let _ = waiter.done.send(Ok(SyncResult::Done(waiter.missed)));
+        }
+    }
+
+    /// Adds a caller that waits. The wait of the start begins with the
+    /// queries that were not answered before it.
+    fn add_waiter(
+        &mut self,
+        done: oneshot::Sender<Result<SyncResult, Error>>,
+        deadline: Instant,
+        start: bool,
+    ) {
+        let missed = if start {
+            std::mem::take(&mut self.start_missed)
+        } else {
+            Vec::new()
+        };
+        self.waiters.push(Waiter {
+            done,
+            missed,
+            deadline,
+            start,
+        });
+    }
+
+    /// Gives the callers whose deadline came the queries that are open:
+    /// counted as not answered, written without an answer, and not written.
+    fn end_late_waiters(&mut self, now: Instant) {
+        for waiter in self.waiters.extract_if(.., |waiter| waiter.deadline <= now) {
+            let mut open = waiter.missed;
+            for query in self.answers.open().chain(&self.background) {
+                if !open.contains(query) {
+                    open.push(query.clone());
+                }
+            }
+            let _ = waiter.done.send(Ok(SyncResult::TimedOut(open)));
         }
     }
 
@@ -830,6 +911,8 @@ impl Worker {
                         filter.clear();
                         let all = self.queries.all();
                         queue.queue_work(|queue| queue.background = all);
+                        // All are asked again.
+                        queue.start_missed.clear();
                     }
                     Some(Request::RefreshGroup(group)) => {
                         filter.clear();
@@ -839,8 +922,8 @@ impl Worker {
                         filter.clear();
                         queue.add(queries);
                     }
-                    Some(Request::Synced(done)) => {
-                        queue.waiters.push(Waiter { done, missed: Vec::new() });
+                    Some(Request::Synced { done, deadline, start }) => {
+                        queue.add_waiter(done, deadline, start);
                     }
                     None => break End::Shutdown,
                 },
@@ -1123,16 +1206,36 @@ mod tests {
         assert!(requests.try_recv().is_err());
     }
 
-    /// No query, to compare with a list of queries.
-    const NONE: [&str; 0] = [];
+    /// A waiter whose deadline does not come in the test.
+    fn waiter(queue: &mut Queue) -> oneshot::Receiver<Result<SyncResult, Error>> {
+        waiter_until(queue, Instant::now() + Duration::from_secs(3600))
+    }
 
-    fn waiter(queue: &mut Queue) -> oneshot::Receiver<Result<Vec<Cow<'static, str>>, Error>> {
+    fn waiter_until(
+        queue: &mut Queue,
+        deadline: Instant,
+    ) -> oneshot::Receiver<Result<SyncResult, Error>> {
+        waiter_with(queue, deadline, false)
+    }
+
+    /// As [`waiter`], for the wait of the start.
+    fn start_waiter(queue: &mut Queue) -> oneshot::Receiver<Result<SyncResult, Error>> {
+        waiter_with(queue, Instant::now() + Duration::from_secs(3600), true)
+    }
+
+    fn waiter_with(
+        queue: &mut Queue,
+        deadline: Instant,
+        start: bool,
+    ) -> oneshot::Receiver<Result<SyncResult, Error>> {
         let (done, waiting) = oneshot::channel();
-        queue.waiters.push(Waiter {
-            done,
-            missed: Vec::new(),
-        });
+        queue.add_waiter(done, deadline, start);
         waiting
+    }
+
+    /// The result of a wait that ended, with these queries not answered.
+    fn done(not_answered: &[&'static str]) -> SyncResult {
+        SyncResult::Done(not_answered.iter().copied().map(Cow::Borrowed).collect())
     }
 
     #[tokio::test(start_paused = true)]
@@ -1151,7 +1254,7 @@ mod tests {
         queue.check_answers(start + ms(400), quiet);
         assert!(waiting.try_recv().is_err());
         queue.check_answers(start + ms(500), quiet);
-        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
         assert_eq!(queue.answer_time(quiet), None);
     }
 
@@ -1170,7 +1273,7 @@ mod tests {
         }
         assert_eq!(queue.answer_time(quiet), Some(start + ms(500)));
         queue.check_answers(start + ms(500), quiet);
-        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1192,7 +1295,7 @@ mod tests {
         assert!(waiting.try_recv().is_err());
         queue.check_answers(start + ms(5200), quiet);
         let missed = waiting.try_recv().unwrap().unwrap();
-        assert_eq!(missed, ["PSIMAXSWM ?"]);
+        assert_eq!(missed, done(&["PSIMAXSWM ?"]));
         assert!(queue.answers.is_idle());
     }
 
@@ -1200,15 +1303,72 @@ mod tests {
     async fn a_waiter_waits_for_the_queries_that_are_not_written() {
         let quiet = Duration::from_millis(2000);
         let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]), Brand::Denon);
-        let mut waiting = waiter(&mut queue);
-        // No timer while the query waits for its write, so the task does not spin.
-        assert_eq!(queue.answer_time(quiet), None);
+        let deadline = Instant::now() + Duration::from_secs(3600);
+        let mut waiting = waiter_until(&mut queue, deadline);
+        // Only the deadline while the query waits for its write, so the task
+        // does not spin.
+        assert_eq!(queue.answer_time(quiet), Some(deadline));
         let later = Instant::now() + Duration::from_secs(10);
         queue.check_answers(later, quiet);
         assert!(waiting.try_recv().is_err());
         queue.background.clear();
         queue.check_answers(later, quiet);
-        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_gets_the_open_queries_at_its_deadline() {
+        let ms = Duration::from_millis;
+        let quiet = ms(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("PSIMAXSWM ?"));
+        // Queries not written yet, so the wait does not end.
+        queue.add(["SI?", "PSIMAXSWM ?"]);
+        let mut waiting = waiter_until(&mut queue, start + ms(3000));
+        queue.check_answers(start + quiet, quiet);
+        assert!(waiting.try_recv().is_err());
+        // A list without its end line.
+        queue.answers.written(Cow::Borrowed("OPSMLALL ?"));
+        queue.last_answer = start + ms(2100);
+        queue.answer_line("OPSMLALL MOV011Stereo", start + ms(2200));
+        assert_eq!(queue.answer_time(quiet), Some(start + ms(3000)));
+        queue.check_answers(start + ms(2999), quiet);
+        assert!(waiting.try_recv().is_err());
+        queue.check_answers(start + ms(3000), quiet);
+        let open = ["PSIMAXSWM ?", "OPSMLALL ?", "SI?"].map(Cow::Borrowed);
+        assert_eq!(
+            waiting.try_recv().unwrap().unwrap(),
+            SyncResult::TimedOut(open.to_vec())
+        );
+        // The queries stay open and wait for their write.
+        assert!(!queue.answers.is_idle());
+        assert_eq!(queue.background.len(), 2);
+        assert!(queue.waiters.is_empty());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_wait_of_the_start_gets_the_queries_missed_before_it() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("PSIMAXSWM ?"));
+        queue.check_answers(start + quiet, quiet);
+        let mut other = waiter(&mut queue);
+        let mut waiting = start_waiter(&mut queue);
+        // Missed while the start waits: given to the waiters, not kept for a
+        // later start.
+        queue.answers.written(Cow::Borrowed("SSQS ?"));
+        queue.check_answers(start + quiet * 2, quiet);
+        assert_eq!(other.try_recv().unwrap().unwrap(), done(&["SSQS ?"]));
+        assert_eq!(
+            waiting.try_recv().unwrap().unwrap(),
+            done(&["PSIMAXSWM ?", "SSQS ?"])
+        );
+        // A second wait of the start does not get them again.
+        let mut again = start_waiter(&mut queue);
+        queue.check_answers(start + quiet * 2, quiet);
+        assert_eq!(again.try_recv().unwrap().unwrap(), done(&[]));
     }
 
     #[tokio::test(start_paused = true)]
@@ -1222,7 +1382,7 @@ mod tests {
         // A caller that waits later does not get the old query.
         let mut waiting = waiter(&mut queue);
         queue.check_answers(start + quiet, quiet);
-        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
     }
 
     #[tokio::test(start_paused = true)]

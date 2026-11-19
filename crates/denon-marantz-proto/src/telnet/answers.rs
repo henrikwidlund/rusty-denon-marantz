@@ -103,6 +103,11 @@ impl AnswerTracker {
         !self.answered.is_empty()
     }
 
+    /// The open queries, oldest first. They stay open.
+    pub fn open(&self) -> impl Iterator<Item = &Cow<'static, str>> {
+        self.open.iter().map(|open| &open.query)
+    }
+
     /// Removes the open queries and gives them, oldest first. Use it when the
     /// receiver was quiet for so long that they are not answered.
     pub fn take_open(&mut self) -> impl Iterator<Item = Cow<'static, str>> + '_ {
@@ -234,10 +239,13 @@ mod tests {
     }
 
     #[test]
-    fn open_queries_can_be_taken_and_cleared() {
-        let mut tracker = tracker(&["PSIMAXSWM ?", "MV?"]);
+    fn open_queries_can_be_read_taken_and_cleared() {
+        let mut tracker = tracker(&["PSIMAXSWM ?", "MV?", "OPSMLALL ?"]);
         assert_eq!(tracker.line("MV50"), AnswerLine::Answer);
-        assert_eq!(tracker.take_open().collect::<Vec<_>>(), ["PSIMAXSWM ?"]);
+        assert_eq!(tracker.line("OPSMLALL MOV011Stereo"), AnswerLine::Answer);
+        let open = ["PSIMAXSWM ?", "OPSMLALL ?"];
+        assert_eq!(tracker.open().collect::<Vec<_>>(), open);
+        assert_eq!(tracker.take_open().collect::<Vec<_>>(), open);
         assert!(tracker.is_idle());
         tracker.written(Cow::Borrowed("MU?"));
         tracker.clear();

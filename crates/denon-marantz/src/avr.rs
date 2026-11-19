@@ -1267,13 +1267,15 @@ impl Avr {
         self.telnet.sync().await
     }
 
-    /// As [`Avr::telnet_sync`], with this limit.
+    /// As [`Avr::telnet_sync`], for the start, with this limit. Gives the
+    /// open queries if the limit comes first. The queries that were not
+    /// answered before this call count too.
     #[cfg(feature = "telnet")]
-    pub(crate) async fn telnet_sync_within(
+    pub(crate) async fn telnet_sync_start(
         &self,
         limit: Duration,
-    ) -> Result<Vec<std::borrow::Cow<'static, str>>, Error> {
-        self.telnet.sync_within(limit).await
+    ) -> Result<crate::telnet::SyncResult, Error> {
+        self.telnet.sync_start(limit).await
     }
 
     /// Asks the receiver for its state again on telnet. The answers are

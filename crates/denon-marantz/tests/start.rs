@@ -19,7 +19,7 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Avr, Error, InfoCheck, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions,
+    Ask, Avr, Error, InfoCheck, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions,
     TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
@@ -228,6 +228,38 @@ async fn all_synced_reports_the_queries_without_an_answer() {
 }
 
 #[tokio::test]
+async fn all_synced_reports_a_query_missed_before_it_was_called() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = started_with(
+        &web,
+        TelnetConfig {
+            answer_quiet: Duration::from_millis(300),
+            ..telnet_config(telnet.port)
+        },
+    )
+    .await;
+    let mut started = avr.start().await.unwrap();
+    let mut answered = 0;
+    wait_until("the queries of the start", || {
+        answer_new(&telnet, &mut answered, &["PSIMAXSWM ?"]);
+        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
+    })
+    .await;
+    answer_new(&telnet, &mut answered, &["PSIMAXSWM ?"]);
+    // Longer than the quiet time, so the query counts as not answered first.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let waiting = tokio::spawn(async move {
+        started.all_synced().await;
+        started
+    });
+    answer_until_done(&telnet, &waiting, &["PSIMAXSWM ?"]).await;
+    let mut started = waiting.await.unwrap();
+    let report = started.all_synced().await;
+    assert_eq!(report.telnet_sync, TelnetSync::Done);
+    assert_eq!(report.telnet_not_answered, ["PSIMAXSWM ?"]);
+}
+
+#[tokio::test]
 async fn a_telnet_sync_that_is_dropped_does_not_stop_the_next_one() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
@@ -293,6 +325,21 @@ async fn all_synced_ends_with_no_answer_after_the_wait() {
         .expect("all_synced did not end");
     assert_eq!(report.telnet_sync, TelnetSync::NoAnswer);
     assert!(matches!(report.telnet, TelnetStart::Open));
+    // The written queries are open, each once, as sent.
+    let open = &report.telnet_not_answered;
+    let received = telnet.received();
+    let written = lines(&received);
+    assert!(written.contains(&"SSINFSIGECI ?"), "{written:?}");
+    for query in written.iter().filter(|line| line.ends_with('?')) {
+        assert_eq!(
+            open.iter().filter(|open| open == query).count(),
+            1,
+            "{query}"
+        );
+    }
+    // They can be asked again.
+    let again: Vec<_> = open.iter().map(|query| Ask::Raw(query)).collect();
+    avr.telnet_ask(&again).await.unwrap();
 }
 
 #[tokio::test]

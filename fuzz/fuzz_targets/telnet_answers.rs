@@ -28,7 +28,9 @@ fuzz_target!(|data: &[u8]| {
             let _ = tracker.line(line);
         }
     }
+    let still_open = tracker.open().count();
     let open = tracker.take_open().count();
+    assert_eq!(open, still_open);
     assert!(open <= written);
     assert!(tracker.is_idle());
     tracker.forget_answered();

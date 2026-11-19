@@ -22,7 +22,7 @@ use super::{Avr, Info};
 use crate::details::{PageStatus, SettingsAvailabilityDetails, SkipReason};
 use crate::error::Error;
 #[cfg(feature = "telnet")]
-use crate::telnet::TelnetStatus;
+use crate::telnet::{SyncResult, TelnetStatus};
 
 /// What [`Avr::start_with`] does. The default does everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,7 +171,9 @@ pub enum TelnetSync {
     NotOpen,
     /// The connection ended before the receiver answered.
     Lost,
-    /// The answers did not end within [`StartOptions::telnet_wait`].
+    /// The answers did not end within [`StartOptions::telnet_wait`]. The
+    /// queries that were open then are in
+    /// [`StartReport::telnet_not_answered`].
     NoAnswer,
 }
 
@@ -201,7 +203,11 @@ pub struct StartReport {
     /// waits for this.
     pub telnet_sync: TelnetSync,
     /// The telnet queries that the receiver did not answer, or whose list
-    /// did not end, when [`TelnetSync::Done`]. Empty otherwise.
+    /// did not end, when [`TelnetSync::Done`]. When [`TelnetSync::NoAnswer`],
+    /// also the queries that were written without an answer yet and the
+    /// queries not written yet. Empty otherwise. Each one is the query text
+    /// as sent, without the carriage return, so it can be passed to
+    /// [`Avr::telnet_ask`] as [`Ask::Raw`](crate::Ask::Raw).
     pub telnet_not_answered: Vec<Cow<'static, str>>,
     /// What the start did with the HEOS connection. Neither wait waits for
     /// HEOS.
@@ -338,9 +344,9 @@ impl Started {
 
     #[cfg(feature = "telnet")]
     async fn wait_for_telnet(&self) -> (TelnetSync, Vec<Cow<'static, str>>) {
-        match self.avr.telnet_sync_within(self.telnet_wait).await {
-            Ok(not_answered) => (TelnetSync::Done, not_answered),
-            Err(error) if error.is_timeout() => (TelnetSync::NoAnswer, Vec::new()),
+        match self.avr.telnet_sync_start(self.telnet_wait).await {
+            Ok(SyncResult::Done(not_answered)) => (TelnetSync::Done, not_answered),
+            Ok(SyncResult::TimedOut(open)) => (TelnetSync::NoAnswer, open),
             Err(_) => (TelnetSync::Lost, Vec::new()),
         }
     }
