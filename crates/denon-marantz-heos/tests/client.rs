@@ -10,8 +10,8 @@ use common::{
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
-    Change, Command, Error, Event, Heos, HeosConfig, HeosStatus, PlayState, PlayerId, Progress,
-    RepeatMode,
+    Change, Command, Error, Event, Heos, HeosConfig, HeosStatus, PlayState, PlayerId, PlayerState,
+    Progress, RepeatMode,
 };
 
 #[tokio::test]
@@ -33,6 +33,8 @@ async fn connect_reads_the_players_and_their_state() {
     assert_eq!(heos.player_by_ip(IP.parse().unwrap()), Some(PID));
     assert_eq!(heos.player_by_ip("192.168.1.21".parse().unwrap()), None);
     assert_eq!(heos.player(PlayerId(1)), None);
+    assert_eq!(heos.with_player(PID, PlayerState::pid), Some(PID));
+    assert_eq!(heos.with_player(PlayerId(1), PlayerState::pid), None);
     let seen = fake.seen();
     assert!(seen.contains(&"heos://system/register_for_change_events?enable=on".to_owned()));
     let commands: Vec<_> = seen

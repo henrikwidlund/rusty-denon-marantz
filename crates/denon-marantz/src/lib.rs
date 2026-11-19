@@ -122,7 +122,7 @@ pub use denon_marantz_proto::{
 };
 pub use error::{Error, ToneBlocker};
 #[cfg(feature = "heos")]
-pub use heos_link::{HeosPlayer, HeosPlayerStatus};
+pub use heos_link::{HeosFailure, HeosPlayer, HeosPlayerStatus};
 pub use pacer::{Adaptive, Pacer, Pacing};
 
 #[cfg(feature = "http")]

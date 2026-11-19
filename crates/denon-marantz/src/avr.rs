@@ -314,7 +314,7 @@ pub struct Avr {
     #[cfg(feature = "telnet")]
     telnet: Telnet,
     #[cfg(feature = "heos")]
-    heos: HeosLink,
+    heos: Arc<HeosLink>,
     /// The reset key that was given out last.
     reset_keys: ResetKeys,
     /// Commands over HTTP go one after the other, and before the HTTP reads.
@@ -988,12 +988,24 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// [`Error::HeosNotSupported`] if [`Info::has_heos`] is false, and
-    /// [`Error::Heos`] if the first connection fails. Nothing keeps trying
-    /// then.
+    /// [`Error::HeosNotSupported`] if [`Info::has_heos`] is false. If the
+    /// first connection fails, [`Error::Heos`], or [`Error::Network`] if the
+    /// host name could not be resolved, and the status is
+    /// [`HeosPlayerStatus::Failed`]. Nothing keeps trying then.
     #[cfg(feature = "heos")]
     pub async fn heos_connect(&self) -> Result<(), Error> {
         self.heos.connect().await.map(|_| ())
+    }
+
+    /// The error of the HEOS connect that the start ran in the background,
+    /// if it failed, see [`StartOptions::heos`](crate::StartOptions::heos).
+    /// The status is [`HeosPlayerStatus::Failed`] then. It is cleared when a
+    /// new connect begins. A failed [`Avr::heos_connect`] returns its error
+    /// instead.
+    #[cfg(feature = "heos")]
+    #[must_use]
+    pub fn heos_start_error(&self) -> Option<Arc<Error>> {
+        self.heos.start_error()
     }
 
     /// Closes the HEOS connection, also for a client from
@@ -1907,12 +1919,12 @@ impl AvrBuilder {
             telnet.watch_status(),
         )?;
         #[cfg(feature = "heos")]
-        let heos = HeosLink::new(
+        let heos = Arc::new(HeosLink::new(
             info.host.clone(),
             info.serial_number.clone(),
             self.heos,
             info.has_heos(),
-        );
+        ));
         Ok(Avr {
             http,
             web_interface: HttpClient::new(

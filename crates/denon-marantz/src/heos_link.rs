@@ -31,6 +31,49 @@ pub enum HeosPlayerStatus {
     WaitingForPlayer,
     /// The player of the receiver, see [`Avr::heos`](crate::Avr::heos).
     Ready(PlayerId),
+    /// The first connection failed. Nothing keeps trying. The error is in
+    /// [`Avr::heos_start_error`](crate::Avr::heos_start_error) if the start
+    /// opened HEOS, else [`Avr::heos_connect`](crate::Avr::heos_connect)
+    /// returned it.
+    Failed(HeosFailure),
+}
+
+/// Why the first HEOS connection failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum HeosFailure {
+    /// The host name could not be resolved.
+    NotResolved,
+    /// There is no route to the receiver, for example because the network is
+    /// not ready yet.
+    Unreachable,
+    /// The receiver refused the connection.
+    Refused,
+    /// The receiver did not answer in time, for example because a firewall
+    /// drops the packets.
+    Timeout,
+    /// Another error.
+    Other,
+}
+
+impl HeosFailure {
+    /// The kind of a failed connect of the client.
+    fn of(error: &denon_marantz_heos::Error) -> Self {
+        use std::io::ErrorKind;
+        match error {
+            denon_marantz_heos::Error::Timeout { .. } => Self::Timeout,
+            denon_marantz_heos::Error::Network { source, .. } => match source.kind() {
+                ErrorKind::ConnectionRefused => Self::Refused,
+                ErrorKind::TimedOut => Self::Timeout,
+                ErrorKind::NetworkUnreachable
+                | ErrorKind::HostUnreachable
+                | ErrorKind::NetworkDown
+                | ErrorKind::AddrNotAvailable => Self::Unreachable,
+                _ => Self::Other,
+            },
+            _ => Self::Other,
+        }
+    }
 }
 
 /// Changes that wait for a slow subscriber of [`Avr::heos_changes`](crate::Avr::heos_changes).
@@ -69,10 +112,18 @@ impl HeosPlayer {
     }
 
     /// The state of the player: play state, what plays, play mode. `None` if
-    /// the connection is closed.
+    /// the connection is closed. It is a copy: [`HeosPlayer::with_state`]
+    /// reads it without one.
     #[must_use]
     pub fn state(&self) -> Option<PlayerState> {
         self.heos.upgrade()?.player(self.pid)
+    }
+
+    /// Runs `read` with the state of the player, without a copy. `None` if
+    /// the connection is closed or the player is not known. The state is
+    /// locked while `read` runs, so keep it short.
+    pub fn with_state<T>(&self, read: impl FnOnce(&PlayerState) -> T) -> Option<T> {
+        self.heos.upgrade()?.with_player(self.pid, read)
     }
 
     /// What plays. `None` if nothing is known or the connection is closed.
@@ -222,6 +273,8 @@ pub(crate) struct HeosLink {
     /// Lets one connect or disconnect run at a time.
     gate: tokio::sync::Mutex<()>,
     running: Mutex<Option<Running>>,
+    /// The error of the last connect that the start ran in the background.
+    start_error: Mutex<Option<Arc<Error>>>,
 }
 
 /// An open connection and the task that finds the player.
@@ -252,28 +305,81 @@ impl HeosLink {
             changes: broadcast::Sender::new(CHANGE_CAPACITY),
             gate: tokio::sync::Mutex::new(()),
             running: Mutex::new(None),
+            start_error: Mutex::new(None),
         }
+    }
+
+    /// Opens the connection in a task, for the start. Returns false if a
+    /// connection is open or being opened already. A failure is kept for
+    /// [`HeosLink::start_error`]. The task does not keep the `Avr`.
+    pub(crate) fn connect_in_background(self: &Arc<Self>) -> bool {
+        if self.lock().is_some() || self.gate.try_lock().is_err() {
+            return false;
+        }
+        // At once, so that the status is not `Disconnected` after the start.
+        set_status(&self.status, HeosPlayerStatus::Connecting);
+        let link = Arc::clone(self);
+        tokio::spawn(async move {
+            // The error is kept before the status says that it failed.
+            let _ = link
+                .open(|error| {
+                    *link
+                        .start_error
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(error));
+                })
+                .await;
+        });
+        true
+    }
+
+    /// See [`HeosLink::connect_in_background`].
+    pub(crate) fn start_error(&self) -> Option<Arc<Error>> {
+        self.start_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Opens the connection and starts the task that finds the player.
     /// Returns false if a connection is open already.
     pub(crate) async fn connect(&self) -> Result<bool, Error> {
+        self.open(|error| error).await
+    }
+
+    /// As [`HeosLink::connect`]. `failed` takes the error before the status
+    /// says that the connect failed.
+    async fn open<E>(&self, failed: impl FnOnce(Error) -> E) -> Result<bool, E> {
         if !self.supported {
-            return Err(Error::HeosNotSupported);
+            return Err(failed(Error::HeosNotSupported));
         }
         let _gate = self.gate.lock().await;
         if self.lock().is_some() {
             return Ok(false);
         }
+        *self
+            .start_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
         set_status(&self.status, HeosPlayerStatus::Connecting);
-        // Sets the status back if this fails or the future is dropped.
+        // Sets the status back if the future is dropped.
         let mut guard = StatusGuard(Some(&self.status));
-        let addresses = self.addresses().await?;
-        let heos = Arc::new(
-            Heos::connect_with(self.host.as_str(), self.config)
+        let opened = match self.addresses().await {
+            Ok(addresses) => Heos::connect_with(self.host.as_str(), self.config)
                 .await
-                .map_err(Error::Heos)?,
-        );
+                .map(|heos| (addresses, Arc::new(heos)))
+                .map_err(|error| (HeosFailure::of(&error), Error::Heos(error))),
+            Err(error) => Err((HeosFailure::NotResolved, error)),
+        };
+        let (addresses, heos) = match opened {
+            Ok(opened) => opened,
+            Err((failure, error)) => {
+                let error = failed(error);
+                guard.0 = None;
+                set_status(&self.status, HeosPlayerStatus::Failed(failure));
+                return Err(error);
+            }
+        };
         // The lock is held until the connection is stored, so that
         // `player` finds it when the status is ready.
         let mut running = self.lock();
@@ -478,6 +584,49 @@ impl Drop for StatusGuard<'_> {
     fn drop(&mut self) {
         if let Some(status) = self.0 {
             set_status(status, HeosPlayerStatus::Disconnected);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::ErrorKind;
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn a_failed_connect_has_its_kind() {
+        let network = |kind| denon_marantz_heos::Error::Network {
+            request: "HEOS connect".to_owned(),
+            source: std::io::Error::from(kind),
+        };
+        let timeout = denon_marantz_heos::Error::Timeout {
+            request: "HEOS connect".to_owned(),
+            limit: Duration::from_secs(5),
+        };
+        let cases = [
+            (timeout, HeosFailure::Timeout),
+            (network(ErrorKind::ConnectionRefused), HeosFailure::Refused),
+            (network(ErrorKind::TimedOut), HeosFailure::Timeout),
+            (
+                network(ErrorKind::HostUnreachable),
+                HeosFailure::Unreachable,
+            ),
+            (
+                network(ErrorKind::NetworkUnreachable),
+                HeosFailure::Unreachable,
+            ),
+            (network(ErrorKind::NetworkDown), HeosFailure::Unreachable),
+            (
+                network(ErrorKind::AddrNotAvailable),
+                HeosFailure::Unreachable,
+            ),
+            (network(ErrorKind::Other), HeosFailure::Other),
+            (denon_marantz_heos::Error::NotConnected, HeosFailure::Other),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(HeosFailure::of(&error), kind, "{error:?}");
         }
     }
 }

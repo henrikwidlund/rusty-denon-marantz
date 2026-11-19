@@ -232,8 +232,15 @@ impl Heos {
     /// The state of one player.
     #[must_use]
     pub fn player(&self, pid: PlayerId) -> Option<PlayerState> {
+        self.with_player(pid, PlayerState::clone)
+    }
+
+    /// Runs `read` with the state of the player, without a copy. `None` if
+    /// the player is not known. The state is locked while `read` runs, so
+    /// keep it short.
+    pub fn with_player<T>(&self, pid: PlayerId, read: impl FnOnce(&PlayerState) -> T) -> Option<T> {
         self.shared
-            .read(|states| states.iter().find(|state| state.pid() == pid).cloned())
+            .read(|states| states.iter().find(|state| state.pid() == pid).map(read))
     }
 
     /// The player with this IP address. The AVC-A10H has one player for all

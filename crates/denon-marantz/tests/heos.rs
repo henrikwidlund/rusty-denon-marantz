@@ -10,8 +10,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{Fake as FakeReceiver, avr_x_receiver, avr_x_receiver_with_info, builder};
-use denon_marantz::heos::{Change, Error as HeosError, HeosStatus};
-use denon_marantz::{Avr, Error, HeosPlayerStatus, HeosStart, ReceiverType, StartOptions};
+use denon_marantz::heos::{Change, Error as HeosError, HeosConfig, HeosStatus, PlayerState};
+use denon_marantz::{
+    Avr, Error, HeosFailure, HeosPlayerStatus, HeosStart, ReceiverType, StartOptions,
+};
 use heos_fake::{Fake, IP, PID, Reply, answer_lines, config, counter, event, from_data, name};
 use tokio::sync::watch;
 
@@ -73,11 +75,12 @@ async fn the_start_opens_heos_and_finds_the_player() {
     assert_eq!(*status.borrow(), HeosPlayerStatus::Disconnected);
     let mut started = avr.start_with(options()).await.unwrap();
     let report = started.basic_synced().await;
-    assert!(matches!(report.heos, HeosStart::Open), "{:?}", report.heos);
+    assert_eq!(report.heos, HeosStart::Started);
     status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
     let player = avr.heos().unwrap();
     assert_eq!(player.pid(), PID);
     assert!(player.state().is_some());
+    assert_eq!(player.with_state(PlayerState::pid), Some(PID));
     player.play_next().await.unwrap();
     assert_eq!(heos.count("player/play_next"), 1);
 }
@@ -250,20 +253,96 @@ async fn a_dropped_connect_leaves_heos_disconnected() {
 }
 
 #[tokio::test]
-async fn a_failed_start_is_in_the_report() {
+async fn a_failed_start_shows_in_the_status_and_keeps_the_error() {
+    // No fake listens on the HEOS port.
     let http = avr_x_receiver().await;
     let avr = Arc::new(builder(&http, ReceiverType::AvrX).connect().await.unwrap());
+    let mut status = avr.watch_heos_status();
+    let failed = HeosPlayerStatus::Failed(HeosFailure::Refused);
+    // The error is there as soon as the status says that it failed.
+    let watcher = {
+        let avr = Arc::clone(&avr);
+        let mut status = avr.watch_heos_status();
+        tokio::spawn(async move {
+            let _ = status.wait_for(|now| *now == failed).await;
+            avr.heos_start_error().is_some()
+        })
+    };
     let mut started = avr.start_with(options()).await.unwrap();
-    let report = started.basic_synced().await;
+    assert_eq!(started.basic_synced().await.heos, HeosStart::Started);
+    status_is(&mut status, failed).await;
+    assert!(watcher.await.unwrap());
+    let error = avr.heos_start_error().unwrap();
     assert!(
-        matches!(report.heos, HeosStart::Failed(Error::Heos(_))),
-        "{:?}",
-        report.heos
+        matches!(*error, Error::Heos(HeosError::Network { .. })),
+        "{error:?}"
     );
+}
+
+#[tokio::test]
+async fn the_start_does_not_wait_for_heos_that_never_answers() {
+    let heos = Fake::start(|line| match name(line) {
+        "player/get_players" => Reply::Hang,
+        _ => player_here(line),
+    })
+    .await;
+    let http = avr_x_receiver().await;
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .heos_config(HeosConfig {
+                command_timeout: Duration::from_secs(3),
+                ..config(heos.port)
+            })
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut status = avr.watch_heos_status();
+    let mut started = avr.start_with(options()).await.unwrap();
+    // The status is set before the start returns.
+    assert_eq!(*status.borrow(), HeosPlayerStatus::Connecting);
+    let report = tokio::time::timeout(Duration::from_secs(1), started.basic_synced())
+        .await
+        .expect("the start waited for HEOS");
+    assert_eq!(report.heos, HeosStart::Started);
+    assert_eq!(*status.borrow(), HeosPlayerStatus::Connecting);
+    let failed = HeosPlayerStatus::Failed(HeosFailure::Timeout);
+    let wait = status.wait_for(|now| *now == failed);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), wait)
+            .await
+            .is_ok()
+    );
+    assert!(avr.heos_start_error().is_some());
+}
+
+#[tokio::test]
+async fn the_connect_of_the_start_does_not_keep_the_avr() {
+    let heos = Fake::start(|line| match name(line) {
+        "player/get_players" => Reply::Hang,
+        _ => player_here(line),
+    })
+    .await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut started = avr.start_with(options()).await.unwrap();
+    started.basic_synced().await;
+    let weak = Arc::downgrade(&avr);
+    drop(started);
+    drop(avr);
+    assert!(weak.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn a_failed_connect_returns_its_error() {
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
+    let error = avr.heos_connect().await.unwrap_err();
+    assert!(matches!(error, Error::Heos(_)), "{error:?}");
     assert_eq!(
         *avr.watch_heos_status().borrow(),
-        HeosPlayerStatus::Disconnected
+        HeosPlayerStatus::Failed(HeosFailure::Refused)
     );
+    assert!(avr.heos_start_error().is_none());
 }
 
 #[tokio::test]

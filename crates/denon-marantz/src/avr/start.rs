@@ -77,8 +77,9 @@ impl StartOptions {
     }
 
     /// Opens the HEOS connection, as [`Avr::heos_connect`] does, if
-    /// [`Info::has_heos`] is true. It runs in the background, next to the
-    /// reads of the start. The default is on.
+    /// [`Info::has_heos`] is true. It runs in the background: neither the
+    /// start nor its waits wait for it. See [`Avr::watch_heos_status`] and
+    /// [`Avr::heos_start_error`]. The default is on.
     #[cfg(feature = "heos")]
     #[must_use]
     pub const fn heos(mut self, on: bool) -> Self {
@@ -122,8 +123,8 @@ pub enum TelnetStart {
     Unknown,
 }
 
-/// What happened to the HEOS connection at the start.
-#[derive(Debug)]
+/// What the start did with the HEOS connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum HeosStart {
     /// HEOS was not asked for, or the crate is built without the `heos`
@@ -131,14 +132,14 @@ pub enum HeosStart {
     Disabled,
     /// The receiver has no HEOS, see [`Info::has_heos`].
     NotSupported,
-    /// This start opened the connection. The player can still be missing,
-    /// see `Avr::watch_heos_status`.
-    Open,
+    /// The start opens the connection in the background. See
+    /// `Avr::watch_heos_status` for the result and `Avr::heos_start_error`
+    /// for the error of a failed connect.
+    Started,
     /// A connection was already open or being opened, for example by
-    /// `Avr::heos_connect`.
+    /// `Avr::heos_connect`. It is also reported while `Avr::heos_disconnect`
+    /// runs: the start does not open HEOS then.
     AlreadyRunning,
-    /// The first connection failed. Nothing keeps trying.
-    Failed(Error),
     /// The start was stopped before it finished, so this is not known. It
     /// happens only when the runtime shuts down.
     Unknown,
@@ -202,8 +203,8 @@ pub struct StartReport {
     /// The telnet queries that the receiver did not answer, or whose list
     /// did not end, when [`TelnetSync::Done`]. Empty otherwise.
     pub telnet_not_answered: Vec<Cow<'static, str>>,
-    /// The HEOS connection. [`Started::basic_synced`] waits until it is
-    /// open or failed, but neither wait waits for the player.
+    /// What the start did with the HEOS connection. Neither wait waits for
+    /// HEOS.
     pub heos: HeosStart,
     /// The signal, the channels, the Audyssey settings and the HDMI output
     /// from `AppCommand0300.xml`, see [`Avr::update_signal_and_settings`].
@@ -415,6 +416,10 @@ impl Avr {
         };
         #[cfg(not(feature = "telnet"))]
         let telnet = TelnetStart::Disabled;
+        #[cfg(feature = "heos")]
+        let heos = self.start_heos(options);
+        #[cfg(not(feature = "heos"))]
+        let heos = HeosStart::Disabled;
         let avr = Arc::clone(self);
         let task = Arc::clone(&avr);
         #[cfg(feature = "telnet")]
@@ -427,7 +432,8 @@ impl Avr {
         };
         Ok(Started {
             handle: tokio::spawn(async move {
-                let report = task.finish_start(options, telnet, info_sender).await;
+                let report = task.finish_reads(options, telnet, info_sender).await;
+                let report = StartReport { heos, ..report };
                 drop(running);
                 report
             }),
@@ -475,38 +481,17 @@ impl Avr {
         }
     }
 
-    /// Opens HEOS next to the reads of the start.
-    async fn finish_start(
-        &self,
-        options: StartOptions,
-        telnet: TelnetStart,
-        info_sender: Option<oneshot::Sender<InfoCheck>>,
-    ) -> StartReport {
-        #[cfg(feature = "heos")]
-        let (heos, report) = tokio::join!(
-            self.start_heos(options),
-            self.finish_reads(options, telnet, info_sender)
-        );
-        #[cfg(not(feature = "heos"))]
-        let (heos, report) = (
-            HeosStart::Disabled,
-            self.finish_reads(options, telnet, info_sender).await,
-        );
-        StartReport { heos, ..report }
-    }
-
+    /// Opens HEOS in the background, without waiting for it.
     #[cfg(feature = "heos")]
-    async fn start_heos(&self, options: StartOptions) -> HeosStart {
+    fn start_heos(&self, options: StartOptions) -> HeosStart {
         if !options.heos {
-            return HeosStart::Disabled;
-        }
-        if !self.info.has_heos() {
-            return HeosStart::NotSupported;
-        }
-        match self.heos.connect().await {
-            Ok(true) => HeosStart::Open,
-            Ok(false) => HeosStart::AlreadyRunning,
-            Err(error) => HeosStart::Failed(error),
+            HeosStart::Disabled
+        } else if !self.info.has_heos() {
+            HeosStart::NotSupported
+        } else if self.heos.connect_in_background() {
+            HeosStart::Started
+        } else {
+            HeosStart::AlreadyRunning
         }
     }
 

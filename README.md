@@ -286,9 +286,10 @@ heos.play_preset(pid, 1).await?; // the first HEOS Favorite
 loop {
     match changes.recv().await {
         Ok(_) | Err(RecvError::Lagged(_)) => {
-            if let Some(state) = heos.player(pid) {
+            // Reads the state without a copy.
+            heos.with_player(pid, |state| {
                 println!("{:?}: {:?}", state.play_state, state.current_media());
-            }
+            });
         }
         Err(RecvError::Closed) => break,
     }
@@ -302,11 +303,15 @@ failed try, and then reads the state again. `HeosConfig` has the times. The
 `denon-marantz-heos-proto` crate has the protocol without IO.
 
 With the `heos` feature, `Avr` opens HEOS too. The start opens it in the
-background on receivers with HEOS (`Info::has_heos`); `StartOptions::heos`
-turns this off, and `Avr::heos_connect` opens it later. `Avr::watch_heos_status`
-says when the player of the receiver is found by its address or its serial
-number, and `Avr::heos` then gives it for playback. `Avr::heos_changes` gives
-the changes of the players, also after HEOS was closed and opened again.
+background on receivers with HEOS (`Info::has_heos`), and neither the start
+nor its waits wait for it. If the first connect fails, the status is
+`HeosPlayerStatus::Failed` with the reason, and `Avr::heos_start_error` has the
+error. `StartOptions::heos` turns this off, and `Avr::heos_connect` opens it
+later. `Avr::watch_heos_status` says when the player of the receiver is found
+by its address or its serial number, and `Avr::heos` then gives it for
+playback. `HeosPlayer::with_state` reads its state without a copy.
+`Avr::heos_changes` gives the changes of the players, also after HEOS was
+closed and opened again.
 Volume and mute stay on telnet and HTTP. The `denon_marantz::heos` module is
 the `denon-marantz-heos` crate.
 

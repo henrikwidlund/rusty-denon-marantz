@@ -27,10 +27,11 @@
 //! loop {
 //!     match changes.recv().await {
 //!         Ok(_) | Err(RecvError::Lagged(_)) => {
-//!             if let Some(state) = heos.player(pid) {
-//!                 // A stopped player keeps its last item. `current_media` hides it.
+//!             // Reads the state without a copy. A stopped player keeps its
+//!             // last item. `current_media` hides it.
+//!             heos.with_player(pid, |state| {
 //!                 println!("{:?}: {:?}", state.play_state, state.current_media());
-//!             }
+//!             });
 //!         }
 //!         Err(RecvError::Closed) => break,
 //!     }
