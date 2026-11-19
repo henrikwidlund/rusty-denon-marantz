@@ -26,7 +26,9 @@ state again.
 - Video and signal: HDMI output, video mode, scaler, input and output signal.
 - Receiver: eco, dimmer, locks, triggers, Bluetooth transmitter, video select,
   remote keys. For older receivers also REC SELECT and InstaPrevue.
-- Tuner: band, mode, frequency, presets and preset names. HD Radio in North
+- Tuner: band, mode, frequency, presets and preset names. Presets work in the
+  form 01 to 56 and in the form A1 to G8 of older receivers; the library uses
+  the form that the receiver reports. HD Radio in North
   America models: frequency, multicast channel, presets, signal level and
   station information.
 - Network audio of older receivers: next, previous, repeat, random, cursor,
@@ -362,10 +364,15 @@ have not run on a receiver:
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver
   sends no answer or error, so the state shows no change.
-- Dialog Level Adjust (`PSDIL`), Audyssey DSX (`PSDSX`, `PSSTW`, `PSSTH`)
-  and the Pro Logic IIz height gain (`PSPHG`). They follow the Denon AVR
-  control protocol Ver.06 for the 2014 models and are tested with unit tests
-  only. The state keeps their events as text in `other`.
+- The settings of older receivers: Pro Logic mode (`PSMODE`), surround back
+  mode (`PSSB`), dynamic compression (`PSDCO`), auto flag detect (`PSAFD`),
+  Dialog Level Adjust (`PSDIL`), Audyssey DSX (`PSDSX`, `PSSTW`, `PSSTH`), the
+  Pro Logic IIz height gain (`PSPHG`), front height output (`PSFH`) and
+  InstaPrevue (`MNPRV`). They follow the Denon protocol specifications of 2011
+  to 2015 and the Marantz one of 2013, and are tested with unit tests only.
+  The AVC-A10H does not answer `PSFH: ?`.
+- Tuner presets in the form A1 to G8, and the 36 network presets of 2014 and
+  2015 Denon receivers. They follow the protocol specifications.
 - Dirac filters other than Dirac ART. Only Dirac ART was tested for locking the
   channel levels and the crossovers.
 - The value `WhenOn` of the network control setting: the network answers only
