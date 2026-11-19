@@ -21,6 +21,7 @@ use tokio::time::Instant;
 
 use crate::client::{Answer, HeosConfig};
 use crate::error::Error;
+use crate::host::UrlHost;
 use crate::state::{Change, HeosStatus, Shared};
 
 /// Bytes read at once.
@@ -784,7 +785,7 @@ async fn refusing_requests<T>(
 
 /// Opens one connection to the device.
 async fn open(host: &str, config: &HeosConfig) -> Result<TcpStream, Error> {
-    let request = || format!("HEOS connect {host}:{}", config.port);
+    let request = || format!("HEOS connect {}:{}", UrlHost(host), config.port);
     match tokio::time::timeout(
         config.connect_timeout,
         TcpStream::connect((host, config.port)),

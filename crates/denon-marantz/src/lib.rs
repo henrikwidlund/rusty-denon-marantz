@@ -88,6 +88,8 @@ mod dirac;
 #[cfg(feature = "discovery")]
 mod discovery;
 #[cfg(feature = "http")]
+mod host;
+#[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
 mod identify;

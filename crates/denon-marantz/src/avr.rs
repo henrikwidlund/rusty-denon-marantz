@@ -171,7 +171,7 @@ pub enum UpdateMethod {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Info {
-    /// Host that was given.
+    /// Host that was given. An IPv6 address is without brackets.
     pub host: String,
     /// Generation of the receiver.
     pub receiver_type: ReceiverType,
@@ -343,11 +343,12 @@ impl Missing {
 }
 
 impl Avr {
-    /// Starts the settings for a receiver at `host`.
+    /// Starts the settings for a receiver at `host`: a host name or an IP
+    /// address. An IPv6 address can have brackets.
     #[must_use]
     pub fn builder(host: impl Into<String>) -> AvrBuilder {
         AvrBuilder {
-            host: host.into(),
+            host: crate::host::into_bare(host.into()),
             http: HttpConfig::default(),
             web_interface: WEB_INTERFACE_CONFIG,
             web_interface_port: WEB_INTERFACE_PORT,
@@ -842,7 +843,7 @@ impl Avr {
     pub fn artwork_url(&self) -> Option<String> {
         use std::hash::{Hash, Hasher};
 
-        let host = &self.info.host;
+        let host = crate::host::UrlHost(&self.info.host);
         let port = self.info.port;
         match self.playing_kind()? {
             PlayingKind::NetAudio => {

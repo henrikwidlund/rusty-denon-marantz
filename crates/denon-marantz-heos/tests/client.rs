@@ -5,8 +5,8 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    Fake, IP, PID, Reply, answer, config, connect, counter, event, failure, from_data, name,
-    next_change, now_playing, wait_until,
+    Fake, IP, LOOPBACK, LOOPBACK_V6, PID, Reply, answer, config, connect, counter, event, failure,
+    from_data, name, next_change, now_playing, wait_until,
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
@@ -352,8 +352,17 @@ async fn a_silent_device_counts_as_lost() {
 }
 
 #[tokio::test]
+async fn an_ipv6_host_works_with_and_without_brackets() {
+    let fake = Fake::start_on(LOOPBACK_V6, from_data).await;
+    for host in ["[::1]", "::1"] {
+        let heos = Heos::connect_with(host, config(fake.port)).await.unwrap();
+        assert_eq!(heos.status(), HeosStatus::Connected);
+    }
+}
+
+#[tokio::test]
 async fn connect_fails_without_a_device() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(LOOPBACK).await.unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     let error = Heos::connect_with("127.0.0.1", config(port))

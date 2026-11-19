@@ -7,10 +7,10 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, FakeTelnet, Reply,
-    appcommand0300_answer, avr_x_receiver, avr_x_receiver_with_info, avr_x_receiver_with_pages,
-    builder, output_settings_item, quick_follow_up, receiver_with_audyssey,
-    receiver_with_info_and_signal_answers, wait_until,
+    AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, FakeTelnet, LOOPBACK_V6, Reply,
+    appcommand0300_answer, avr_x_receiver, avr_x_receiver_on, avr_x_receiver_with_info,
+    avr_x_receiver_with_pages, builder, output_settings_item, quick_follow_up,
+    receiver_with_audyssey, receiver_with_info_and_signal_answers, wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
@@ -2412,6 +2412,33 @@ async fn now_playing_is_read_for_the_source_that_plays() {
     source("CD").await;
     avr.update_now_playing().await.unwrap();
     assert!(avr.snapshot().device().now_playing.is_empty());
+}
+
+#[tokio::test]
+async fn an_ipv6_host_works_with_and_without_brackets() {
+    let http = avr_x_receiver_on(LOOPBACK_V6).await;
+    for host in ["[::1]", "::1"] {
+        let telnet = FakeTelnet::start_on(LOOPBACK_V6).await;
+        let avr = Avr::builder(host)
+            .http_config(common::config())
+            .background_pause(Duration::ZERO)
+            .probes(&[(ReceiverType::AvrX, http.port)])
+            .description_port(http.port)
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap();
+        assert_eq!(avr.info().host, "::1");
+        avr.telnet_connect().await.unwrap();
+        telnet.send(b"SINET\r");
+        wait_until("the source", || {
+            avr.snapshot().zone(Zone::Main).source.as_deref() == Some("NET")
+        })
+        .await;
+        let cover = avr.artwork_url().unwrap();
+        let start = format!("http://[::1]:{}/", http.port);
+        assert!(cover.starts_with(&start), "{cover}");
+    }
 }
 
 #[tokio::test]

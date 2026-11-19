@@ -154,10 +154,11 @@ impl Heos {
     /// Opens the connections and reads the players and their state. Returns
     /// when the state is read. It is an error if the players cannot be read.
     ///
-    /// `host` is a host name or an IP address.
+    /// `host` is a host name or an IP address. An IPv6 address can have
+    /// brackets.
     pub async fn connect_with(host: impl Into<String>, config: HeosConfig) -> Result<Self, Error> {
         config.check()?;
-        let host = host.into();
+        let host = crate::host::into_bare(host.into());
         let connections = Connections::open(&host, &config).await?;
         let shared = Shared::new();
         let (shutdown, shutdown_receiver) = watch::channel(false);

@@ -23,6 +23,12 @@ pub(crate) const PID: PlayerId = PlayerId(1_234_567);
 /// The IP address of the player in [`DATA`].
 pub(crate) const IP: &str = "192.168.1.20";
 
+/// The address that the fakes listen on.
+pub(crate) const LOOPBACK: &str = "127.0.0.1:0";
+
+/// The IPv6 address that the fakes can listen on.
+pub(crate) const LOOPBACK_V6: &str = "[::1]:0";
+
 /// Short times, so that tests are quick.
 pub(crate) const fn config(port: u16) -> HeosConfig {
     HeosConfig {
@@ -132,7 +138,15 @@ pub(crate) struct Fake {
 
 impl Fake {
     pub(crate) async fn start(handler: impl Fn(&str) -> Reply + Send + Sync + 'static) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::start_on(LOOPBACK, handler).await
+    }
+
+    /// Like [`Fake::start`], on the address `bind`.
+    pub(crate) async fn start_on(
+        bind: &str,
+        handler: impl Fn(&str) -> Reply + Send + Sync + 'static,
+    ) -> Self {
+        let listener = TcpListener::bind(bind).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let fake = Self {
             port,

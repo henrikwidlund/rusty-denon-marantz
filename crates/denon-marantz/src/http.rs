@@ -19,6 +19,7 @@ use hyper_util::rt::TokioExecutor;
 use tokio::time::Instant;
 
 use crate::error::Error;
+use crate::host::{UrlHost, bare};
 use crate::pacer::{Adaptive, Pacer, Pacing};
 use crate::priority::Priority;
 
@@ -93,18 +94,14 @@ pub struct HttpClient {
 }
 
 impl HttpClient {
-    /// Creates a client. It does not connect yet.
+    /// Creates a client. It does not connect yet. An IPv6 address in `host`
+    /// can have brackets.
     ///
     /// # Errors
     ///
     /// Returns an error if the host is not valid or a setting is out of range.
     pub fn new(host: &str, port: u16, config: HttpConfig) -> Result<Self, Error> {
-        let authority = if host.contains(':') && !host.starts_with('[') {
-            format!("[{host}]:{port}")
-        } else {
-            format!("{host}:{port}")
-        };
-        let authority = authority
+        let authority = format!("{}:{port}", UrlHost(bare(host)))
             .parse()
             .map_err(|e| Error::InvalidRequest(format!("host {host:?}: {e}")))?;
         let mut connector = HttpConnector::new();

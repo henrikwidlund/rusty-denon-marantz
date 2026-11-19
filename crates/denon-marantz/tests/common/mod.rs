@@ -56,7 +56,15 @@ pub(crate) struct Fake {
 
 impl Fake {
     pub(crate) async fn start(handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::start_on(LOOPBACK, handler).await
+    }
+
+    /// Like [`Fake::start`], on the address `bind`.
+    pub(crate) async fn start_on(
+        bind: &str,
+        handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static,
+    ) -> Self {
+        let listener = TcpListener::bind(bind).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let connections = Arc::new(AtomicUsize::new(0));
@@ -163,6 +171,12 @@ async fn read_request(socket: &mut TcpStream, buffer: &mut Vec<u8>) -> Option<Se
 
 // ---------------------------------------------------------------------------
 // A receiver for `Avr`
+
+/// The address that the fakes listen on.
+pub(crate) const LOOPBACK: &str = "127.0.0.1:0";
+
+/// The IPv6 address that the fakes can listen on.
+pub(crate) const LOOPBACK_V6: &str = "[::1]:0";
 
 pub(crate) const DESCRIPTION: &[u8] =
     include_bytes!("../../../denon-marantz-proto/tests/data/xml/AVR-X1600H-description.xml");
@@ -333,22 +347,28 @@ pub(crate) async fn avr_x_receiver_with_pages(
     info: &'static [u8],
     pages: &'static [(&'static str, &'static [u8])],
 ) -> Fake {
-    avr_x_receiver_with(info, pages, Arc::new(AtomicBool::new(false))).await
+    avr_x_receiver_with(LOOPBACK, info, pages, Arc::new(AtomicBool::new(false))).await
+}
+
+/// Like [`avr_x_receiver`], on the address `bind`.
+pub(crate) async fn avr_x_receiver_on(bind: &str) -> Fake {
+    avr_x_receiver_with(bind, AVR_X_INFO, &[], Arc::new(AtomicBool::new(false))).await
 }
 
 /// Like [`avr_x_receiver`]. It does not answer `AppCommand` requests while
 /// `hang` is true.
 pub(crate) async fn avr_x_receiver_that_can_hang(hang: Arc<AtomicBool>) -> Fake {
-    avr_x_receiver_with(AVR_X_INFO, &[], hang).await
+    avr_x_receiver_with(LOOPBACK, AVR_X_INFO, &[], hang).await
 }
 
 async fn avr_x_receiver_with(
+    bind: &str,
     info: &'static [u8],
     pages: &'static [(&'static str, &'static [u8])],
     hang: Arc<AtomicBool>,
 ) -> Fake {
-    Fake::start(
-        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+    Fake::start_on(bind, move |seen| {
+        match (seen.method.as_str(), seen.path.as_str()) {
             ("POST", "/goform/AppCommand.xml") if hang.load(Ordering::SeqCst) => Reply::Hang,
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
             ("GET", "/description.xml") => Reply::Body(DESCRIPTION.to_vec()),
@@ -372,8 +392,8 @@ async fn avr_x_receiver_with(
             }
             ("POST", "/goform/AppCommand.xml") => Reply::Body(update_answer_for(&seen.body)),
             _ => Reply::Status(404),
-        },
-    )
+        }
+    })
     .await
 }
 
@@ -572,7 +592,12 @@ pub(crate) struct FakeTelnet {
 
 impl FakeTelnet {
     pub(crate) async fn start() -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::start_on(LOOPBACK).await
+    }
+
+    /// Like [`FakeTelnet::start`], on the address `bind`.
+    pub(crate) async fn start_on(bind: &str) -> Self {
+        let listener = TcpListener::bind(bind).await.unwrap();
         let port = listener.local_addr().unwrap().port();
         let fake = Self {
             port,

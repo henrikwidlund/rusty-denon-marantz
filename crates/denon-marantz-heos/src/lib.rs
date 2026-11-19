@@ -63,6 +63,7 @@
 
 mod client;
 mod error;
+mod host;
 mod state;
 mod worker;
 

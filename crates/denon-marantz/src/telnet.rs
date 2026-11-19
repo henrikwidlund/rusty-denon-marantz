@@ -29,6 +29,7 @@ use tokio::time::Instant;
 
 use crate::channels::Channels;
 use crate::error::Error;
+use crate::host::UrlHost;
 
 /// Events that a slow subscriber can fall behind before it loses some.
 const EVENT_CAPACITY: usize = 256;
@@ -955,7 +956,7 @@ async fn refusing_requests<T>(
 
 /// Opens a connection to the receiver.
 async fn open(host: &str, config: &TelnetConfig) -> Result<TcpStream, Error> {
-    let request = || format!("telnet connect {host}:{}", config.port);
+    let request = || format!("telnet connect {}:{}", UrlHost(host), config.port);
     match tokio::time::timeout(
         config.connect_timeout,
         TcpStream::connect((host, config.port)),
