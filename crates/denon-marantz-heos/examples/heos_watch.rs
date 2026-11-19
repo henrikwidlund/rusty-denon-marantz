@@ -3,8 +3,8 @@
 //! Play, pause or skip in the HEOS app, and watch the lines that follow.
 //!
 //! ```sh
-//! cargo run -p denon-marantz-heos --example watch -- 192.168.1.20
-//! RUST_LOG=denon_marantz_heos=debug cargo run -p denon-marantz-heos --example watch -- 192.168.1.20
+//! cargo run -p denon-marantz-heos --example heos_watch -- 192.168.1.20
+//! RUST_LOG=denon_marantz_heos=debug cargo run -p denon-marantz-heos --example heos_watch -- 192.168.1.20
 //! ```
 //!
 //! The output can have personal data, for example a title that plays.

@@ -443,8 +443,8 @@ cargo run -p denon-marantz --example status -- 192.168.1.20
 cargo run -p denon-marantz --example watch -- 192.168.1.20
 cargo run -p denon-marantz --example start -- 192.168.1.20
 cargo run -p denon-marantz --example remote -- 192.168.1.20 volume -35
-cargo run -p denon-marantz-heos --example watch -- 192.168.1.20
-cargo run -p denon-marantz-heos --example remote -- 192.168.1.20
+cargo run -p denon-marantz-heos --example heos_watch -- 192.168.1.20
+cargo run -p denon-marantz-heos --example heos_remote -- 192.168.1.20
 ```
 
 `http_check` tests commands over HTTP on a real receiver. It changes settings and
@@ -455,7 +455,7 @@ serial number and the MAC address of each receiver. Remove them before you
 share the output. `start` shows how long `Avr::start` takes and what it read.
 `remote` runs one command, the header of the file lists them.
 
-The HEOS `watch` prints what changes. The HEOS `remote` reads commands from
+`heos_watch` prints what changes. `heos_remote` reads commands from
 the standard input, one per line, the header of the file lists them. Their
 output can have personal data, for example a title that plays.
 

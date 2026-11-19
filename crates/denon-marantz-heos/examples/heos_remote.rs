@@ -2,8 +2,8 @@
 //! per line, and prints what changes, until you press Ctrl-C.
 //!
 //! ```sh
-//! cargo run -p denon-marantz-heos --example remote -- 192.168.1.20
-//! echo "preset 1" | cargo run -p denon-marantz-heos --example remote -- 192.168.1.20
+//! cargo run -p denon-marantz-heos --example heos_remote -- 192.168.1.20
+//! echo "preset 1" | cargo run -p denon-marantz-heos --example heos_remote -- 192.168.1.20
 //! ```
 //!
 //! The commands go to the player with the IP address of the host, or else to
