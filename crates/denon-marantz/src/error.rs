@@ -459,8 +459,12 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let client =
-            crate::HttpClient::new("127.0.0.1", port, crate::HttpConfig::default()).unwrap();
+        // Windows tries a refused connect again for about 2s before it fails.
+        let config = crate::HttpConfig {
+            connect_timeout: Duration::from_secs(10),
+            ..crate::HttpConfig::default()
+        };
+        let client = crate::HttpClient::new("127.0.0.1", port, config).unwrap();
         let error = client.get("/").await.unwrap_err();
         assert!(error.is_connection_refused(), "{error}");
     }
