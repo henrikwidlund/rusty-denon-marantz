@@ -33,6 +33,8 @@ use crate::details::{
 use crate::device_control::{DeviceControl, ResetKeys};
 use crate::dirac::Dirac;
 use crate::error::Error;
+#[cfg(feature = "heos")]
+use crate::heos_link::{HeosLink, HeosPlayer, HeosPlayerStatus};
 use crate::http::{HttpClient, HttpConfig};
 use crate::identify::{Identified, TypeProof, identify, identify_on};
 use crate::pacer::Pacing;
@@ -52,7 +54,7 @@ use follow_up::FollowUp;
 
 pub use follow_up::FollowUpRead;
 pub use start::{
-    InfoCheck, StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync,
+    HeosStart, InfoCheck, StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync,
 };
 
 /// Name of a receiver that has none.
@@ -193,7 +195,7 @@ pub struct Info {
     pub serial_number: Option<String>,
     /// Name that the user gave the receiver.
     pub friendly_name: String,
-    /// Version of the communication API.
+    /// Version of the communication API. See [`Info::has_heos`].
     pub comm_api_version: Option<String>,
     /// MAC address of the wired network, as 12 hexadecimal digits without
     /// separators.
@@ -220,6 +222,18 @@ pub struct Info {
     /// Number of zones that the device information lists. `None` if it does
     /// not say: [`Info::zones`] has the main zone only then.
     pub zone_count: Option<u8>,
+}
+
+impl Info {
+    /// Returns true if the receiver has HEOS: [`Info::comm_api_version`] is
+    /// 0301 or higher.
+    #[must_use]
+    pub fn has_heos(&self) -> bool {
+        self.comm_api_version
+            .as_deref()
+            .and_then(|version| version.parse::<u16>().ok())
+            .is_some_and(|version| version >= 301)
+    }
 }
 
 /// Settings of the requests to the web interface. A receiver without it
@@ -254,6 +268,8 @@ pub struct AvrBuilder {
     background_pause: Duration,
     #[cfg(feature = "telnet")]
     telnet: TelnetConfig,
+    #[cfg(feature = "heos")]
+    heos: denon_marantz_heos::HeosConfig,
 }
 
 /// A receiver that is read over HTTP.
@@ -296,6 +312,8 @@ pub struct Avr {
     starting: AtomicBool,
     #[cfg(feature = "telnet")]
     telnet: Telnet,
+    #[cfg(feature = "heos")]
+    heos: HeosLink,
     /// The reset key that was given out last.
     reset_keys: ResetKeys,
     /// Commands over HTTP go one after the other, and before the HTTP reads.
@@ -360,6 +378,8 @@ impl Avr {
             background_pause: Duration::from_millis(250),
             #[cfg(feature = "telnet")]
             telnet: TelnetConfig::default(),
+            #[cfg(feature = "heos")]
+            heos: denon_marantz_heos::HeosConfig::default(),
         }
     }
 
@@ -956,6 +976,67 @@ impl Avr {
     #[cfg(feature = "telnet")]
     pub async fn telnet_disconnect(&self) {
         self.telnet.disconnect().await;
+    }
+
+    /// Opens the HEOS connection and keeps it open, for the playback of the
+    /// HEOS player of the receiver: see [`Avr::heos`]. Volume and mute stay on
+    /// telnet and HTTP. If the connection is lost, a task connects again.
+    /// Does nothing while the connection is open. Dropping the `Avr` closes
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::HeosNotSupported`] if [`Info::has_heos`] is false, and
+    /// [`Error::Heos`] if the first connection fails. Nothing keeps trying
+    /// then.
+    #[cfg(feature = "heos")]
+    pub async fn heos_connect(&self) -> Result<(), Error> {
+        self.heos.connect().await.map(|_| ())
+    }
+
+    /// Closes the HEOS connection, also for a client from
+    /// [`HeosPlayer::client`] that is kept.
+    #[cfg(feature = "heos")]
+    pub async fn heos_disconnect(&self) {
+        self.heos.disconnect().await;
+    }
+
+    /// Watches the HEOS player of the receiver. It is
+    /// [`HeosPlayerStatus::Ready`] when [`Avr::heos`] gives the player.
+    #[cfg(feature = "heos")]
+    #[must_use]
+    pub fn watch_heos_status(&self) -> watch::Receiver<HeosPlayerStatus> {
+        self.heos.watch_status()
+    }
+
+    /// Subscribes to the changes of the HEOS players, as
+    /// [`Heos::changes`](denon_marantz_heos::Heos::changes) gives them. One
+    /// subscription gets the changes of each connection, also after
+    /// [`Avr::heos_disconnect`] and a new [`Avr::heos_connect`]. Read the
+    /// values with [`Avr::heos`]. The changes of the first read of a
+    /// connection are not passed on: read the state when
+    /// [`Avr::watch_heos_status`] becomes [`HeosPlayerStatus::Ready`]. A
+    /// subscriber that falls behind loses the oldest changes and gets
+    /// `Lagged`: read the state again then. If the library itself loses
+    /// changes of the connection, it sends a change of each kind for each
+    /// player instead.
+    #[cfg(feature = "heos")]
+    #[must_use]
+    pub fn heos_changes(&self) -> broadcast::Receiver<denon_marantz_heos::Change> {
+        self.heos.changes()
+    }
+
+    /// The HEOS player of the receiver, while [`Avr::watch_heos_status`] is
+    /// [`HeosPlayerStatus::Ready`]. It is the player with the address of the
+    /// receiver, else the one with its serial number
+    /// ([`Info::serial_number`]). If neither matches, for example when a host
+    /// name resolves to an IPv6 address and HEOS lists an IPv4 address, and
+    /// the serial number is not known, the status stays
+    /// [`HeosPlayerStatus::WaitingForPlayer`].
+    #[cfg(feature = "heos")]
+    #[must_use]
+    pub fn heos(&self) -> Option<HeosPlayer> {
+        self.heos.player()
     }
 
     /// Watches the telnet connection. It is disconnected until
@@ -1723,6 +1804,14 @@ impl AvrBuilder {
         self
     }
 
+    /// Settings of the HEOS connection, see [`Avr::heos_connect`].
+    #[cfg(feature = "heos")]
+    #[must_use]
+    pub const fn heos_config(mut self, config: denon_marantz_heos::HeosConfig) -> Self {
+        self.heos = config;
+        self
+    }
+
     /// Identifies the receiver and reads what it tells about itself. With
     /// [`AvrBuilder::known`], it uses the values given there and sends no
     /// request.
@@ -1811,6 +1900,13 @@ impl AvrBuilder {
             #[cfg(feature = "telnet")]
             telnet.watch_status(),
         )?;
+        #[cfg(feature = "heos")]
+        let heos = HeosLink::new(
+            info.host.clone(),
+            info.serial_number.clone(),
+            self.heos,
+            info.has_heos(),
+        );
         Ok(Avr {
             http,
             web_interface: HttpClient::new(
@@ -1839,6 +1935,8 @@ impl AvrBuilder {
             starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
             telnet,
+            #[cfg(feature = "heos")]
+            heos,
             reset_keys: ResetKeys::default(),
             priority,
             follow_up,

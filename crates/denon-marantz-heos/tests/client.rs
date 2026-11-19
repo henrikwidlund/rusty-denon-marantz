@@ -352,6 +352,27 @@ async fn a_silent_device_counts_as_lost() {
 }
 
 #[tokio::test]
+async fn shutdown_closes_the_connections_for_all_references() {
+    let fake = Fake::start(from_data).await;
+    let heos = std::sync::Arc::new(connect(&fake).await);
+    let other = std::sync::Arc::clone(&heos);
+    heos.shutdown();
+    // Refused at once, before the task has ended.
+    assert!(other.play_next(PID).await.unwrap_err().is_not_connected());
+    assert_eq!(fake.count("player/play_next"), 0);
+    let mut status = other.watch_status();
+    let closed = status.wait_for(|now| *now == HeosStatus::Disconnected);
+    tokio::time::timeout(Duration::from_secs(2), closed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(other.play_next(PID).await.unwrap_err().is_not_connected());
+    // It does not connect again.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(fake.connections(), 2);
+}
+
+#[tokio::test]
 async fn an_ipv6_host_works_with_and_without_brackets() {
     let fake = Fake::start_on(LOOPBACK_V6, from_data).await;
     for host in ["[::1]", "::1"] {

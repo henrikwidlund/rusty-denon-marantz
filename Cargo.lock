@@ -256,6 +256,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "denon-marantz-discovery",
+ "denon-marantz-heos",
  "denon-marantz-proto",
  "http-body-util",
  "hyper",

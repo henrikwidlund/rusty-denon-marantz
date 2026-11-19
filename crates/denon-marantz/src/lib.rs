@@ -87,6 +87,8 @@ mod device_control;
 mod dirac;
 #[cfg(feature = "discovery")]
 mod discovery;
+#[cfg(feature = "heos")]
+mod heos_link;
 #[cfg(feature = "http")]
 mod host;
 #[cfg(feature = "http")]
@@ -110,6 +112,8 @@ mod video_control;
 #[cfg(feature = "http")]
 mod zone_control;
 
+#[cfg(feature = "heos")]
+pub use denon_marantz_heos as heos;
 pub use denon_marantz_proto as proto;
 pub use denon_marantz_proto::{
     Brand, Change, Channel, ChannelLayout, ChannelLevel, DeviceState, InOut, ListedQueries,
@@ -117,14 +121,16 @@ pub use denon_marantz_proto::{
     TunerBands, TunerInfo, VideoColor, Volume, Zone, ZoneState,
 };
 pub use error::{Error, ToneBlocker};
+#[cfg(feature = "heos")]
+pub use heos_link::{HeosPlayer, HeosPlayerStatus};
 pub use pacer::{Adaptive, Pacer, Pacing};
 
 #[cfg(feature = "http")]
 pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{
-    Avr, AvrBuilder, FollowUpRead, Info, InfoCheck, StartOptions, StartPages, StartReport, Started,
-    TelnetStart, TelnetSync, UpdateMethod,
+    Avr, AvrBuilder, FollowUpRead, HeosStart, Info, InfoCheck, StartOptions, StartPages,
+    StartReport, Started, TelnetStart, TelnetSync, UpdateMethod,
 };
 #[cfg(feature = "http")]
 pub use denon_marantz_proto::RemoteKey;

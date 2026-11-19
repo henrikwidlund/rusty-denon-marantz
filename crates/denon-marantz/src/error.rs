@@ -205,6 +205,14 @@ pub enum Error {
     /// was used, or it is older than 60 seconds.
     #[error("the reset key is not valid")]
     ResetKeyInvalid,
+    /// The HEOS connection failed.
+    #[cfg(feature = "heos")]
+    #[error("HEOS: {0}")]
+    Heos(#[source] denon_marantz_heos::Error),
+    /// The receiver has no HEOS, see [`Info::has_heos`](crate::Info::has_heos).
+    #[cfg(feature = "heos")]
+    #[error("the receiver has no HEOS")]
+    HeosNotSupported,
 }
 
 impl Error {
@@ -242,6 +250,8 @@ impl Error {
             | Self::DiracNotSupported
             | Self::InvalidConfig(_)
             | Self::ResetKeyInvalid => None,
+            #[cfg(feature = "heos")]
+            Self::Heos(_) | Self::HeosNotSupported => None,
         }
     }
 
@@ -284,11 +294,15 @@ impl Error {
     }
 
     /// Returns true if this receiver or zone does not have the function:
-    /// Dirac Live, a zone, the sound mode of a zone or a remote key, or if the
+    /// Dirac Live, HEOS, a zone, the sound mode of a zone or a remote key, or if the
     /// way does not allow it: a query over HTTP. Another try gives the same
     /// error. Nothing was sent.
     #[must_use]
     pub const fn is_unsupported(&self) -> bool {
+        #[cfg(feature = "heos")]
+        if matches!(self, Self::HeosNotSupported) {
+            return true;
+        }
         matches!(
             self,
             Self::Unsupported(_)

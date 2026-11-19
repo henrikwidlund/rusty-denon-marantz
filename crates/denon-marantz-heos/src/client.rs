@@ -392,6 +392,14 @@ impl Heos {
         read.await.unwrap_or(Err(Error::NotConnected))
     }
 
+    /// Stops the task and closes the connections, also while other
+    /// references to this value exist. Calls after it return
+    /// [`Error::NotConnected`] at once. It does not wait for the task to end,
+    /// see [`Heos::close`].
+    pub fn shutdown(&self) {
+        let _ = self.shutdown.send(true);
+    }
+
     /// Stops the task and closes the connections.
     pub async fn close(mut self) {
         let _ = self.shutdown.send(true);
@@ -415,9 +423,10 @@ impl Heos {
     }
 
     /// Passes a request to the task. A request is refused while there is no
-    /// connection: it would be sent late, after a connect.
+    /// connection: it would be sent late, after a connect. It is also refused
+    /// after [`Heos::shutdown`], before the task has ended.
     async fn request(&self, request: Request) -> Result<(), Error> {
-        if self.status() != HeosStatus::Connected {
+        if *self.shutdown.borrow() || self.status() != HeosStatus::Connected {
             return Err(Error::NotConnected);
         }
         self.requests

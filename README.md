@@ -298,6 +298,15 @@ sent is not sent. It connects again after a drop, waits longer after each
 failed try, and then reads the state again. `HeosConfig` has the times. The
 `denon-marantz-heos-proto` crate has the protocol without IO.
 
+With the `heos` feature, `Avr` opens HEOS too. The start opens it in the
+background on receivers with HEOS (`Info::has_heos`); `StartOptions::heos`
+turns this off, and `Avr::heos_connect` opens it later. `Avr::watch_heos_status`
+says when the player of the receiver is found by its address or its serial
+number, and `Avr::heos` then gives it for playback. `Avr::heos_changes` gives
+the changes of the players, also after HEOS was closed and opened again.
+Volume and mute stay on telnet and HTTP. The `denon_marantz::heos` module is
+the `denon-marantz-heos` crate.
+
 Notes about HEOS:
 
 - The AVC-A10H has one player for all its zones.
@@ -325,6 +334,7 @@ Notes about HEOS:
 | `http` | yes | AppCommand XML, the web interface and commands over HTTP. |
 | `discovery` | yes | Receiver search with SSDP. Needs `http`. |
 | `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
+| `heos` | no | The HEOS player of the receiver for playback (`Avr::heos`). Needs `http`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
 | `serde` | no | `Serialize` and `Deserialize` for `Info`, to store it for `AvrBuilder::known`. |
 

@@ -14,6 +14,7 @@ repository = "https://github.com/henrikwidlund/rusty-denon-marantz"
 denon-marantz-proto = { path = "crates/denon-marantz-proto", version = "0.1.0" }
 denon-marantz-discovery = { path = "crates/denon-marantz-discovery", version = "0.1.0" }
 denon-marantz-heos-proto = { path = "crates/denon-marantz-heos-proto", version = "0.1.0" }
+denon-marantz-heos = { path = "crates/denon-marantz-heos", version = "0.1.0" }
 thiserror = "2"
 quick-xml = "0.42"
 serde = { version = "1", features = ["derive"] }

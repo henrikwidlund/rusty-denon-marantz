@@ -21,8 +21,10 @@ http = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:t
 discovery = ["http", "tokio/rt", "dep:denon-marantz-discovery", "dep:if-addrs", "dep:socket2"]
 # Find receivers with mDNS too. Opens its own multicast sockets and a thread.
 mdns = ["discovery", "tokio/macros", "dep:mdns-sd"]
+# The HEOS player of the receiver, for playback. See `Avr::heos`.
+heos = ["http", "dep:denon-marantz-heos"]
 # Full message dumps in trace logs. Can contain personal data.
-sensitive-logs = []
+sensitive-logs = ["denon-marantz-heos?/sensitive-logs"]
 # Serialize and Deserialize for `Info`, to store it for `AvrBuilder::known`.
 serde = ["dep:serde", "denon-marantz-proto/serde"]
 
@@ -30,6 +32,7 @@ serde = ["dep:serde", "denon-marantz-proto/serde"]
 bytes = { workspace = true, optional = true }
 denon-marantz-proto.workspace = true
 denon-marantz-discovery = { workspace = true, optional = true }
+denon-marantz-heos = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }

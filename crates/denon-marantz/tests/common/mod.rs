@@ -552,11 +552,31 @@ pub(crate) fn bodies_after(fake: &Fake, known: usize, keep: impl Fn(&Seen) -> bo
 /// The settings for an `Avr` that talks to `fake`, with no pause after a
 /// command.
 pub(crate) fn builder(fake: &Fake, receiver_type: ReceiverType) -> AvrBuilder {
-    Avr::builder("127.0.0.1")
+    let builder = Avr::builder("127.0.0.1")
         .http_config(config())
         .background_pause(Duration::ZERO)
         .probes(&[(receiver_type, fake.port)])
-        .description_port(fake.port)
+        .description_port(fake.port);
+    #[cfg(feature = "heos")]
+    let builder = builder.heos_config(no_heos());
+    builder
+}
+
+/// HEOS settings that fail fast, so that a start does not wait for HEOS: no
+/// fake listens on the port.
+#[cfg(feature = "heos")]
+pub(crate) fn no_heos() -> denon_marantz::heos::HeosConfig {
+    let port = std::net::TcpListener::bind(LOOPBACK)
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    denon_marantz::heos::HeosConfig {
+        port,
+        connect_timeout: Duration::from_millis(200),
+        command_timeout: Duration::from_millis(200),
+        ..denon_marantz::heos::HeosConfig::default()
+    }
 }
 
 /// Waits until `condition` is true. Fails the test after two seconds.
