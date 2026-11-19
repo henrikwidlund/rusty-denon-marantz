@@ -164,10 +164,10 @@ pub struct StartReport {
     /// The signal, the channels, the Audyssey settings and the HDMI output
     /// from `AppCommand0300.xml`, see [`Avr::update_signal_and_settings`].
     /// [`PageStatus::Read`] means that the state has them. Some can be
-    /// missing if the receiver left them out. [`PageStatus::NotFound`]
-    /// means that the receiver does not have the file, and
-    /// [`PageStatus::NoAnswer`] that the request timed out or the connection
-    /// failed.
+    /// missing if the receiver left them out, or if the second of the two
+    /// requests of the start was not read. [`PageStatus::NotFound`] means
+    /// that the receiver does not have the file, and [`PageStatus::NoAnswer`]
+    /// that the request timed out or the connection failed.
     pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
