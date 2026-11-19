@@ -1424,7 +1424,7 @@ impl State {
                 setting: Setting::QuickSelectNames,
             });
         }
-        // Denon receivers send `ALSSET`, Marantz receivers `HOSALS`.
+        // Auto lip sync: `ALSSET`, `HOSALS` and `HOS` are read for both brands.
         if let Some(value) = ["ALSSET ", "HOSALS ", "HOS "]
             .iter()
             .find_map(|prefix| parameter.strip_prefix(prefix))
@@ -2614,8 +2614,8 @@ mod tests {
         assert_eq!(apply(&mut state, "OPALSSET ??"), None);
         assert_eq!(apply(&mut state, "OPALSVAL 000"), None);
         assert_eq!(state.device().auto_lip_sync, Some(false));
-        // The `SS` events: Denon pushes `ALSSET` when the input changes, and
-        // Marantz sends `HOSALS`.
+        // The `SS` events: `ALSSET`, `HOSALS` and `HOS` are read for both
+        // brands.
         assert_eq!(apply(&mut state, "SSALSSET ON"), lip_sync());
         assert_eq!(apply(&mut state, "SSALSSET ON"), None);
         assert_eq!(apply(&mut state, "SSALSDSP OFF"), None);

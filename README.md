@@ -157,7 +157,7 @@ a Marantz receiver.
 |---|---|---|---|---|
 | `Core` | yes | Power, source, volume and mute of the zones, sound mode, quick select | 9 | 9 |
 | `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots, quick select names | 7 | 7 |
-| `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 22 |
+| `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 23 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
 | `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 21 | 21 |
 | `Sound` | no | Sound settings and levels | 37 | 37 |

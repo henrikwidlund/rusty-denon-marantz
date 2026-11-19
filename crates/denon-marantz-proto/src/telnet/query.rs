@@ -58,8 +58,12 @@ query_values! {
         DacFilter,
         /// Illumination (Marantz).
         Illumination,
-        /// Auto lip sync.
+        /// Auto lip sync. Some Marantz receivers answer `SSALS` instead: ask
+        /// for both.
         AutoLipSync,
+        /// Auto lip sync (`SSALS`, Marantz), the other text for
+        /// [`AutoLipSync`](Self::AutoLipSync).
+        AutoLipSyncAls,
         /// Tone control on or off.
         ToneControl,
         /// Dynamic EQ.
@@ -519,7 +523,7 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
-static QUERIES: [Entry; 140] = [
+static QUERIES: [Entry; 141] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -536,6 +540,7 @@ static QUERIES: [Entry; 140] = [
     marantz(Toggles, Query::DacFilter, "PSDACFIL ?"), // DAC Filter
     marantz(Toggles, Query::Illumination, "ILB ?"), // Illumination
     marantz(Toggles, Query::AutoLipSync, "SSHOS ?"), // Auto Lip Sync
+    marantz(Toggles, Query::AutoLipSyncAls, "SSALS ?"), // Auto Lip Sync, current receivers
     both(Toggles, Query::ToneControl, "PSTONE CTRL ?"), // TONE
     both(Toggles, Query::DynamicEq, "PSDYNEQ ?"), // Dynamic EQ
     both(Toggles, Query::Lfc, "PSLFC ?"),  // Audyssey LFC
@@ -701,6 +706,8 @@ mod tests {
         assert_eq!(Query::QuickSelect.text(Brand::Marantz), Some("MSSMART ?"));
         assert_eq!(Query::AutoLipSync.text(Brand::Denon), Some("OPALS ?"));
         assert_eq!(Query::AutoLipSync.text(Brand::Marantz), Some("SSHOS ?"));
+        assert_eq!(Query::AutoLipSyncAls.text(Brand::Marantz), Some("SSALS ?"));
+        assert_eq!(Query::AutoLipSyncAls.text(Brand::Denon), None);
         assert_eq!(Query::SpeakerGraphicEq.text(Brand::Marantz), None);
     }
 
@@ -736,14 +743,21 @@ mod tests {
         assert!(denon.contains(&"MSQUICK ?"));
         assert!(!denon.contains(&"MSSMART ?"));
         assert!(marantz.contains(&"MSSMART ?"));
-        for query in ["PSMDAX ?", "PSDACFIL ?", "ILB ?", "SSHOS ?", "SSQSNZMA ?"] {
+        for query in [
+            "PSMDAX ?",
+            "PSDACFIL ?",
+            "ILB ?",
+            "SSHOS ?",
+            "SSALS ?",
+            "SSQSNZMA ?",
+        ] {
             assert!(marantz.contains(&query) && !denon.contains(&query));
         }
         for query in ["OPALS ?", "SSQS ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }
         assert_eq!(denon.len(), 131);
-        assert_eq!(marantz.len(), 128);
+        assert_eq!(marantz.len(), 129);
         for query in ["PSSB: ?", "PSAFD ?", "PSDIL ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }
