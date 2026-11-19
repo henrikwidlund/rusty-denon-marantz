@@ -112,8 +112,11 @@ while one still runs gives `Error::StartRunning` and reads nothing.
 
 `start` returns when the zones are read. `basic_synced()` waits until the HTTP
 reads and the pages are done. `all_synced()` also waits until the receiver has
-answered the telnet queries of the start, so the values that only telnet gives
-are in the state. Both are optional: values that arrive later come as events.
+answered the telnet queries of the start, and each list answer has its `END`
+line, so the values that only telnet gives are in the state. A query without an
+answer for `TelnetConfig::answer_quiet` (2 s) counts as not answered, and the
+report lists it in `telnet_not_answered`. Both are optional: values that arrive
+later come as events.
 Both keep the report, so `basic_synced()` and then `all_synced()` works, and a
 wait that was stopped by a timeout can be called again.
 More groups in `TelnetConfig::query_groups` are asked after the first queries,

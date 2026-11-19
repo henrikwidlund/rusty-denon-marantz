@@ -1,6 +1,7 @@
 //! The fast start: the state is usable after one HTTP request, and the rest
 //! fills in while the caller already works.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 #[cfg(feature = "telnet")]
@@ -88,7 +89,9 @@ impl StartOptions {
     /// How long [`Started::all_synced`] waits for the answers to the telnet
     /// queries. The default is 10 seconds. A start that asks more groups
     /// (see [`TelnetConfig::query_groups`](crate::TelnetConfig::query_groups))
-    /// needs more time.
+    /// needs more time. Keep it well above
+    /// [`TelnetConfig::answer_quiet`](crate::TelnetConfig::answer_quiet):
+    /// a query that is not answered ends the wait only after that time.
     #[cfg(feature = "telnet")]
     #[must_use]
     pub const fn telnet_wait(mut self, wait: Duration) -> Self {
@@ -159,16 +162,15 @@ pub struct StartPages {
 pub enum TelnetSync {
     /// [`Started::basic_synced`] does not wait for the answers.
     NotWaited,
-    /// The receiver answered a last query that was sent after the queries of
-    /// the start. It handles lines in order, so the state has the values that
-    /// it gave to the queries before it.
-    Answered,
+    /// Each query of the start is answered, or counts as not answered after
+    /// [`TelnetConfig::answer_quiet`](crate::TelnetConfig::answer_quiet), see
+    /// [`StartReport::telnet_not_answered`].
+    Done,
     /// Telnet is not open, so no queries were sent.
     NotOpen,
     /// The connection ended before the receiver answered.
     Lost,
-    /// The receiver did not answer the last query in time, see
-    /// [`StartOptions::telnet_wait`].
+    /// The answers did not end within [`StartOptions::telnet_wait`].
     NoAnswer,
 }
 
@@ -197,6 +199,9 @@ pub struct StartReport {
     /// If the receiver answered the telnet queries. Only [`Started::all_synced`]
     /// waits for this.
     pub telnet_sync: TelnetSync,
+    /// The telnet queries that the receiver did not answer, or whose list
+    /// did not end, when [`TelnetSync::Done`]. Empty otherwise.
+    pub telnet_not_answered: Vec<Cow<'static, str>>,
     /// The HEOS connection. [`Started::basic_synced`] waits until it is
     /// open or failed, but neither wait waits for the player.
     pub heos: HeosStart,
@@ -288,14 +293,11 @@ impl Started {
         self.report.get_or_insert_with(stopped_report)
     }
 
-    /// Waits as [`Started::basic_synced`] does, and then until the receiver has
-    /// answered a last query that is sent after the telnet queries of the
-    /// start. The receiver handles lines in order, so the answers to the
-    /// earlier queries are in the state then. A value that is still empty is
-    /// probably one that this receiver does not answer. The library cannot
-    /// check this: an event that looks like the answer, or a query that the
-    /// receiver drops, can leave a value for later. It takes as long as the
-    /// paced queries do, a few seconds, and ends with
+    /// Waits as [`Started::basic_synced`] does, and then until the telnet
+    /// queries of the start are answered, as [`Avr::telnet_sync`] does. The
+    /// queries that were not answered are in
+    /// [`StartReport::telnet_not_answered`]. It takes as long as the paced
+    /// queries and the lists do, a few seconds, and ends with
     /// [`TelnetSync::NoAnswer`] after [`StartOptions::telnet_wait`].
     ///
     /// A value that changes later arrives as an event, as always. A caller
@@ -317,27 +319,28 @@ impl Started {
             .is_some_and(|report| report.telnet_sync == TelnetSync::NotWaited)
         {
             #[cfg(feature = "telnet")]
-            let sync = if telnet_open {
+            let (sync, not_answered) = if telnet_open {
                 self.wait_for_telnet().await
             } else {
-                TelnetSync::NotOpen
+                (TelnetSync::NotOpen, Vec::new())
             };
             // Without telnet, the start never opens it.
             #[cfg(not(feature = "telnet"))]
-            let sync = TelnetSync::NotOpen;
+            let (sync, not_answered) = (TelnetSync::NotOpen, Vec::new());
             if let Some(report) = &mut self.report {
                 report.telnet_sync = sync;
+                report.telnet_not_answered = not_answered;
             }
         }
         self.report.get_or_insert_with(stopped_report)
     }
 
     #[cfg(feature = "telnet")]
-    async fn wait_for_telnet(&self) -> TelnetSync {
+    async fn wait_for_telnet(&self) -> (TelnetSync, Vec<Cow<'static, str>>) {
         match self.avr.telnet_sync_within(self.telnet_wait).await {
-            Ok(()) => TelnetSync::Answered,
-            Err(error) if error.is_timeout() => TelnetSync::NoAnswer,
-            Err(_) => TelnetSync::Lost,
+            Ok(not_answered) => (TelnetSync::Done, not_answered),
+            Err(error) if error.is_timeout() => (TelnetSync::NoAnswer, Vec::new()),
+            Err(_) => (TelnetSync::Lost, Vec::new()),
         }
     }
 }
@@ -348,6 +351,7 @@ const fn stopped_report() -> StartReport {
     StartReport {
         telnet: TelnetStart::Unknown,
         telnet_sync: TelnetSync::NotWaited,
+        telnet_not_answered: Vec::new(),
         heos: HeosStart::Unknown,
         signal: PageStatus::NoAnswer,
         web_interface: Err(Error::Stopped),
@@ -553,6 +557,7 @@ impl Avr {
         StartReport {
             telnet,
             telnet_sync: TelnetSync::NotWaited,
+            telnet_not_answered: Vec::new(),
             heos: HeosStart::Disabled,
             signal,
             web_interface,

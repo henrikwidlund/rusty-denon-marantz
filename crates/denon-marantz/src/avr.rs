@@ -1230,32 +1230,36 @@ impl Avr {
         }
     }
 
-    /// Waits until the receiver has answered a last query that is sent after
-    /// the telnet queries that wait now. The receiver handles lines in order,
-    /// so the answers to the earlier queries are in the state when this
-    /// returns. A value that is still empty is probably one that this receiver
-    /// does not answer. The library cannot check this: an event that looks like
-    /// the answer, or a query that the receiver drops, can leave a value for
-    /// later. Queries that are added later are not covered. See also
+    /// Waits until the telnet queries are answered: no query waits to be
+    /// written, each written query has its answer, and each list has its
+    /// `END` line. A query without an answer for
+    /// [`TelnetConfig::answer_quiet`] counts as not answered: some receivers
+    /// never answer some queries. Gives the queries that were not answered.
+    /// Queries that are added while this waits are covered too. See also
     /// [`Started::all_synced`].
     ///
-    /// Dropping the future is safe. Several calls at once each wait for their
-    /// own query, except that a power event or the answer to the keep-alive
-    /// query can end one wait early.
+    /// The receiver sends each answer to every telnet connection, so an
+    /// answer to a query of another client also counts. Its value is just as
+    /// new. If no query waits, this returns after a short time without a
+    /// write, so it does not show that the connection works. Dropping the
+    /// future is safe.
     ///
     /// # Errors
     ///
     /// Returns [`Error::NotConnected`] if the telnet connection is not open or
-    /// ends before the answer, and an error for which [`Error::is_timeout`] is
-    /// true if there is no answer within the keep-alive time.
+    /// ends first, and an error for which [`Error::is_timeout`] is true if
+    /// this takes longer than the keep-alive time.
     #[cfg(feature = "telnet")]
-    pub async fn telnet_sync(&self) -> Result<(), Error> {
+    pub async fn telnet_sync(&self) -> Result<Vec<std::borrow::Cow<'static, str>>, Error> {
         self.telnet.sync().await
     }
 
-    /// As [`Avr::telnet_sync`], with this limit for the answer.
+    /// As [`Avr::telnet_sync`], with this limit.
     #[cfg(feature = "telnet")]
-    pub(crate) async fn telnet_sync_within(&self, limit: Duration) -> Result<(), Error> {
+    pub(crate) async fn telnet_sync_within(
+        &self,
+        limit: Duration,
+    ) -> Result<Vec<std::borrow::Cow<'static, str>>, Error> {
         self.telnet.sync_within(limit).await
     }
 

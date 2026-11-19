@@ -42,6 +42,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         command_interval: Duration::ZERO,
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
+        answer_quiet: Duration::from_millis(200),
         query_groups: QueryGroup::DEFAULT_ORDER,
     }
 }

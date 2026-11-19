@@ -523,6 +523,35 @@ pub fn state_queries(brand: Brand) -> impl Iterator<Item = &'static str> + Clone
     queries(brand, QueryGroup::DEFAULT_ORDER)
 }
 
+/// Queries whose answer is a list that ends with an `END` line, for example
+/// `OPSMLALL END` or `CVEND`. Only lists whose end line was seen on a receiver
+/// or is in a spec. `Z2CV?` and `Z3CV?` have no end line.
+const LIST_QUERIES: [&str; 10] = [
+    "OPSMLALL ?",
+    "OPDLS ?",
+    "SSFUN ?",
+    "SSSOD ?",
+    "SSTTR ?",
+    "SSCFR ?",
+    "SSAEQLRS ?",
+    "SSLEV ?",
+    "SSQSNZMA ?",
+    "CV?",
+];
+
+/// True if the answer to the query is a list that ends with an `END` line.
+pub(super) fn is_list_query(query: &str) -> bool {
+    LIST_QUERIES.contains(&query)
+}
+
+/// The texts that the answers to the queries of this brand start with.
+pub(super) fn known_answer_prefixes(brand: Brand) -> impl Iterator<Item = &'static str> {
+    QUERIES
+        .iter()
+        .filter(move |query| query.is_for(brand))
+        .map(|query| super::answers::answer_prefix(query.text))
+}
+
 static QUERIES: [Entry; 141] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
@@ -673,6 +702,13 @@ mod tests {
     use super::*;
 
     const BRANDS: [Brand; 2] = [Brand::Denon, Brand::Marantz];
+
+    #[test]
+    fn every_list_query_is_a_known_query() {
+        for list in LIST_QUERIES {
+            assert!(QUERIES.iter().any(|entry| entry.text == list), "{list}");
+        }
+    }
 
     #[test]
     fn every_query_asks_for_a_value() {

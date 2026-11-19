@@ -23,6 +23,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "telnet_answers"
+path = "fuzz_targets/telnet_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "telnet_state"
 path = "fuzz_targets/telnet_state.rs"
 test = false

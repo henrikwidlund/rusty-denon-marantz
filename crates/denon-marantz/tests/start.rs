@@ -5,10 +5,12 @@
 
 mod common;
 
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use common::{
@@ -20,7 +22,7 @@ use denon_marantz::{
     Avr, Error, InfoCheck, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions,
     TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
 };
-use denon_marantz_proto::telnet::{SignalPart, group_queries, signal_queries};
+use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
 
 const VIDEO_PAGE: &[u8] =
@@ -34,6 +36,9 @@ const OLD_STATUS: &[u8] = include_bytes!(
 const OLD_ZONE_PAGE: &[u8] = include_bytes!(
     "../../denon-marantz-proto/tests/data/xml/AVR-3313-formMainZone_MainZoneXml.xml"
 );
+
+/// No query, to compare with a list of queries.
+const NONE: [&str; 0] = [];
 
 /// The groups of the start and the Device group, which the start does not ask for.
 const WITH_DEVICE: &[QueryGroup] = &[
@@ -55,6 +60,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         command_interval: Duration::ZERO,
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
+        // Long, so that a wait does not end while a test answers.
+        answer_quiet: Duration::from_secs(5),
         query_groups: QueryGroup::START_ORDER,
     }
 }
@@ -70,15 +77,13 @@ async fn web_interface() -> Fake {
 }
 
 async fn started(web: &Fake, telnet: &FakeTelnet) -> Arc<Avr> {
+    started_with(web, telnet_config(telnet.port)).await
+}
+
+/// Like [`started`], with these telnet settings.
+async fn started_with(web: &Fake, telnet: TelnetConfig) -> Arc<Avr> {
     let http = avr_x_receiver().await;
-    connected(
-        &http,
-        ReceiverType::AvrX,
-        web,
-        telnet,
-        QueryGroup::START_ORDER,
-    )
-    .await
+    connected_with(&http, ReceiverType::AvrX, web, telnet).await
 }
 
 async fn connected(
@@ -88,14 +93,24 @@ async fn connected(
     telnet: &FakeTelnet,
     query_groups: &'static [QueryGroup],
 ) -> Arc<Avr> {
+    let telnet = TelnetConfig {
+        query_groups,
+        ..telnet_config(telnet.port)
+    };
+    connected_with(http, receiver_type, web, telnet).await
+}
+
+async fn connected_with(
+    http: &Fake,
+    receiver_type: ReceiverType,
+    web: &Fake,
+    telnet: TelnetConfig,
+) -> Arc<Avr> {
     Arc::new(
         builder(http, receiver_type)
             .web_interface_port(web.port)
             .web_interface_config(config())
-            .telnet_config(TelnetConfig {
-                query_groups,
-                ..telnet_config(telnet.port)
-            })
+            .telnet_config(telnet)
             .connect()
             .await
             .unwrap(),
@@ -122,8 +137,39 @@ fn lines(received: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Answers the queries that the client wrote since the last call, except the
+/// ones in `hold`. Each answer has an end line, as a list has.
+fn answer_new(telnet: &FakeTelnet, answered: &mut usize, hold: &[&str]) {
+    let received = telnet.received();
+    let sent = lines(&received);
+    let mut reply = String::new();
+    for query in sent.iter().skip(*answered) {
+        if !hold.contains(query) {
+            let prefix = answer_prefix(query);
+            let _ = write!(reply, "{prefix} 1\r{prefix} END\r");
+        }
+    }
+    *answered = sent.len();
+    if !reply.is_empty() {
+        telnet.send(reply.as_bytes());
+    }
+}
+
+/// Answers the queries as [`answer_new`] does until `waiting` ends.
+async fn answer_until_done<T>(telnet: &FakeTelnet, waiting: &JoinHandle<T>, hold: &[&str]) {
+    let mut answered = 0;
+    for _ in 0..200 {
+        if waiting.is_finished() {
+            return;
+        }
+        answer_new(telnet, &mut answered, hold);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("the wait did not end");
+}
+
 #[tokio::test]
-async fn all_synced_waits_for_the_answers_to_the_telnet_queries() {
+async fn all_synced_waits_for_the_end_of_each_list() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     let mut started = avr.start().await.unwrap();
@@ -131,27 +177,54 @@ async fn all_synced_waits_for_the_answers_to_the_telnet_queries() {
         started.all_synced().await;
         started
     });
-    // The receiver does not answer yet: the last line is the marker query,
-    // after all queries of the start.
-    wait_until("the marker", || {
-        let received = telnet.received();
-        let sent = lines(&received);
-        sent.contains(&"SSINFSIGECI ?") && sent.last() == Some(&"PW?")
+    // Every query is answered except the sound mode list.
+    let mut answered = 0;
+    wait_until("the queries of the start", || {
+        answer_new(&telnet, &mut answered, &["OPSMLALL ?"]);
+        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
     })
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // A line of the list, and a power line from another client, do not end
+    // the wait.
+    telnet.send(b"OPSMLALL MOV011Stereo\rPWON\r");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    answer_new(&telnet, &mut answered, &["OPSMLALL ?"]);
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(!waiting.is_finished());
-    // The answer to an earlier query comes first, then the marker's.
-    telnet.send(b"MV12\rPWON\r");
+    telnet.send(b"MV12\rOPSMLALL END\r");
     let mut started = timeout(Duration::from_secs(5), waiting)
         .await
         .expect("all_synced did not end")
         .unwrap();
     let report = started.all_synced().await;
-    assert_eq!(report.telnet_sync, TelnetSync::Answered);
+    assert_eq!(report.telnet_sync, TelnetSync::Done);
+    assert_eq!(report.telnet_not_answered, NONE);
     assert!(matches!(report.telnet, TelnetStart::Open));
     let volume = avr.snapshot().zone(Zone::Main).volume;
     assert_eq!(volume.map(denon_marantz::Volume::db), Some(-68.0));
+}
+
+#[tokio::test]
+async fn all_synced_reports_the_queries_without_an_answer() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = started_with(
+        &web,
+        TelnetConfig {
+            answer_quiet: Duration::from_millis(300),
+            ..telnet_config(telnet.port)
+        },
+    )
+    .await;
+    let mut started = avr.start().await.unwrap();
+    let waiting = tokio::spawn(async move {
+        started.all_synced().await;
+        started
+    });
+    answer_until_done(&telnet, &waiting, &["PSIMAXSWM ?"]).await;
+    let mut started = waiting.await.unwrap();
+    let report = started.all_synced().await;
+    assert_eq!(report.telnet_sync, TelnetSync::Done);
+    assert_eq!(report.telnet_not_answered, ["PSIMAXSWM ?"]);
 }
 
 #[tokio::test]
@@ -159,56 +232,29 @@ async fn a_telnet_sync_that_is_dropped_does_not_stop_the_next_one() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     avr.start().await.unwrap().basic_synced().await;
-    // The first call is dropped at once, before or after its marker is written.
     let _ = timeout(Duration::from_millis(1), avr.telnet_sync()).await;
     let second = {
         let avr = avr.clone();
         tokio::spawn(async move { avr.telnet_sync().await })
     };
-    // An answer for a marker that was written and dropped may come first.
-    for _ in 0..50 {
-        if second.is_finished() {
-            break;
-        }
-        telnet.send(b"PWON\r");
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    timeout(Duration::from_secs(1), second)
-        .await
-        .expect("the second call did not end")
-        .unwrap()
-        .unwrap();
+    answer_until_done(&telnet, &second, &[]).await;
+    assert_eq!(second.await.unwrap().unwrap(), NONE);
 }
 
 #[tokio::test]
-async fn each_telnet_sync_waits_for_its_own_answer() {
+async fn telnet_syncs_at_the_same_time_end_together() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     avr.start().await.unwrap().basic_synced().await;
     let (first, second) = (avr.clone(), avr.clone());
     let first = tokio::spawn(async move { first.telnet_sync().await });
     let second = tokio::spawn(async move { second.telnet_sync().await });
-    wait_until("two markers", || {
-        lines(&telnet.received())
-            .iter()
-            .filter(|line| **line == "PW?")
-            .count()
-            >= 2
-    })
-    .await;
-    telnet.send(b"PWON\r");
-    timeout(Duration::from_secs(5), first)
+    answer_until_done(&telnet, &first, &[]).await;
+    let second = timeout(Duration::from_secs(1), second)
         .await
-        .expect("the first did not end")
-        .unwrap()
-        .unwrap();
-    assert!(!second.is_finished());
-    telnet.send(b"PWON\r");
-    timeout(Duration::from_secs(5), second)
-        .await
-        .expect("the second did not end")
-        .unwrap()
-        .unwrap();
+        .expect("the second did not end");
+    assert_eq!(first.await.unwrap().unwrap(), NONE);
+    assert_eq!(second.unwrap().unwrap(), NONE);
 }
 
 #[tokio::test]
@@ -220,8 +266,8 @@ async fn all_synced_reports_a_connection_that_ends_before_the_answers() {
         started.all_synced().await;
         started
     });
-    wait_until("the marker", || {
-        lines(&telnet.received()).last() == Some(&"PW?")
+    wait_until("the queries of the start", || {
+        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
     })
     .await;
     telnet.close();
@@ -241,7 +287,7 @@ async fn all_synced_ends_with_no_answer_after_the_wait() {
         .start_with(StartOptions::new().telnet_wait(Duration::from_millis(300)))
         .await
         .unwrap();
-    // The fake telnet port never answers the last query.
+    // The fake telnet port never answers, and the quiet time is longer.
     let report = timeout(Duration::from_secs(5), started.all_synced())
         .await
         .expect("all_synced did not end");

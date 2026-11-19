@@ -17,8 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
-    DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder, MAIN_ZONE_POWER_QUERY,
-    Message, Query, QueryGroup, SignalPart, group_queries, queries, signal_queries,
+    AnswerLine, AnswerTracker, DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder,
+    MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
+    signal_queries,
 };
 use denon_marantz_proto::{Brand, HD_RADIO_QUERIES, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -71,6 +72,11 @@ pub struct TelnetConfig {
     /// queries is answered late. A query does not wait longer than one second
     /// after the last write or, if that is later, after it was added.
     pub query_quiet: Duration,
+    /// Time without an answer after which the queries that are still open
+    /// count as not answered, see [`Avr::telnet_sync`](crate::Avr::telnet_sync).
+    /// Some receivers never answer some queries. The time counts from the
+    /// last answer or the last query, whichever is later.
+    pub answer_quiet: Duration,
     /// The groups of queries that fill the state after a connect, in the order
     /// that they are sent. A group that is left out stays empty until the
     /// receiver reports a change, or until it is fetched with
@@ -94,6 +100,7 @@ impl Default for TelnetConfig {
             command_interval: Duration::from_millis(50),
             query_interval: Duration::from_millis(50),
             query_quiet: Duration::from_millis(50),
+            answer_quiet: Duration::from_secs(2),
             query_groups: QueryGroup::START_ORDER,
         }
     }
@@ -106,10 +113,11 @@ impl TelnetConfig {
             self.write_timeout,
             self.keep_alive,
             self.reconnect_min,
+            self.answer_quiet,
         ];
         if times.iter().any(Duration::is_zero) {
             return Err(Error::InvalidConfig(
-                "connect_timeout, write_timeout, keep_alive and reconnect_min must be above 0",
+                "connect_timeout, write_timeout, keep_alive, reconnect_min and answer_quiet must be above 0",
             ));
         }
         if self.reconnect_min > self.reconnect_max {
@@ -196,9 +204,9 @@ enum Request {
     RefreshGroup(QueryGroup),
     /// Ask the receiver these queries.
     Queries(Vec<Cow<'static, str>>),
-    /// Tell the caller when the receiver has answered a query that is sent
-    /// after the ones that wait now.
-    Synced(oneshot::Sender<Result<(), Error>>),
+    /// Tell the caller when the receiver has answered the queries, or was
+    /// quiet for too long. It gives the queries that were not answered.
+    Synced(oneshot::Sender<Result<Vec<Cow<'static, str>>, Error>>),
 }
 
 /// The telnet connection of one receiver.
@@ -388,23 +396,26 @@ impl Telnet {
             .collect()
     }
 
-    /// Waits until the receiver has answered a query that is sent after the
-    /// queries that wait now. The receiver handles lines in order, so the
-    /// answers to the earlier queries are in the state then, as far as the
-    /// receiver answers them. It is an error if the connection ends first, or
-    /// if there is no answer within the keep-alive time.
-    pub(crate) async fn sync(&self) -> Result<(), Error> {
+    /// Waits until no query waits for a write and each written query is
+    /// answered, or counts as not answered after
+    /// [`TelnetConfig::answer_quiet`]. Gives the queries that were not
+    /// answered. It is an error if the connection ends first, or if this takes
+    /// longer than the keep-alive time.
+    pub(crate) async fn sync(&self) -> Result<Vec<Cow<'static, str>>, Error> {
         self.sync_within(self.config.keep_alive).await
     }
 
-    /// As `sync`, with another limit for the answer.
-    pub(crate) async fn sync_within(&self, limit: Duration) -> Result<(), Error> {
+    /// As `sync`, with another limit.
+    pub(crate) async fn sync_within(
+        &self,
+        limit: Duration,
+    ) -> Result<Vec<Cow<'static, str>>, Error> {
         let (done, answered) = oneshot::channel();
         self.request(Request::Synced(done)).await?;
         tokio::time::timeout(limit, answered).await.map_or_else(
             |_| {
                 Err(Error::Timeout {
-                    request: "telnet marker query".to_owned(),
+                    request: "telnet answers".to_owned(),
                     limit,
                     sent: true,
                 })
@@ -515,40 +526,52 @@ struct Queue {
     last_user_write: Option<Instant>,
     /// When data came from the receiver.
     last_read: Option<Instant>,
-    /// Callers that wait for the answer to a marker query, oldest first.
-    markers: VecDeque<Marker>,
-    /// When a query or a marker started to wait while nothing else waited.
+    /// When a query started to wait while nothing else waited.
     waiting_since: Option<Instant>,
+    /// The written queries that are not answered yet.
+    answers: AnswerTracker,
+    /// When a query was written or a line answered one.
+    last_answer: Instant,
+    /// As `last_answer`, or when a line came that belongs to a query that
+    /// was answered.
+    last_activity: Instant,
+    /// Callers that wait until the queries are answered.
+    waiters: Vec<Waiter>,
 }
 
-/// A caller that waits for the answer to a marker query.
-struct Marker {
-    done: oneshot::Sender<Result<(), Error>>,
-    /// When the query was written. `None` if it is not written yet.
-    written: Option<Instant>,
+/// A caller that waits until the queries are answered.
+struct Waiter {
+    done: oneshot::Sender<Result<Vec<Cow<'static, str>>, Error>>,
+    /// Queries that were not answered while it waited.
+    missed: Vec<Cow<'static, str>>,
 }
 
-/// A marker whose caller left and whose answer did not come in this time is
-/// not answered. It is dropped, so that it does not take the answer of a later
-/// marker.
-const MARKER_STALE: Duration = Duration::from_secs(5);
+/// Time without a line of an answer after which the answers count as complete.
+/// Some answers have more lines, for example `TR?`, without an end line. Such
+/// a line counts only this long after the last answer, so that the events of
+/// other clients, for example a volume ramp, cannot keep a wait going.
+const ANSWER_SETTLE: Duration = Duration::from_millis(300);
 
 impl Queue {
-    fn new(background: VecDeque<Cow<'static, str>>) -> Self {
+    fn new(background: VecDeque<Cow<'static, str>>, brand: Brand) -> Self {
+        let now = Instant::now();
         Self {
-            waiting_since: (!background.is_empty()).then(Instant::now),
+            waiting_since: (!background.is_empty()).then_some(now),
             user: VecDeque::new(),
             background,
             last_write: None,
             last_user_write: None,
             last_read: None,
-            markers: VecDeque::new(),
+            answers: AnswerTracker::new(brand),
+            last_answer: now,
+            last_activity: now,
+            waiters: Vec::new(),
         }
     }
 
-    /// A query or a marker waits for a write.
+    /// A query waits for a write.
     fn has_query_work(&self) -> bool {
-        !self.background.is_empty() || self.marker_due()
+        !self.background.is_empty()
     }
 
     /// Runs `change`, and notes the time if it made work wait while none did.
@@ -592,43 +615,57 @@ impl Queue {
         }
     }
 
-    /// A caller waits for a marker query that is not written yet.
-    fn marker_due(&self) -> bool {
-        self.markers
-            .iter()
-            .any(|marker| marker.written.is_none() && !marker.done.is_closed())
+    /// Notes what a line from the receiver means for the written queries.
+    fn answer_line(&mut self, line: &str, now: Instant) {
+        match self.answers.line(line) {
+            AnswerLine::Answer => {
+                self.last_answer = now;
+                self.last_activity = now;
+            }
+            AnswerLine::Related if now < self.last_answer + ANSWER_SETTLE => {
+                self.last_activity = now;
+            }
+            _ => {}
+        }
     }
 
-    /// Drops the markers of callers that left: those that are not written, and
-    /// those that are written and stale.
-    fn drop_dead_markers(&mut self, now: Instant) {
-        self.markers.retain(|marker| {
-            !marker.done.is_closed()
-                || marker
-                    .written
-                    .is_some_and(|written| now.duration_since(written) <= MARKER_STALE)
-        });
+    /// When [`Queue::check_answers`] has work. `None` if there is none. A
+    /// caller that waits has no work while a query waits for a write: the
+    /// write opens it.
+    fn answer_time(&self, quiet: Duration) -> Option<Instant> {
+        let waits = !self.waiters.is_empty() && !self.has_query_work();
+        if !self.answers.is_idle() {
+            Some(self.last_answer + quiet)
+        } else if waits || self.answers.has_answered() {
+            Some(self.last_activity + ANSWER_SETTLE)
+        } else {
+            None
+        }
     }
 
-    /// Takes the next marker that is not written. False if there is none.
-    fn write_marker(&mut self, now: Instant) -> bool {
-        self.drop_dead_markers(now);
-        self.markers
-            .iter_mut()
-            .find(|marker| marker.written.is_none())
-            .map(|marker| marker.written = Some(now))
-            .is_some()
-    }
-
-    /// The receiver answered the oldest marker that was written.
-    fn answer_marker(&mut self) {
-        if self
-            .markers
-            .front()
-            .is_some_and(|marker| marker.written.is_some())
-            && let Some(marker) = self.markers.pop_front()
-        {
-            let _ = marker.done.send(Ok(()));
+    /// Counts the open queries as not answered after the quiet time. Tells the
+    /// callers that wait when no query waits and the answers are complete.
+    fn check_answers(&mut self, now: Instant, quiet: Duration) {
+        if !self.answers.is_idle() {
+            if now < self.last_answer + quiet {
+                return;
+            }
+            self.waiters.retain(|waiter| !waiter.done.is_closed());
+            let missed: Vec<_> = self.answers.take_open().collect();
+            tracing::debug!(queries = ?missed, "telnet queries not answered");
+            for waiter in &mut self.waiters {
+                waiter.missed.extend(missed.iter().cloned());
+            }
+        }
+        if now < self.last_activity + ANSWER_SETTLE {
+            return;
+        }
+        self.answers.forget_answered();
+        if self.has_query_work() {
+            return;
+        }
+        for waiter in self.waiters.drain(..) {
+            let _ = waiter.done.send(Ok(waiter.missed));
         }
     }
 
@@ -651,8 +688,8 @@ impl Queue {
         for outgoing in self.user.drain(..) {
             outgoing.fail();
         }
-        for marker in self.markers.drain(..) {
-            let _ = marker.done.send(Err(Error::NotConnected));
+        for waiter in self.waiters.drain(..) {
+            let _ = waiter.done.send(Err(Error::NotConnected));
         }
     }
 }
@@ -736,7 +773,7 @@ impl Worker {
         let mut filter = DuplicateFilter::new();
         // A new connection has no last values to forget.
         self.forget.store(false, Ordering::Relaxed);
-        let mut queue = Queue::new(background);
+        let mut queue = Queue::new(background, self.queries.brand);
         let mut buffer = [0_u8; READ_BUFFER];
         let mut line = String::new();
         let keep_alive = format!("{DEVICE_POWER_QUERY}\r");
@@ -745,6 +782,7 @@ impl Worker {
         let mut asked = false;
         let end = loop {
             let write_time = queue.write_time(&self.config, self.background_pause);
+            let answer_time = queue.answer_time(self.config.answer_quiet);
             tokio::select! {
                 biased;
                 _ = shutdown.changed() => break End::Shutdown,
@@ -759,14 +797,13 @@ impl Worker {
                         asked = false;
                         let mut tuner = false;
                         let mut hd_radio = false;
-                        let mut power_lines = 0_usize;
                         let unknown_before = self.colorimetry_unknown();
                         decoder.decode(&buffer[..count], |text| {
                             // The source of the main zone changed to the tuner.
                             tuner |= text == "SITUNER";
                             hd_radio |= text == "SIHDRADIO";
-                            // The answer to a marker query, or an event that looks like it.
-                            power_lines += usize::from(text.starts_with("PW"));
+                            // Before the filter: a repeated value still answers.
+                            queue.answer_line(text, idle_since);
                             self.handle_line(text, &mut filter);
                         });
                         if tuner {
@@ -783,9 +820,6 @@ impl Worker {
                         if !unknown_before && self.colorimetry_unknown() {
                             filter.forget_colorimetry();
                             queue.add(signal_queries(self.queries.brand, SignalPart::Colorimetry));
-                        }
-                        for _ in 0..power_lines {
-                            queue.answer_marker();
                         }
                     }
                     Err(error) => break End::Failed(error),
@@ -806,13 +840,7 @@ impl Worker {
                         queue.add(queries);
                     }
                     Some(Request::Synced(done)) => {
-                        queue.drop_dead_markers(Instant::now());
-                        queue.queue_work(|queue| {
-                            queue.markers.push_back(Marker {
-                                done,
-                                written: None,
-                            });
-                        });
+                        queue.waiters.push(Waiter { done, missed: Vec::new() });
                     }
                     None => break End::Shutdown,
                 },
@@ -825,6 +853,9 @@ impl Worker {
                     idle_since = Instant::now();
                     tracing::trace!(host = %self.host, "telnet idle, sending a query");
                     queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
+                }
+                () = tokio::time::sleep_until(answer_time.unwrap_or_else(Instant::now)), if answer_time.is_some() => {
+                    queue.check_answers(Instant::now(), self.config.answer_quiet);
                 }
                 () = tokio::time::sleep_until(write_time.unwrap_or_else(Instant::now)), if write_time.is_some() => {
                     if let Err(end) = self.write_next(&mut stream, &mut queue, &mut line, shutdown).await {
@@ -854,9 +885,8 @@ impl Worker {
             line.clear();
             line.push_str(&query);
             line.push('\r');
+            queue.answers.written(query);
             (std::mem::take(line), None, false)
-        } else if queue.write_marker(Instant::now()) {
-            (format!("{DEVICE_POWER_QUERY}\r"), None, false)
         } else {
             return Ok(());
         };
@@ -874,6 +904,8 @@ impl Worker {
         if from_user {
             queue.last_user_write = Some(now);
         } else {
+            queue.last_answer = now;
+            queue.last_activity = now;
             // Keep the buffer for the next query.
             *line = text;
         }
@@ -1026,6 +1058,10 @@ mod tests {
                 reconnect_min: Duration::from_secs(60),
                 ..default
             },
+            TelnetConfig {
+                answer_quiet: Duration::ZERO,
+                ..default
+            },
         ];
         for config in bad {
             assert!(
@@ -1087,28 +1123,106 @@ mod tests {
         assert!(requests.try_recv().is_err());
     }
 
+    /// No query, to compare with a list of queries.
+    const NONE: [&str; 0] = [];
+
+    fn waiter(queue: &mut Queue) -> oneshot::Receiver<Result<Vec<Cow<'static, str>>, Error>> {
+        let (done, waiting) = oneshot::channel();
+        queue.waiters.push(Waiter {
+            done,
+            missed: Vec::new(),
+        });
+        waiting
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn a_marker_of_a_caller_that_left_is_dropped_when_it_is_stale() {
-        let mut queue = Queue::new(VecDeque::new());
-        let (stale, _) = oneshot::channel();
-        let (fresh, _) = oneshot::channel();
-        let (unwritten, _) = oneshot::channel();
-        let (waiting, _waiting) = oneshot::channel();
+    async fn a_waiter_ends_when_the_answers_are_complete() {
+        let ms = Duration::from_millis;
+        let quiet = ms(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
         let start = Instant::now();
-        let marker = |done, written| Marker { done, written };
-        queue.markers.push_back(marker(stale, Some(start)));
-        queue
-            .markers
-            .push_back(marker(fresh, Some(start + MARKER_STALE)));
-        queue.markers.push_back(marker(unwritten, None));
-        queue.markers.push_back(marker(waiting, None));
-        // The receivers are gone, except the last one.
-        queue.drop_dead_markers(start + MARKER_STALE + Duration::from_millis(1));
-        // The stale and the unwritten marker of the callers that left are dropped.
-        assert_eq!(queue.markers.len(), 2);
-        assert!(queue.markers[0].written.is_some());
-        assert!(queue.markers[1].written.is_none());
-        assert!(queue.marker_due());
+        queue.answers.written(Cow::Borrowed("TR?"));
+        let mut waiting = waiter(&mut queue);
+        assert_eq!(queue.answer_time(quiet), Some(start + quiet));
+        queue.answer_line("TR3 ON", start + ms(100));
+        // More lines of the answer can follow.
+        assert_eq!(queue.answer_time(quiet), Some(start + ms(400)));
+        queue.answer_line("TR1 OFF", start + ms(200));
+        queue.check_answers(start + ms(400), quiet);
+        assert!(waiting.try_recv().is_err());
+        queue.check_answers(start + ms(500), quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+        assert_eq!(queue.answer_time(quiet), None);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn late_lines_of_an_answer_do_not_keep_a_wait_going() {
+        let ms = Duration::from_millis;
+        let quiet = ms(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("MV?"));
+        let mut waiting = waiter(&mut queue);
+        queue.answer_line("MV50", start);
+        // A volume ramp of another client: only the first line is close enough.
+        for step in 1..20 {
+            queue.answer_line("MV51", start + ms(step * 200));
+        }
+        assert_eq!(queue.answer_time(quiet), Some(start + ms(500)));
+        queue.check_answers(start + ms(500), quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_query_without_an_answer_is_reported_after_the_quiet_time() {
+        let ms = Duration::from_millis;
+        let quiet = ms(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("PSIMAXSWM ?"));
+        queue.answers.written(Cow::Borrowed("OPSMLALL ?"));
+        let mut waiting = waiter(&mut queue);
+        // Lines of the list keep the wait going. Other lines do not.
+        queue.answer_line("OPSMLALL MOV011Stereo", start + ms(1500));
+        queue.answer_line("MVMAX 98", start + ms(3000));
+        queue.check_answers(start + ms(3000), quiet);
+        assert!(waiting.try_recv().is_err());
+        queue.answer_line("OPSMLALL END", start + ms(3200));
+        queue.check_answers(start + ms(5199), quiet);
+        assert!(waiting.try_recv().is_err());
+        queue.check_answers(start + ms(5200), quiet);
+        let missed = waiting.try_recv().unwrap().unwrap();
+        assert_eq!(missed, ["PSIMAXSWM ?"]);
+        assert!(queue.answers.is_idle());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_waits_for_the_queries_that_are_not_written() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]), Brand::Denon);
+        let mut waiting = waiter(&mut queue);
+        // No timer while the query waits for its write, so the task does not spin.
+        assert_eq!(queue.answer_time(quiet), None);
+        let later = Instant::now() + Duration::from_secs(10);
+        queue.check_answers(later, quiet);
+        assert!(waiting.try_recv().is_err());
+        queue.background.clear();
+        queue.check_answers(later, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn open_queries_expire_without_a_waiter() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("PSIMAXSWM ?"));
+        queue.check_answers(start + quiet, quiet);
+        assert!(queue.answers.is_idle());
+        // A caller that waits later does not get the old query.
+        let mut waiting = waiter(&mut queue);
+        queue.check_answers(start + quiet, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), NONE);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1121,7 +1235,7 @@ mod tests {
         };
         let ms = Duration::from_millis;
         let pause = ms(250);
-        let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]));
+        let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("SI?")]), Brand::Denon);
         let start = Instant::now();
         // The first write is due at once.
         assert_eq!(queue.write_time(&config, pause), Some(start));
@@ -1158,7 +1272,7 @@ mod tests {
             ..TelnetConfig::default()
         };
         let ms = Duration::from_millis;
-        let mut queue = Queue::new(VecDeque::new());
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
         let start = Instant::now();
         queue.last_write = Some(start);
         // Long after the last write, the receiver sends events and a query

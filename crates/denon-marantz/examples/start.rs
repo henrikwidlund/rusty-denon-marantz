@@ -73,6 +73,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let report = started.all_synced().await;
         println!("RESULT all_synced_s={:.2}", secs());
         println!("RESULT telnet_sync={:?}", report.telnet_sync);
+        println!(
+            "RESULT telnet_not_answered={:?}",
+            report.telnet_not_answered
+        );
         report
     } else {
         let report = started.basic_synced().await;

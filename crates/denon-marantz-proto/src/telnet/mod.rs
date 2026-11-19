@@ -4,11 +4,13 @@
 //! receiver go through a [`LineDecoder`], and each line through
 //! [`Message::parse`].
 
+mod answers;
 mod command;
 mod decoder;
 mod event;
 mod query;
 
+pub use answers::{AnswerLine, AnswerTracker, answer_prefix};
 pub use command::Command;
 pub use decoder::LineDecoder;
 pub use event::{DuplicateFilter, Event, EventZone, Message};
