@@ -803,6 +803,13 @@ async fn a_page_that_does_not_answer_is_only_that_page() {
     assert_eq!(pages.availability.pages.len(), 7);
     assert_eq!(pages.video_signal, PageStatus::NoAnswer);
     assert_eq!(pages.audio_channels, PageStatus::Read);
+    // The request was sent, so the video page is not read again.
+    let video_reads = web
+        .requests()
+        .iter()
+        .filter(|seen| seen.path == VIDEO_SIGNAL_PATH)
+        .count();
+    assert_eq!(video_reads, 1);
     // Telnet is asked for the video values that the page did not give.
     wait_until("the video queries", || {
         lines(&telnet.received()).contains(&"SSINFSIGRES ?")
@@ -1029,9 +1036,20 @@ async fn a_failed_second_appcommand0300_request_keeps_the_first_answer() {
         avr.snapshot().device().signal.audio_signal.as_deref(),
         Some("Dolby Atmos")
     );
-    // The answer was not complete, so the channels page is read too.
+    // The first request gave the channels. The page has none for a stream
+    // of objects, and would clear them.
     let pages = report.web_interface.as_ref().unwrap();
-    assert_eq!(pages.audio_channels, PageStatus::Read);
+    assert_eq!(
+        pages.audio_channels,
+        PageStatus::Skipped(SkipReason::AlreadyRead)
+    );
+    // Telnet is not asked again for what the first request gave.
+    wait_for_the_queue(&avr, &telnet).await;
+    let text = telnet.received();
+    let sent = lines(&text);
+    for query in ["SYSDA ?", "SYSMI ?", "SSINFAISFSV ?", "OPINFINS ?"] {
+        assert!(!sent.contains(&query), "{query}");
+    }
 }
 
 #[tokio::test]

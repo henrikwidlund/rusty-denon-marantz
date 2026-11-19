@@ -288,8 +288,8 @@ pub struct Avr {
     appcommand0300_parts: [Request0300; 2],
     /// Reads that the receiver does not answer.
     missing: Arc<Missing>,
-    /// The last start read the signal and the channels with
-    /// `AppCommand0300.xml`.
+    /// The last start read the audio signal and the channels with
+    /// `AppCommand0300.xml`, see [`APPCOMMAND0300_FIRST`].
     signal_from_appcommand: AtomicBool,
     channels: Channels,
     /// A start is running, see [`Avr::start_with`].
@@ -1338,14 +1338,14 @@ impl Avr {
 
     /// Like [`Avr::update_signal_and_settings`], in the two requests of
     /// [`APPCOMMAND0300_FIRST`], so that the audio signal and the channels
-    /// come soon. The status is [`PageStatus::Read`] if one request was read:
-    /// a request that failed then counts like error items, and the start asks
-    /// telnet for its values. Else it is the status of the first request.
+    /// come soon. The status is [`PageStatus::Read`] if one request was read.
+    /// Else it is the status of the first request.
     pub(crate) async fn update_signal_and_settings_in_parts(&self) -> Result<PageStatus, Error> {
         self.signal_from_appcommand.store(false, Ordering::Relaxed);
         let mut status = None;
-        let mut complete = true;
-        for part in &self.appcommand0300_parts {
+        // The first request has values for each of its commands.
+        let mut signal_read = false;
+        for (index, part) in self.appcommand0300_parts.iter().enumerate() {
             if part.commands.is_empty() {
                 continue;
             }
@@ -1359,7 +1359,9 @@ impl Avr {
                     }
                     Err(error) => return Err(error),
                 };
-            complete &= part_status == PageStatus::Read && part_complete;
+            if index == 0 {
+                signal_read = part_status == PageStatus::Read && part_complete;
+            }
             if status.is_none() || part_status == PageStatus::Read {
                 status = Some(part_status);
             }
@@ -1368,11 +1370,11 @@ impl Avr {
                 break;
             }
         }
-        let status = status.unwrap_or(PageStatus::NotFound);
-        // The start asks telnet again for what an error item left out.
+        // The start asks telnet again for what an error item left out. The
+        // values of the second request do not change what it asks.
         self.signal_from_appcommand
-            .store(status == PageStatus::Read && complete, Ordering::Relaxed);
-        Ok(status)
+            .store(signal_read, Ordering::Relaxed);
+        Ok(status.unwrap_or(PageStatus::NotFound))
     }
 
     /// Sends `body`, the request for `commands`, to `AppCommand0300.xml` and

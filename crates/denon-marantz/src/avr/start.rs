@@ -164,7 +164,7 @@ pub struct StartReport {
     /// The signal, the channels, the Audyssey settings and the HDMI output
     /// from `AppCommand0300.xml`, see [`Avr::update_signal_and_settings`].
     /// [`PageStatus::Read`] means that the state has them. Some can be
-    /// missing: telnet is then asked for them. [`PageStatus::NotFound`]
+    /// missing if the receiver left them out. [`PageStatus::NotFound`]
     /// means that the receiver does not have the file, and
     /// [`PageStatus::NoAnswer`] that the request timed out or the connection
     /// failed.
@@ -460,10 +460,13 @@ impl Avr {
             .update_signal_and_settings_in_parts()
             .await
             .unwrap_or(PageStatus::NoAnswer);
+        let after_video = VideoPage::of(video.as_ref());
         let web_interface = match video {
-            // Nothing listens on the port, so the other pages are not asked.
-            Some(Err(error)) if error.is_connection_refused() => Err(error),
-            video => self.read_start_pages(video).await,
+            Some(Err(error)) if after_video == VideoPage::Refused => Err(error),
+            video => {
+                let video_signal = video.map(|result| result.unwrap_or(PageStatus::NoAnswer));
+                self.read_start_pages(video_signal, after_video).await
+            }
         };
         #[cfg(feature = "telnet")]
         if matches!(telnet, TelnetStart::Open)
@@ -642,17 +645,14 @@ impl Avr {
         Err(Error::NothingRead)
     }
 
-    /// Reads the pages of the start after the video page. `video` is the
-    /// result of the video page, or `None` if the signal pages are not asked.
+    /// Reads the pages of the start after the video page. `video_signal` is
+    /// the status of the video page, or `None` if the signal pages are not
+    /// asked.
     async fn read_start_pages(
         &self,
-        video: Option<Result<PageStatus, Error>>,
+        video_signal: Option<PageStatus>,
+        after_video: VideoPage,
     ) -> Result<StartPages, Error> {
-        let answered = matches!(video, Some(Ok(_)));
-        // The network of the caller can be down for a moment, for example
-        // after a wake-up. The page is read again after the others then.
-        let read_video_again = matches!(&video, Some(Err(error)) if error.is_not_sent());
-        let video_signal = video.map(|result| result.unwrap_or(PageStatus::NoAnswer));
         let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
         for group in SettingsGroup::ALL {
             let result = self
@@ -666,7 +666,7 @@ impl Avr {
             // web interface is there. A page that does not answer after that
             // is a problem of the page: the receiver is busy, and the other
             // pages are still read.
-            let status = if pages.is_empty() && !answered {
+            let status = if pages.is_empty() && after_video != VideoPage::Answered {
                 result?
             } else {
                 result.unwrap_or(PageStatus::NoAnswer)
@@ -683,7 +683,7 @@ impl Avr {
                     .await
                     .unwrap_or(PageStatus::NoAnswer)
             };
-            let video_signal = if read_video_again {
+            let video_signal = if after_video == VideoPage::NotSent {
                 self.read_video_page().await.unwrap_or(PageStatus::NoAnswer)
             } else {
                 video_signal
@@ -700,5 +700,84 @@ impl Avr {
             video_signal,
             audio_channels,
         })
+    }
+}
+
+/// What the start does after the video page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VideoPage {
+    /// The signal pages are not asked. The first page that is read decides
+    /// if the web interface is there.
+    NotAsked,
+    /// The web interface answered, so the other pages are all read.
+    Answered,
+    /// Nothing listens on the port, so the other pages are not asked.
+    Refused,
+    /// The request was sent but had no answer. The first page after it
+    /// decides if the web interface is there.
+    NoAnswer,
+    /// The request was not sent: the network of the caller can be down for
+    /// a moment, for example after a wake-up. The first page after it
+    /// decides, and the video page is read again after the other pages.
+    NotSent,
+}
+
+impl VideoPage {
+    fn of(video: Option<&Result<PageStatus, Error>>) -> Self {
+        match video {
+            None => Self::NotAsked,
+            Some(Ok(_)) => Self::Answered,
+            Some(Err(error)) if error.is_connection_refused() => Self::Refused,
+            Some(Err(error)) if error.is_not_sent() => Self::NotSent,
+            Some(Err(_)) => Self::NoAnswer,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::ErrorKind;
+    use std::time::Duration;
+
+    use super::*;
+
+    fn network(kind: ErrorKind, sent: bool) -> Error {
+        Error::Network {
+            request: "GET /".to_owned(),
+            source: Box::new(std::io::Error::from(kind)),
+            sent,
+        }
+    }
+
+    fn timeout(sent: bool) -> Error {
+        Error::Timeout {
+            request: "GET /".to_owned(),
+            limit: Duration::from_secs(1),
+            sent,
+        }
+    }
+
+    #[test]
+    fn the_result_of_the_video_page_decides_what_comes_after_it() {
+        let of = |result: Result<PageStatus, Error>| VideoPage::of(Some(&result));
+        assert_eq!(VideoPage::of(None), VideoPage::NotAsked);
+        assert_eq!(of(Ok(PageStatus::Read)), VideoPage::Answered);
+        assert_eq!(of(Ok(PageStatus::NotFound)), VideoPage::Answered);
+        assert_eq!(
+            of(Err(network(ErrorKind::ConnectionRefused, false))),
+            VideoPage::Refused
+        );
+        // A wake-up of the caller.
+        assert_eq!(
+            of(Err(network(ErrorKind::NetworkUnreachable, false))),
+            VideoPage::NotSent
+        );
+        // A port that drops the connection attempt.
+        assert_eq!(of(Err(timeout(false))), VideoPage::NotSent);
+        assert_eq!(of(Err(timeout(true))), VideoPage::NoAnswer);
+        assert_eq!(
+            of(Err(network(ErrorKind::ConnectionReset, true))),
+            VideoPage::NoAnswer
+        );
     }
 }
