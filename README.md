@@ -54,8 +54,9 @@ state again.
 - Which `AppCommand` queries the receiver lists (`Info::queries`). Receivers
   from about 2015 list them, and the library sends only those.
 - Whether the receiver has a tuner and which bands it has (`Info::tuner`).
-  Receivers older than about 2013 do not say, and newer receivers do not list
-  the bands.
+  Receivers older than about 2013 do not say. Newer receivers do not say
+  either: they list a tuner source also when only the models of some regions
+  have a tuner.
 - Discovery with SSDP, and with mDNS when the `mdns` feature is on.
 
 A command that the receiver would ignore without an answer is not sent when the

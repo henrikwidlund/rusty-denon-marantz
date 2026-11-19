@@ -224,9 +224,11 @@ fn device_info_tells_the_tuner() {
         // `Control` 0: no tuner.
         ("M-CR510-Deviceinfo.xml", TunerInfo::Absent),
         ("DRA-N4-Deviceinfo.xml", TunerInfo::Absent),
-        // Newer receivers only link the tuner source to it.
-        ("AVC-A10H-Deviceinfo-8080.xml", bands(&[])),
-        ("AVC-X3700H-Deviceinfo-8080.xml", bands(&[])),
+        // Newer receivers only link the tuner source to it, also without a
+        // tuner.
+        ("AVC-A10H-Deviceinfo-8080.xml", TunerInfo::Unknown),
+        ("AVC-X3700H-Deviceinfo-8080.xml", TunerInfo::Unknown),
+        ("AVC-8500H-Deviceinfo-8080.xml", TunerInfo::Unknown),
     ];
     for (name, expected) in cases {
         let body = read_bytes(&format!("xml/{name}"));

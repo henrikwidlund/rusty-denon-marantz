@@ -136,20 +136,21 @@ impl ListedQueries {
 
 /// What `Deviceinfo.xml` says about a tuner.
 ///
-/// It tells if the receiver has a tuner. It does not tell if the status page
-/// of the tuner has the band and the frequency.
+/// It tells if the receiver has a tuner, when the file says so. It does not
+/// tell if the status page of the tuner has the band and the frequency.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum TunerInfo {
-    /// The file does not say. Receivers older than about 2013 do not, and
-    /// newer receivers without a tuner may not.
+    /// The file does not say. Receivers older than about 2013 do not. Newer
+    /// receivers list a tuner source without a tuner block, also when only
+    /// the models of some regions have a tuner.
     #[default]
     Unknown,
     /// The receiver has no tuner.
     Absent,
-    /// The receiver has a tuner. Receivers of about 2017 and later list no
-    /// bands, so all bands are false for them.
+    /// The receiver has a tuner. If the file lists no bands, all bands are
+    /// false.
     Present(TunerBands),
 }
 
@@ -209,9 +210,11 @@ impl FromIterator<TunerBand> for TunerBands {
 
 impl TunerInfo {
     /// Reads the tuner from the root of `Deviceinfo.xml`. Older receivers
-    /// describe it in `TunerOperation`, where `Control` 0 means none. Newer
-    /// ones only link the tuner source to `TunerOperation`. A missing or empty
-    /// `Control` is read as if there were no `TunerOperation`.
+    /// describe it in `TunerOperation`, where `Control` 0 means none. A
+    /// missing or empty `Control` is read as if there were no
+    /// `TunerOperation`. Newer receivers only link the tuner source to
+    /// `TunerOperation`, also receivers without a tuner, so that link is not
+    /// read.
     ///
     /// Each zone has a `TunerOperation`. The first one (main zone) is used.
     /// In all captures the blocks of all zones are the same.
@@ -244,16 +247,7 @@ impl TunerInfo {
                 Some(_) => return Self::Absent,
             }
         }
-        let linked = root.descendants("RelatedFunc").any(|func| {
-            func.node()
-                .text()
-                .is_some_and(|text| text.trim() == "TunerOperation")
-        });
-        if linked {
-            Self::Present(TunerBands::default())
-        } else {
-            Self::Unknown
-        }
+        Self::Unknown
     }
 }
 
@@ -447,7 +441,7 @@ mod tests {
         let linked = b"<Device_Info><TunerOperation/>\
                        <Source><RelatedFunc>TunerOperation</RelatedFunc></Source></Device_Info>";
         let linked = DeviceInfo::parse(linked).unwrap().tuner;
-        assert_eq!(linked, TunerInfo::Present(TunerBands::default()));
+        assert_eq!(linked, TunerInfo::Unknown);
     }
 
     #[test]
