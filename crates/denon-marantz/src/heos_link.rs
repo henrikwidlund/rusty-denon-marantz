@@ -598,11 +598,11 @@ mod tests {
     #[test]
     fn a_failed_connect_has_its_kind() {
         let network = |kind| denon_marantz_heos::Error::Network {
-            request: "HEOS connect".to_owned(),
+            request: "connect".to_owned(),
             source: std::io::Error::from(kind),
         };
         let timeout = denon_marantz_heos::Error::Timeout {
-            request: "HEOS connect".to_owned(),
+            request: "connect".to_owned(),
             limit: Duration::from_secs(5),
         };
         let cases = [

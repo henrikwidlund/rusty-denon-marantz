@@ -19,7 +19,7 @@ pub enum Error {
     /// The connection could not be opened.
     #[error("{request}: network error: {source}")]
     Network {
-        /// The request, for example `HEOS connect 192.168.1.20:1255`.
+        /// The request, for example `connect 192.168.1.20:1255`.
         request: String,
         /// Cause.
         #[source]
