@@ -415,6 +415,41 @@ pub(crate) fn appcommand0300_item(name: &str) -> String {
     answer[start..end].to_owned()
 }
 
+/// The items of an `AppCommand0300.xml` answer that `request` asks for, as the
+/// receiver does. An answer that has only asked items stays as it is, also
+/// its error items.
+fn only_asked(reply: Reply, request: &[u8]) -> Reply {
+    let Reply::Body(body) = reply else {
+        return reply;
+    };
+    let (Ok(answer), Ok(request)) = (std::str::from_utf8(&body), std::str::from_utf8(request))
+    else {
+        return Reply::Body(body);
+    };
+    let items: Vec<&str> = answer
+        .split("<cmd>")
+        .skip(1)
+        .filter_map(|item| item.split("</cmd>").next())
+        .collect();
+    let asked = |item: &str| {
+        item.split("<name>")
+            .nth(1)
+            .and_then(|rest| rest.split("</name>").next())
+            .is_some_and(|name| request.contains(&format!("<name>{name}</name>")))
+    };
+    if items.iter().all(|item| asked(item)) {
+        return Reply::Body(body);
+    }
+    let mut kept = String::from("<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx>");
+    for item in items.iter().filter(|item| asked(item)) {
+        kept.push_str("<cmd>");
+        kept.push_str(item);
+        kept.push_str("</cmd>");
+    }
+    kept.push_str("</rx>");
+    Reply::Body(kept.into_bytes())
+}
+
 /// A fake 2016 receiver. `answer` gives the reply to each request of
 /// `AppCommand0300.xml`, with the number of the request, from 0.
 pub(crate) async fn receiver_with_signal_answers(
@@ -434,7 +469,9 @@ pub(crate) async fn receiver_with_info_and_signal_answers(
     Fake::start(
         move |seen| match (seen.method.as_str(), seen.path.as_str()) {
             ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
-            ("POST", "/goform/AppCommand0300.xml") => answer(asked.fetch_add(1, Ordering::Relaxed)),
+            ("POST", "/goform/AppCommand0300.xml") => {
+                only_asked(answer(asked.fetch_add(1, Ordering::Relaxed)), &seen.body)
+            }
             ("POST", _) if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("X"))
             }

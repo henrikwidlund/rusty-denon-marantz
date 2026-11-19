@@ -347,6 +347,26 @@ impl Error {
         )
     }
 
+    /// Returns true if the receiver refused the connection: nothing listens
+    /// on the port.
+    #[cfg(feature = "http")]
+    pub(crate) fn is_connection_refused(&self) -> bool {
+        let Self::Network { source, .. } = self else {
+            return false;
+        };
+        let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(&**source);
+        while let Some(error) = cause {
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused)
+            {
+                return true;
+            }
+            cause = error.source();
+        }
+        false
+    }
+
     /// Returns true if the receiver answered with an HTTP error status.
     #[must_use]
     pub const fn is_status(&self) -> bool {
@@ -413,6 +433,36 @@ mod tests {
             error.to_string(),
             format!("GET http://10.0.0.5/x: network error: client error (Connect): {refused_text}")
         );
+    }
+
+    #[cfg(feature = "http")]
+    #[test]
+    fn a_refused_connection_is_found_in_the_causes() {
+        let error = |kind| Error::Network {
+            request: "GET http://10.0.0.5/x".to_owned(),
+            source: Box::new(Outer {
+                text: "client error (Connect)",
+                cause: std::io::Error::from(kind),
+            }),
+            sent: false,
+        };
+        assert!(error(std::io::ErrorKind::ConnectionRefused).is_connection_refused());
+        assert!(!error(std::io::ErrorKind::NetworkUnreachable).is_connection_refused());
+        assert!(!Error::NotConnected.is_connection_refused());
+    }
+
+    #[cfg(feature = "http")]
+    #[tokio::test]
+    async fn a_closed_port_is_a_refused_connection() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let client =
+            crate::HttpClient::new("127.0.0.1", port, crate::HttpConfig::default()).unwrap();
+        let error = client.get("/").await.unwrap_err();
+        assert!(error.is_connection_refused(), "{error}");
     }
 
     #[test]

@@ -101,13 +101,14 @@ loop {
 `start` reads the zones over HTTP, opens telnet and returns. If the telnet port
 does not answer, it waits for the connect timeout first. In the background it
 asks telnet first for what HTTP does not give (quick select, toggles, the sound
-modes and the Dirac Live slots), and reads the web interface pages that say
-which settings are available, the video signal and the channels. A page that
-fails is asked once more. Telnet is asked for the signal values that the other
-requests did not give. The report says what happened to each part. Use
-`StartOptions` to leave telnet closed, to skip the signal pages, or to change how
-long `all_synced` waits. A second `start` while one still runs gives
-`Error::StartRunning` and reads nothing.
+modes and the Dirac Live slots). It also reads, one after the other, the video
+signal page, the audio signal and the channels, the Audyssey settings, the
+video values and the HDMI output, and the web interface pages that say which
+settings are available. A page that fails is asked once more. Telnet is asked
+for the signal values that the other requests did not give. The report says
+what happened to each part. Use `StartOptions` to leave telnet closed, to skip
+the signal pages, or to change how long `all_synced` waits. A second `start`
+while one still runs gives `Error::StartRunning` and reads nothing.
 
 `start` returns when the zones are read. `basic_synced()` waits until the HTTP
 reads and the pages are done. `all_synced()` also waits until the receiver has

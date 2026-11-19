@@ -5,8 +5,8 @@
 
 mod common;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::time::timeout;
@@ -917,6 +917,151 @@ async fn the_channels_page_is_not_read_when_appcommand_gave_the_channels() {
     // Telnet is not asked for the channels either.
     wait_for_the_queue(&avr, &telnet).await;
     assert!(!telnet.received().contains("OPINFINS ?"));
+}
+
+#[tokio::test]
+async fn the_start_reads_the_video_page_first_and_appcommand0300_in_two_requests() {
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let web_order = Arc::clone(&order);
+    let web = Fake::start(move |seen| {
+        web_order.lock().unwrap().push(seen.path.clone());
+        match seen.path.as_str() {
+            VIDEO_SIGNAL_PATH => Reply::Body(VIDEO_PAGE.to_vec()),
+            _ => Reply::Status(404),
+        }
+    })
+    .await;
+    let answer = common::appcommand0300_answer("");
+    let http_order = Arc::clone(&order);
+    let receiver = common::receiver_with_signal_answers(true, move |asked| {
+        http_order
+            .lock()
+            .unwrap()
+            .push(format!("AppCommand0300 {asked}"));
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = connected(
+        &receiver,
+        ReceiverType::AvrX2016,
+        &web,
+        &telnet,
+        QueryGroup::START_ORDER,
+    )
+    .await;
+    avr.start().await.unwrap().basic_synced().await;
+    let order = order.lock().unwrap().clone();
+    assert_eq!(
+        order[..3],
+        [VIDEO_SIGNAL_PATH, "AppCommand0300 0", "AppCommand0300 1"]
+    );
+    // The audio signal and the channels are in the first request.
+    let bodies: Vec<String> = receiver
+        .requests()
+        .iter()
+        .filter(|seen| seen.path == "/goform/AppCommand0300.xml")
+        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
+        .collect();
+    assert_eq!(bodies.len(), 2);
+    for name in ["GetAudioInfo", "GetInputSignal", "GetActiveSpeaker"] {
+        assert!(
+            bodies[0].contains(name) && !bodies[1].contains(name),
+            "{name}"
+        );
+    }
+    for name in ["GetAudyssey", "GetVideoInfo"] {
+        assert!(
+            bodies[1].contains(name) && !bodies[0].contains(name),
+            "{name}"
+        );
+    }
+    // Both answers are in the state, so the channels page is not read.
+    let state = avr.snapshot();
+    assert_eq!(
+        state.device().signal.audio_signal.as_deref(),
+        Some("Dolby Atmos")
+    );
+    assert_eq!(
+        state.device().signal.channels.input.unwrap().to_string(),
+        "2.0"
+    );
+    assert!(!order.iter().any(|path| path == AUDIO_CHANNELS_PATH));
+}
+
+#[tokio::test]
+async fn a_web_interface_that_hangs_is_asked_for_two_pages_only() {
+    let web = Fake::start(|_| Reply::Hang).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = started(&web, &telnet).await;
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
+    // Neither the video page nor the first page after it answered.
+    assert!(report.web_interface.as_ref().unwrap_err().is_unreachable());
+    assert_eq!(web.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_failed_second_appcommand0300_request_keeps_the_first_answer() {
+    let answer = common::appcommand0300_answer("");
+    let receiver = common::receiver_with_signal_answers(true, move |asked| {
+        if asked == 0 {
+            Reply::Body(answer.clone().into_bytes())
+        } else {
+            Reply::Status(404)
+        }
+    })
+    .await;
+    let web = web_interface().await;
+    let telnet = FakeTelnet::start().await;
+    let avr = connected(
+        &receiver,
+        ReceiverType::AvrX2016,
+        &web,
+        &telnet,
+        QueryGroup::START_ORDER,
+    )
+    .await;
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
+    assert_eq!(report.signal, PageStatus::Read);
+    assert_eq!(
+        avr.snapshot().device().signal.audio_signal.as_deref(),
+        Some("Dolby Atmos")
+    );
+    // The answer was not complete, so the channels page is read too.
+    let pages = report.web_interface.as_ref().unwrap();
+    assert_eq!(pages.audio_channels, PageStatus::Read);
+}
+
+#[tokio::test]
+async fn a_second_appcommand0300_request_without_answer_keeps_the_first_answer() {
+    let answer = common::appcommand0300_answer("");
+    let receiver = common::receiver_with_signal_answers(true, move |asked| {
+        if asked == 0 {
+            Reply::Body(answer.clone().into_bytes())
+        } else {
+            Reply::Hang
+        }
+    })
+    .await;
+    let web = web_interface().await;
+    let telnet = FakeTelnet::start().await;
+    let avr = connected(
+        &receiver,
+        ReceiverType::AvrX2016,
+        &web,
+        &telnet,
+        QueryGroup::START_ORDER,
+    )
+    .await;
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
+    assert_eq!(report.signal, PageStatus::Read);
+    assert_eq!(
+        avr.snapshot().device().signal.audio_signal.as_deref(),
+        Some("Dolby Atmos")
+    );
 }
 
 #[tokio::test]

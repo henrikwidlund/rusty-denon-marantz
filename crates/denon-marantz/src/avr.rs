@@ -112,6 +112,29 @@ fn appcommand0300_commands(queries: Option<&ListedQueries>) -> Box<[Definition]>
         .collect()
 }
 
+/// The queries of the first of the two `AppCommand0300.xml` requests of the
+/// start: the audio signal and the channels. The start sends the others after
+/// them, so that these come soon.
+const APPCOMMAND0300_FIRST: [Definition; 3] = [
+    appcommand::GET_AUDIO_INFO,
+    appcommand::GET_INPUT_SIGNAL,
+    appcommand::GET_ACTIVE_SPEAKER,
+];
+
+/// One request to `AppCommand0300.xml`: its queries and its body.
+#[derive(Debug)]
+struct Request0300 {
+    commands: Box<[Definition]>,
+    body: Bytes,
+}
+
+impl Request0300 {
+    fn new(commands: Box<[Definition]>) -> Result<Self, Error> {
+        let body = definitions_body(&commands)?;
+        Ok(Self { commands, body })
+    }
+}
+
 /// The commands that read what telnet does not report. [`Avr::refresh`] sends
 /// only these when the telnet connection is open.
 #[cfg(feature = "telnet")]
@@ -260,10 +283,13 @@ pub struct Avr {
     appcommand0300_commands: Box<[Definition]>,
     /// The request body of `appcommand0300_commands`.
     appcommand0300_body: Bytes,
+    /// `appcommand0300_commands` in the two requests of the start, see
+    /// [`APPCOMMAND0300_FIRST`].
+    appcommand0300_parts: [Request0300; 2],
     /// Reads that the receiver does not answer.
     missing: Arc<Missing>,
-    /// The last [`Avr::update_signal_and_settings`] read the signal and the
-    /// channels with `AppCommand0300.xml`.
+    /// The last start read the signal and the channels with
+    /// `AppCommand0300.xml`.
     signal_from_appcommand: AtomicBool,
     channels: Channels,
     /// A start is running, see [`Avr::start_with`].
@@ -1305,10 +1331,62 @@ impl Avr {
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
     pub async fn update_signal_and_settings(&self) -> Result<PageStatus, Error> {
+        self.read_appcommand0300(&self.appcommand0300_commands, &self.appcommand0300_body)
+            .await
+            .map(|(status, _)| status)
+    }
+
+    /// Like [`Avr::update_signal_and_settings`], in the two requests of
+    /// [`APPCOMMAND0300_FIRST`], so that the audio signal and the channels
+    /// come soon. The status is [`PageStatus::Read`] if one request was read:
+    /// a request that failed then counts like error items, and the start asks
+    /// telnet for its values. Else it is the status of the first request.
+    pub(crate) async fn update_signal_and_settings_in_parts(&self) -> Result<PageStatus, Error> {
+        self.signal_from_appcommand.store(false, Ordering::Relaxed);
+        let mut status = None;
+        let mut complete = true;
+        for part in &self.appcommand0300_parts {
+            if part.commands.is_empty() {
+                continue;
+            }
+            let (part_status, part_complete) =
+                match self.read_appcommand0300(&part.commands, &part.body).await {
+                    Ok(result) => result,
+                    // The values of the request that was read count.
+                    Err(error) if status == Some(PageStatus::Read) => {
+                        tracing::debug!(host = %self.info.host, %error, "AppCommand0300 not read");
+                        (PageStatus::NoAnswer, false)
+                    }
+                    Err(error) => return Err(error),
+                };
+            complete &= part_status == PageStatus::Read && part_complete;
+            if status.is_none() || part_status == PageStatus::Read {
+                status = Some(part_status);
+            }
+            // The receiver does not have the file.
+            if part_status == PageStatus::NotFound {
+                break;
+            }
+        }
+        let status = status.unwrap_or(PageStatus::NotFound);
+        // The start asks telnet again for what an error item left out.
+        self.signal_from_appcommand
+            .store(status == PageStatus::Read && complete, Ordering::Relaxed);
+        Ok(status)
+    }
+
+    /// Sends `body`, the request for `commands`, to `AppCommand0300.xml` and
+    /// puts the answer into the state. Also gives if each command but the
+    /// HDMI output had values.
+    async fn read_appcommand0300(
+        &self,
+        commands: &[Definition],
+        body: &Bytes,
+    ) -> Result<(PageStatus, bool), Error> {
         if self.info.update_method != UpdateMethod::AppCommand
             || self.missing.appcommand0300.load(Ordering::Relaxed)
         {
-            return Ok(PageStatus::NotFound);
+            return Ok((PageStatus::NotFound, false));
         }
         // Telnet reports the Audyssey values and the HDMI output, so a blank
         // one must not clear them.
@@ -1318,69 +1396,64 @@ impl Avr {
         let telnet_open = false;
         let result = self
             .http
-            .post_parsed(
-                Endpoint::AppCommand0300.path(),
-                self.appcommand0300_body.clone(),
-                |body| {
-                    let commands = &*self.appcommand0300_commands;
-                    // A busy receiver can leave items out.
-                    let response = Response::parse_at_most(body, commands.len())?;
-                    // One bit for each command with values in the answer.
-                    let mut answered = 0_u8;
-                    self.channels.modify(|state, notify| {
-                        for (index, item) in response.matched(commands) {
-                            // An error item has no values, and must not clear
-                            // what the state has.
-                            if item.is_error() {
-                                continue;
-                            }
-                            answered |= 1 << index;
-                            let definition = &commands[index];
-                            let keep_known = telnet_open
-                                && (*definition == appcommand::GET_AUDYSSEY
-                                    || *definition == appcommand::GET_OUTPUT_SETTINGS);
-                            definition.extract(&item, Zone::Main, &mut |field, value| {
-                                if value.is_some() || !keep_known {
-                                    notify(state.apply_field(Zone::Main, field, value));
-                                }
-                            });
-                            if *definition == appcommand::GET_INPUT_SIGNAL {
-                                notify(state.apply_channel_item(true, &item));
-                            } else if *definition == appcommand::GET_ACTIVE_SPEAKER {
-                                notify(state.apply_channel_item(false, &item));
-                            }
+            .post_parsed(Endpoint::AppCommand0300.path(), body.clone(), |body| {
+                // A busy receiver can leave items out.
+                let response = Response::parse_at_most(body, commands.len())?;
+                // One bit for each command with values in the answer.
+                let mut answered = 0_u8;
+                self.channels.modify(|state, notify| {
+                    for (index, item) in response.matched(commands) {
+                        // An error item has no values, and must not clear
+                        // what the state has.
+                        if item.is_error() {
+                            continue;
                         }
-                    });
-                    // The HDMI output is not part of the signal.
-                    let complete = commands.iter().enumerate().all(|(index, definition)| {
-                        answered & 1 << index != 0 || *definition == appcommand::GET_OUTPUT_SETTINGS
-                    });
-                    if answered.count_ones() as usize != commands.len() {
-                        tracing::debug!(
-                            host = %self.info.host,
-                            answered = answered.count_ones(),
-                            asked = commands.len(),
-                            "AppCommand0300 answer has no values for some commands"
-                        );
+                        answered |= 1 << index;
+                        let definition = &commands[index];
+                        let keep_known = telnet_open
+                            && (*definition == appcommand::GET_AUDYSSEY
+                                || *definition == appcommand::GET_OUTPUT_SETTINGS);
+                        definition.extract(&item, Zone::Main, &mut |field, value| {
+                            if value.is_some() || !keep_known {
+                                notify(state.apply_field(Zone::Main, field, value));
+                            }
+                        });
+                        if *definition == appcommand::GET_INPUT_SIGNAL {
+                            notify(state.apply_channel_item(true, &item));
+                        } else if *definition == appcommand::GET_ACTIVE_SPEAKER {
+                            notify(state.apply_channel_item(false, &item));
+                        }
                     }
-                    Ok(complete)
-                },
-            )
+                });
+                // The HDMI output is not part of the signal.
+                let complete = commands.iter().enumerate().all(|(index, definition)| {
+                    answered & 1 << index != 0 || *definition == appcommand::GET_OUTPUT_SETTINGS
+                });
+                if answered.count_ones() as usize != commands.len() {
+                    tracing::debug!(
+                        host = %self.info.host,
+                        answered = answered.count_ones(),
+                        asked = commands.len(),
+                        "AppCommand0300 answer has no values for some commands"
+                    );
+                }
+                Ok(complete)
+            })
             .await;
         match result {
             Ok(complete) => {
-                // The start asks telnet again for what an error item left out.
-                self.signal_from_appcommand
-                    .store(complete, Ordering::Relaxed);
                 self.forget_telnet_values(&Ok(PageStatus::Read));
-                self.ask_colorimetry_if_unknown().await;
-                Ok(PageStatus::Read)
+                // Only the video values can make BT.2020 not known.
+                if commands.contains(&appcommand::GET_VIDEO_INFO) {
+                    self.ask_colorimetry_if_unknown().await;
+                }
+                Ok((PageStatus::Read, complete))
             }
             // A timeout or a network error can pass.
             Err(error) if error.is_unreachable() => Err(error),
             Err(error) => {
                 tracing::debug!(host = %self.info.host, %error, "AppCommand0300 not read");
-                Ok(match error {
+                let status = match error {
                     // Only a missing file means that the receiver does not have it.
                     Error::Status { status: 404, .. } => {
                         self.missing.appcommand0300.store(true, Ordering::Relaxed);
@@ -1389,7 +1462,8 @@ impl Avr {
                     Error::Status { status, .. } => PageStatus::Refused(status),
                     Error::Forbidden { .. } => PageStatus::Refused(403),
                     _ => PageStatus::Unreadable,
-                })
+                };
+                Ok((status, false))
             }
         }
     }
@@ -1712,6 +1786,16 @@ impl AvrBuilder {
         ));
         let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
         let appcommand0300_body = definitions_body(&appcommand0300_commands)?;
+        let part = |first: bool| {
+            Request0300::new(
+                appcommand0300_commands
+                    .iter()
+                    .filter(|definition| APPCOMMAND0300_FIRST.contains(definition) == first)
+                    .copied()
+                    .collect(),
+            )
+        };
+        let appcommand0300_parts = [part(true)?, part(false)?];
         #[cfg(feature = "telnet")]
         let telnet = Telnet::new(self.telnet, self.background_pause, info.brand, single_zone);
         let follow_up = FollowUp::start(
@@ -1745,6 +1829,7 @@ impl AvrBuilder {
             )?,
             appcommand0300_commands,
             appcommand0300_body,
+            appcommand0300_parts,
             missing,
             signal_from_appcommand: AtomicBool::new(false),
             channels,

@@ -163,10 +163,11 @@ pub struct StartReport {
     pub telnet_sync: TelnetSync,
     /// The signal, the channels, the Audyssey settings and the HDMI output
     /// from `AppCommand0300.xml`, see [`Avr::update_signal_and_settings`].
-    /// [`PageStatus::Read`] means that the state has them.
-    /// [`PageStatus::NotFound`] means that the receiver does not have the
-    /// file, and [`PageStatus::NoAnswer`] that the request timed out or the
-    /// connection failed.
+    /// [`PageStatus::Read`] means that the state has them. Some can be
+    /// missing: telnet is then asked for them. [`PageStatus::NotFound`]
+    /// means that the receiver does not have the file, and
+    /// [`PageStatus::NoAnswer`] that the request timed out or the connection
+    /// failed.
     pub signal: PageStatus,
     /// The pages of the web interface, or the error if the receiver does not
     /// answer there.
@@ -329,13 +330,19 @@ impl Avr {
     /// It reads the zones with [`Avr::update`]. If that works, it opens telnet
     /// and returns, so the state is usable then. If the telnet port does not
     /// answer, the call waits for the connect timeout of the telnet settings
-    /// first. In the background it asks
-    /// telnet first for what the HTTP read does not give. It
-    /// also reads, one after the other, the pages that say which settings are
-    /// available, and the signal pages, with one more try for a page that
-    /// fails. The telnet queries for the signal that the pages answer are not
-    /// sent, unless a page could not be read. A page that does not answer after
-    /// another page did is reported as [`PageStatus::NoAnswer`].
+    /// first. In the background it asks telnet first for what the HTTP read
+    /// does not give. It also reads, one after the other: the video signal
+    /// page, the audio signal and the channels with `AppCommand0300.xml`, the
+    /// rest of [`Avr::update_signal_and_settings`], the pages that say which
+    /// settings are available, and the channels page if `AppCommand0300.xml`
+    /// did not give the channels. A page that fails is tried once more. The
+    /// telnet queries for the signal that the pages answer are not sent,
+    /// unless a page could not be read. A page that does not answer after
+    /// another page did is reported as [`PageStatus::NoAnswer`]. If the web
+    /// interface refuses the connection for the video page, or neither the
+    /// video page nor the first page after it answers, the other pages are
+    /// not asked. A video page that could not connect for another reason is
+    /// read again after the other pages.
     ///
     /// Use [`Started::basic_synced`] to wait for the HTTP reads and
     /// [`Started::all_synced`] to wait for the telnet answers too. The values
@@ -441,13 +448,23 @@ impl Avr {
             // Fails only if the caller dropped `Started`.
             let _ = sender.send(check);
         }
-        // The receiver answers this one fast, and it has the channels, so it
-        // is first.
+        // The video page first: it gives HDR, the color space and the pixel
+        // depth, which clients need soon.
+        let video = if options.signal_pages {
+            Some(self.read_video_page().await)
+        } else {
+            None
+        };
+        // Then the audio signal and the channels, and the rest after them.
         let signal = self
-            .update_signal_and_settings()
+            .update_signal_and_settings_in_parts()
             .await
             .unwrap_or(PageStatus::NoAnswer);
-        let web_interface = self.read_start_pages(options).await;
+        let web_interface = match video {
+            // Nothing listens on the port, so the other pages are not asked.
+            Some(Err(error)) if error.is_connection_refused() => Err(error),
+            video => self.read_start_pages(video).await,
+        };
         #[cfg(feature = "telnet")]
         if matches!(telnet, TelnetStart::Open)
             && self.info.update_method == UpdateMethod::AppCommand
@@ -625,7 +642,17 @@ impl Avr {
         Err(Error::NothingRead)
     }
 
-    async fn read_start_pages(&self, options: StartOptions) -> Result<StartPages, Error> {
+    /// Reads the pages of the start after the video page. `video` is the
+    /// result of the video page, or `None` if the signal pages are not asked.
+    async fn read_start_pages(
+        &self,
+        video: Option<Result<PageStatus, Error>>,
+    ) -> Result<StartPages, Error> {
+        let answered = matches!(video, Some(Ok(_)));
+        // The network of the caller can be down for a moment, for example
+        // after a wake-up. The page is read again after the others then.
+        let read_video_again = matches!(&video, Some(Err(error)) if error.is_not_sent());
+        let video_signal = video.map(|result| result.unwrap_or(PageStatus::NoAnswer));
         let mut pages = Vec::with_capacity(SettingsGroup::ALL.len());
         for group in SettingsGroup::ALL {
             let result = self
@@ -635,17 +662,18 @@ impl Avr {
                     State::apply_settings_availability,
                 )
                 .await;
-            // The first answer shows that the web interface is there. A page
-            // that does not answer after that is a problem of the page: the
-            // receiver is busy, and the other pages are still read.
-            let status = if pages.is_empty() {
+            // The first answer, also the one of the video page, shows that the
+            // web interface is there. A page that does not answer after that
+            // is a problem of the page: the receiver is busy, and the other
+            // pages are still read.
+            let status = if pages.is_empty() && !answered {
                 result?
             } else {
                 result.unwrap_or(PageStatus::NoAnswer)
             };
             pages.push((group, status));
         }
-        let (video_signal, audio_channels) = if options.signal_pages {
+        let (video_signal, audio_channels) = if let Some(video_signal) = video_signal {
             let channels = if self.signal_from_appcommand.load(Ordering::Relaxed) {
                 // The answer of `AppCommand0300.xml` has the channels. The page
                 // has none for a stream of objects, and would clear them.
@@ -655,10 +683,12 @@ impl Avr {
                     .await
                     .unwrap_or(PageStatus::NoAnswer)
             };
-            (
-                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer),
-                channels,
-            )
+            let video_signal = if read_video_again {
+                self.read_video_page().await.unwrap_or(PageStatus::NoAnswer)
+            } else {
+                video_signal
+            };
+            (video_signal, channels)
         } else {
             (
                 PageStatus::Skipped(SkipReason::NotAsked),
