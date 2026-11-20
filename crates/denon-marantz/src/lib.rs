@@ -11,6 +11,8 @@
 //! The names of the calls say which way they use:
 //! - `update_*` reads over HTTP: `update` reads the zones, the others read
 //!   pages of the web interface on port 11080 or the status pages.
+//!   `refresh_signal_pages` reads the signal pages over HTTP too, and asks
+//!   telnet only for BT.2020 after a change.
 //! - `telnet_*` uses the telnet connection: `telnet_connect`, `telnet_send`,
 //!   `telnet_refresh`, `telnet_ask`, `telnet_events`.
 //! - `refresh*` picks the way for you: `refresh`, `refresh_signal` and

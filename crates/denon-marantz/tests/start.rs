@@ -835,6 +835,54 @@ async fn refresh_signal_with_telnet_asks_only_telnet() {
     assert_eq!(web.requests().len(), pages, "no HTTP while telnet is open");
 }
 
+/// An `Avr` with open telnet that asked only `ZM?` after the connect.
+async fn quiet_telnet() -> (Fake, FakeTelnet, Arc<Avr>) {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver().await;
+    let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, &[]).await;
+    avr.telnet_connect().await.unwrap();
+    wait_until("the query of the connect", || {
+        lines(&telnet.received()).contains(&"ZM?")
+    })
+    .await;
+    (web, telnet, avr)
+}
+
+#[tokio::test]
+async fn refresh_signal_pages_with_telnet_reads_only_the_pages() {
+    let (web, telnet, avr) = quiet_telnet().await;
+    let before = telnet.received().len();
+    let read = |path: &str| {
+        web.requests()
+            .iter()
+            .filter(|seen| seen.path == path)
+            .count()
+    };
+    avr.refresh_signal_pages().await.unwrap();
+    assert_eq!(read(VIDEO_SIGNAL_PATH), 1);
+    assert_eq!(read(AUDIO_CHANNELS_PATH), 1);
+    assert!(avr.snapshot().device().signal.channels.input.is_some());
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(telnet.received().len(), before, "no telnet queries");
+}
+
+#[tokio::test]
+async fn refresh_signal_pages_asks_telnet_for_bt2020_after_a_change() {
+    let (_web, telnet, avr) = quiet_telnet().await;
+    telnet.send(b"SSINFSIGRES I1080p50\rSSINFSIGCOS 11\rSSINFSIGECI 55\r");
+    wait_until("BT.2020", || {
+        avr.snapshot().device().signal.bt2020.input == Some(true)
+    })
+    .await;
+    assert!(!lines(&telnet.received()).contains(&"SSINFSIGECI ?"));
+    // The page has another resolution, so BT.2020 is not known.
+    avr.refresh_signal_pages().await.unwrap();
+    wait_until("the colorimetry query", || {
+        lines(&telnet.received()).contains(&"SSINFSIGECI ?")
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn refresh_signal_without_telnet_reads_only_the_pages() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);

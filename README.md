@@ -197,7 +197,8 @@ telnet is open, it asks only telnet. If not, it reads the resolution, the audio
 signal and the channels with one fast request (`update_signal_and_settings`) if
 the receiver has it, and the HDR and color values from the web interface. Your
 code does not choose. Auto low latency mode and quick frame transport come only
-from the web interface.
+from the web interface. To read these pages also while telnet is open, for
+example after a page failed at the start, call `refresh_signal_pages`.
 
 Some receivers do not send video signal changes on telnet. When the signal
 changes, they send the sound mode (`MS`) or `SSINFAISSIG`, also with the same

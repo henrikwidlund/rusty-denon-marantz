@@ -672,7 +672,8 @@ impl Avr {
     /// video signal changes on telnet. Telnet asks for them after a hint, see
     /// [`TelnetConfig::signal_wait_min`](crate::TelnetConfig::signal_wait_min).
     /// Call this to see the signal now, or on a timer if the receiver sends
-    /// neither changes nor hints.
+    /// neither changes nor hints. To read the pages also while telnet is
+    /// open, call [`Avr::refresh_signal_pages`].
     ///
     /// # Errors
     ///
@@ -690,6 +691,24 @@ impl Avr {
                 result => return result,
             }
         }
+        self.refresh_signal_pages().await
+    }
+
+    /// Reads the video and audio signal over HTTP, also while telnet is open:
+    /// `AppCommand0300.xml`, if the receiver has it, the video signal page
+    /// and, without an answer of `AppCommand0300.xml`, the channels page.
+    /// While telnet is open, it asks telnet only for BT.2020 when the page
+    /// changed the signal and the receiver reports BT.2020 on telnet.
+    ///
+    /// Use it to read pages that failed before, for example at the start.
+    /// Auto low latency mode and quick frame transport come only from the
+    /// video signal page. For the signal now, call [`Avr::refresh_signal`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the web interface does not answer, or answers with
+    /// no page that can be read ([`Error::NothingRead`]).
+    pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
         // A receiver that answers `AppCommand0300.xml` gives the resolution, the
         // audio signal and the channels at once, and its answer for the
         // channels is more complete than the page.
