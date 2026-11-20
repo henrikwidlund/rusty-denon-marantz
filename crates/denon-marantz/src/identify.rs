@@ -47,7 +47,8 @@ impl TypeProof {
 
 /// Answer of one port.
 enum Page {
-    Info(DeviceInfo<'static>),
+    // Boxed: the device information is large.
+    Info(Box<DeviceInfo<'static>>),
     OldModel,
 }
 
@@ -99,7 +100,7 @@ pub async fn identify_on(
         pending.push(Box::pin(async move {
             let info = client
                 .get_parsed(DEVICE_INFO_PATH, |body| match DeviceInfo::parse(body) {
-                    Ok(info) => Ok(Page::Info(info.into_owned())),
+                    Ok(info) => Ok(Page::Info(Box::new(info.into_owned()))),
                     Err(_) if is_old_model_page(body) => Ok(Page::OldModel),
                     Err(error) => Err(error),
                 })
@@ -136,7 +137,7 @@ pub async fn identify_on(
             .find(|&&(_, p)| p == port)
             .map_or(ReceiverType::Avr, |&(receiver_type, _)| receiver_type);
         let info = match info {
-            Ok(Page::Info(info)) => info,
+            Ok(Page::Info(info)) => *info,
             Ok(Page::OldModel) => {
                 tracing::debug!(host, port, "old receiver error page");
                 old_model_page = true;

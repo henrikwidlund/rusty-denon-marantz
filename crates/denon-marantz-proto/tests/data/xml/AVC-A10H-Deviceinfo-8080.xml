@@ -1308,6 +1308,29 @@
 </Value>
 </List>
 </RefLevOffset>
+<SurroundLevelCompensation>
+<Control>1</Control>
+<DispName>Surround Level Compensation</DispName>
+<FuncName>SurroundLevelCompensation</FuncName>
+<List>
+<Value>
+<DispName>Off</DispName>
+<CmdNo>0</CmdNo>
+</Value>
+<Value>
+<DispName>Light</DispName>
+<CmdNo>1</CmdNo>
+</Value>
+<Value>
+<DispName>Medium</DispName>
+<CmdNo>2</CmdNo>
+</Value>
+<Value>
+<DispName>Heavy</DispName>
+<CmdNo>3</CmdNo>
+</Value>
+</List>
+</SurroundLevelCompensation>
 <DynamicVolume>
 <Control>1</Control>
 <DispName>Dynamic Volume</DispName>
@@ -1533,6 +1556,7 @@
 <FuncName>HighPassFilter</FuncName>
 <Value>40</Value>
 <Value>60</Value>
+<Value>70</Value>
 <Value>80</Value>
 <Value>90</Value>
 <Value>100</Value>
@@ -1547,6 +1571,7 @@
 <Control>1</Control>
 <DispName>Low Pass Filter</DispName>
 <FuncName>LowPassFilter</FuncName>
+<Value>70</Value>
 <Value>80</Value>
 <Value>90</Value>
 <Value>100</Value>

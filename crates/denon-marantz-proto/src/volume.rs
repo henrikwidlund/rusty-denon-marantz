@@ -121,10 +121,22 @@ impl Volume {
 
     /// Parses the volume of a telnet event.
     ///
-    /// `--` is the lowest volume. A value above the highest volume gives the
-    /// highest volume. Returns `None` for text that is not a volume.
+    /// `--` is the lowest volume. Receivers from before about 2013 send `99`
+    /// for the lowest volume and `995` for -80.5 dB, so both give the lowest
+    /// volume too. Other values above the highest volume give the highest
+    /// volume. Returns `None` for text that is not a volume.
     #[must_use]
     pub fn from_telnet(code: &str) -> Option<Self> {
+        let volume = Self::from_telnet_clamped(code)?;
+        if code.trim().starts_with("99") {
+            return Some(Self::MIN);
+        }
+        Some(volume)
+    }
+
+    /// Parses a volume like [`Volume::from_telnet`], but `99`, `990` and `995`
+    /// give the highest volume, not the lowest. Used for the volume limit.
+    pub(crate) fn from_telnet_clamped(code: &str) -> Option<Self> {
         let code = code.trim();
         if code == "--" {
             return Some(Self::MIN);
@@ -209,8 +221,12 @@ mod tests {
 
     #[test]
     fn telnet_clamps_and_rejects() {
-        assert_eq!(Volume::from_telnet("99"), Some(Volume::MAX));
-        assert_eq!(Volume::from_telnet("995"), Some(Volume::MAX));
+        assert_eq!(Volume::from_telnet("99"), Some(Volume::MIN));
+        assert_eq!(Volume::from_telnet("990"), Some(Volume::MIN));
+        assert_eq!(Volume::from_telnet("995"), Some(Volume::MIN));
+        assert_eq!(Volume::from_telnet("991"), None);
+        assert_eq!(Volume::from_telnet_clamped("99"), Some(Volume::MAX));
+        assert_eq!(Volume::from_telnet_clamped("995"), Some(Volume::MAX));
         assert_eq!(Volume::from_telnet(""), None);
         assert_eq!(Volume::from_telnet("MAX"), None);
         assert_eq!(Volume::from_telnet("4350"), None);

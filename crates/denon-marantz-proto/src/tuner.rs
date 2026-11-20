@@ -3,9 +3,10 @@
 use core::fmt;
 use core::fmt::Write as _;
 
+use crate::brand::Brand;
 use crate::error::Error;
 use crate::speaker_tables::root;
-use crate::values::{HdRadioBand, HdTuningMode, TunerBand, TunerMode};
+use crate::values::{DabDrc, DabStationOrder, HdRadioBand, HdTuningMode, TunerBand, TunerMode};
 use crate::xml::Node;
 
 /// Queries for the frequency, the preset and the tuning mode. A receiver
@@ -16,6 +17,20 @@ pub const TUNER_QUERIES: [&str; 3] = ["TFAN?", "TPAN?", "TMAN?"];
 /// the band and tuning mode. A receiver answers them for the HD Radio source
 /// only.
 pub const HD_RADIO_QUERIES: [&str; 4] = ["HD?", "TFHD?", "TPHD?", "TMHD?"];
+
+/// Queries for the DAB tuner: the status lines, the dynamic range control and
+/// the station order. Only DAB models answer them.
+pub const DAB_QUERIES: [&str; 3] = ["DA ?", "DADRC ?", "DAODR ?"];
+
+/// Query for the RDS name of the station. Denon receivers answer
+/// `TFANNAME`, Marantz receivers `TPANNAME`.
+#[must_use]
+pub const fn station_name_query(brand: Brand) -> &'static str {
+    match brand {
+        Brand::Denon => "TFANNAME?",
+        Brand::Marantz => "TPANNAME?",
+    }
+}
 
 /// Query for the names and frequencies of the tuner presets. The answers
 /// fill [`TunerState::presets`].
@@ -133,10 +148,77 @@ pub struct TunerState {
     pub station_name: Option<String>,
     /// The HD Radio tuner.
     pub hd: HdRadioState,
+    /// The DAB tuner.
+    pub dab: DabState,
     /// The tuner presets, from the answers to [`TUNER_PRESETS_QUERY`]. The
     /// first is preset 1. A preset that the receiver has not reported has no
     /// values.
     pub presets: Vec<TunerPreset>,
+}
+
+/// What the DAB tuner reports, on DAB models. A value is `None` until the
+/// receiver reports it. The texts are as the receiver sends them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DabState {
+    /// Long name of the station (`DASTN`).
+    pub station_name: Option<String>,
+    /// Program type (`DAPTY`).
+    pub program_type: Option<String>,
+    /// Ensemble label (`DAENL`).
+    pub ensemble: Option<String>,
+    /// Frequency (`DAFRQ`).
+    pub frequency: Option<String>,
+    /// Signal quality (`DAQUA`).
+    pub quality: Option<String>,
+    /// Audio information (`DAINF`).
+    pub audio_info: Option<String>,
+    /// Dynamic range control.
+    pub drc: Option<DabDrc>,
+    /// Order of the stations.
+    pub station_order: Option<DabStationOrder>,
+}
+
+impl DabState {
+    /// Applies the text of a `DA` event without `DA`, for example
+    /// `STN BBC Radio 2` or `DRC HLF`. Returns `None` if it is not a value
+    /// that this library knows, and whether the state changed otherwise.
+    pub(crate) fn apply(&mut self, parameter: &str) -> Option<bool> {
+        let (name, value) = parameter.split_at_checked(3)?;
+        let value = value.trim();
+        let text = match name {
+            "DRC" => return Some(replace(&mut self.drc, Some(DabDrc::from_code(value)?))),
+            "ODR" => {
+                let order = DabStationOrder::from_code(value)?;
+                return Some(replace(&mut self.station_order, Some(order)));
+            }
+            "STN" => &mut self.station_name,
+            "PTY" => &mut self.program_type,
+            "ENL" => &mut self.ensemble,
+            "FRQ" => &mut self.frequency,
+            "QUA" => &mut self.quality,
+            "INF" => &mut self.audio_info,
+            _ => return None,
+        };
+        // `?` is the query, not a value.
+        if value == "?" {
+            return None;
+        }
+        Some(match text {
+            _ if value.is_empty() => text.take().is_some(),
+            Some(current) if current == value => false,
+            // Reuses the buffer.
+            Some(current) => {
+                current.clear();
+                current.push_str(value);
+                true
+            }
+            None => {
+                *text = Some(value.to_owned());
+                true
+            }
+        })
+    }
 }
 
 /// A tuner preset, as the answer to [`TUNER_PRESETS_QUERY`] tells it.
@@ -305,6 +387,10 @@ impl TunerState {
     /// Applies the text of a `TP` event, for example `AN01`, `ANA1` or
     /// `ANOFF`.
     pub(crate) fn apply_preset(&mut self, parameter: &str) -> Option<bool> {
+        // Marantz receivers send the RDS name as `TPANNAME`.
+        if parameter.starts_with("ANNAME") {
+            return self.apply_frequency(parameter);
+        }
         let (slot, lettered, rest) = if let Some(rest) = parameter.strip_prefix("HD") {
             (&mut self.hd.preset, &mut self.hd.presets_lettered, rest)
         } else {
@@ -436,6 +522,8 @@ pub enum TunerCommand {
     PresetUp,
     /// Goes to the previous preset.
     PresetDown,
+    /// Leaves the preset. North America models only.
+    PresetOff,
     /// Goes to a preset, from 1 to 56.
     Preset(u8),
     /// Stores the station in a preset, from 1 to 56.
@@ -479,6 +567,10 @@ pub enum TunerCommand {
     /// Stores the HD Radio station in a preset, from 1 to 56, in the form A1
     /// to G8. See [`TunerCommand::LetteredPreset`].
     HdStoreLetteredPreset(u8),
+    /// Sets the dynamic range control of the DAB tuner. DAB models only.
+    DabDrc(DabDrc),
+    /// Sets the order of the DAB stations. DAB models only.
+    DabStationOrder(DabStationOrder),
 }
 
 impl TunerCommand {
@@ -505,6 +597,7 @@ impl TunerCommand {
             }
             Self::PresetUp => out.push_str("TPANUP"),
             Self::PresetDown => out.push_str("TPANDOWN"),
+            Self::PresetOff => out.push_str("TPANOFF"),
             Self::Preset(number) => write_preset(out, "TPAN", number)?,
             Self::StorePreset(number) => write_preset(out, "TPANMEM", number)?,
             Self::LetteredPreset(number) => write_lettered_preset(out, "TPAN", number)?,
@@ -539,6 +632,14 @@ impl TunerCommand {
             Self::HdLetteredPreset(number) => write_lettered_preset(out, "TPHD", number)?,
             Self::HdStoreLetteredPreset(number) => {
                 write_lettered_preset(out, "TPHDMEM", number)?;
+            }
+            Self::DabDrc(drc) => {
+                out.push_str("DADRC ");
+                out.push_str(drc.code());
+            }
+            Self::DabStationOrder(order) => {
+                out.push_str("DAODR ");
+                out.push_str(order.code());
             }
         }
         Ok(())
@@ -645,6 +746,12 @@ mod tests {
             (TunerCommand::Mode(TunerMode::Manual), "TMANMANUAL"),
             (TunerCommand::PresetUp, "TPANUP"),
             (TunerCommand::PresetDown, "TPANDOWN"),
+            (TunerCommand::PresetOff, "TPANOFF"),
+            (TunerCommand::DabDrc(DabDrc::Half), "DADRC HLF"),
+            (
+                TunerCommand::DabStationOrder(DabStationOrder::Multiplex),
+                "DAODR MLT",
+            ),
             (TunerCommand::Preset(1), "TPAN01"),
             (TunerCommand::Preset(56), "TPAN56"),
             (TunerCommand::StorePreset(7), "TPANMEM07"),
@@ -736,6 +843,9 @@ mod tests {
         assert_eq!(state.station_name.as_deref(), Some("BBC R2"));
         assert_eq!(state.apply_frequency("ANNAME________"), Some(true));
         assert_eq!(state.station_name, None);
+        assert_eq!(state.apply_preset("ANNAMEBBC_R2__"), Some(true));
+        assert_eq!(state.station_name.as_deref(), Some("BBC R2"));
+        assert_eq!(state.apply_preset("ANNAMEBBC_R2__"), Some(false));
         assert_eq!(state.apply_preset("AN07"), Some(true));
         assert_eq!(state.preset, Some(7));
         assert_eq!(state.apply_preset("ANOFF"), Some(true));

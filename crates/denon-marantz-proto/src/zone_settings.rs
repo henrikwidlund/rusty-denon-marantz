@@ -26,13 +26,13 @@ pub const MAX_QUICK_SELECT: u8 = 6;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ZoneSettingValue {
-    /// Bass level, from -10 to +10 dB.
+    /// Bass level, from -10 to +10 dB on most receivers, see [`ToneLevel`].
     Bass(ToneLevel),
     /// Raises the bass by one step.
     BassUp,
     /// Lowers the bass by one step.
     BassDown,
-    /// Treble level, from -10 to +10 dB.
+    /// Treble level, from -10 to +10 dB on most receivers, see [`ToneLevel`].
     Treble(ToneLevel),
     /// Raises the treble by one step.
     TrebleUp,

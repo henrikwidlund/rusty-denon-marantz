@@ -21,8 +21,17 @@ pub enum CenterWidthName {
     Cew,
 }
 
-/// Highest value of each number, as the receiver accepts it.
-const MAX_AURO_STRENGTH: u16 = 15;
+/// Query for the balance. Few receivers have a balance, so it is not in the
+/// state queries.
+pub const BALANCE_QUERY: &str = "BL?";
+
+/// Query for the LFE level of a 7.1 channel input. Receivers answer it only
+/// with a 7.1 channel input, so it is not in the state queries.
+pub const LFE_EXTERNAL_INPUT_QUERY: &str = "PSLFL ?";
+
+/// Highest value of each number, as the widest spec allows it. A receiver
+/// can list a smaller range in its device information.
+const MAX_AURO_STRENGTH: u16 = 16;
 const MAX_BASS_SYNC: u16 = 16;
 const MAX_LFE_LEVEL: u16 = 10;
 const MAX_DIALOG_CONTROL: u16 = 6;
@@ -31,6 +40,10 @@ const MAX_AUDIO_DELAY: u16 = 500;
 const MAX_DIMENSION: u16 = 6;
 const MAX_CENTER_WIDTH: u16 = 7;
 const MAX_EFFECT_LEVEL: u16 = 15;
+/// Highest balance step to the left and to the right.
+const MAX_BALANCE: i8 = 12;
+/// Values of the LFE level of a 7.1 channel input in dB.
+const LFE_EXTERNAL_INPUT_DB: [u16; 4] = [0, 5, 10, 15];
 /// Highest dialog level in dB, above and below 0 dB.
 const MAX_DIALOG_LEVEL_DB: i8 = 12;
 /// Highest stage width and stage height in dB, above and below 0 dB.
@@ -38,9 +51,9 @@ const MAX_STAGE_DB: i8 = 10;
 /// Center image and center gain go from 0.0 to 1.0 in steps of 0.1.
 const MAX_TENTHS: u16 = 10;
 /// Values of the IMAX filters in Hz.
-const IMAX_HIGH_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
+const IMAX_HIGH_PASS_HZ: [u16; 12] = [40, 60, 70, 80, 90, 100, 110, 120, 150, 180, 200, 250];
 const TACTILE_LOW_PASS_HZ: [u16; 11] = [40, 60, 80, 90, 100, 110, 120, 150, 180, 200, 250];
-const IMAX_LOW_PASS_HZ: [u16; 9] = [80, 90, 100, 110, 120, 150, 180, 200, 250];
+const IMAX_LOW_PASS_HZ: [u16; 10] = [70, 80, 90, 100, 110, 120, 150, 180, 200, 250];
 
 /// Most `other` entries that are kept. A faulty receiver cannot make the
 /// table grow past it.
@@ -71,7 +84,7 @@ pub struct SoundSettings {
     pub auro_3d_mode: Option<Auro3dMode>,
     /// Auro-Matic preset.
     pub auro_matic_preset: Option<AuroMatic3dPreset>,
-    /// Auro-Matic strength, from 0 to 15.
+    /// Auro-Matic strength, from 0 to 16.
     pub auro_matic_strength: Option<u8>,
     /// Speakers used for the effect channels.
     pub effect_speakers: Option<EffectSpeakerSelection>,
@@ -97,6 +110,10 @@ pub struct SoundSettings {
     pub subwoofer_levels: [Option<ChannelLevel>; 4],
     /// LFE level, as dB below 0 dB, from 0 to 10.
     pub lfe_level: Option<u8>,
+    /// LFE level of a 7.1 channel input in dB: 0, 5, 10 or 15.
+    pub lfe_external_input: Option<u8>,
+    /// Balance, from -12 (left) to +12 (right).
+    pub balance: Option<i8>,
     /// Level of the center speaker.
     pub center_level: Option<ChannelLevel>,
     /// Neural:X is on.
@@ -132,7 +149,7 @@ pub struct SoundSettings {
     /// Center image in tenths, from 0 to 10 (0.0 to 1.0). Older receivers
     /// only.
     pub center_image: Option<u8>,
-    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older Marantz
+    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older
     /// receivers only.
     pub center_gain: Option<u8>,
     /// The tactile transducer is on.
@@ -141,6 +158,12 @@ pub struct SoundSettings {
     pub tactile_level: Option<ChannelLevel>,
     /// Low pass filter of the tactile transducer in Hz.
     pub tactile_low_pass: Option<u16>,
+    /// The channel of the tactile transducer is on (`CVTTR`). It is not the
+    /// same switch as [`SoundSettings::tactile_transducer`].
+    pub tactile_channel: Option<bool>,
+    /// Channel level of the tactile transducer (`CVTTR`). It is not the same
+    /// value as [`SoundSettings::tactile_level`].
+    pub tactile_channel_level: Option<ChannelLevel>,
     /// The front height output is on. Marantz and older Denon receivers
     /// only.
     pub front_height: Option<bool>,
@@ -182,6 +205,26 @@ impl SoundSettings {
         let value = value.trim();
         self.apply_known(name, value)
             .unwrap_or_else(|| self.apply_other(name, value))
+    }
+
+    /// Applies the text of a `BL` event without `BL`, for example `L01`, `0`
+    /// or `R12`. Returns true if the balance changed.
+    pub(crate) fn apply_balance(&mut self, value: &str) -> bool {
+        put(&mut self.balance, balance_answer(value.trim())).unwrap_or(false)
+    }
+
+    /// Applies the text of a `CVTTR` event without `CVTTR`, for example `ON`
+    /// or `50`. Returns true if the state changed.
+    pub(crate) fn apply_tactile_channel(&mut self, value: &str) -> bool {
+        let value = value.trim();
+        match on_off(value) {
+            Some(on) => put(&mut self.tactile_channel, Some(on)),
+            None => put(
+                &mut self.tactile_channel_level,
+                ChannelLevel::from_code(value),
+            ),
+        }
+        .unwrap_or(false)
     }
 
     /// Reads the center width and remembers the name that the receiver used.
@@ -250,6 +293,10 @@ impl SoundSettings {
                 ChannelLevel::from_code(value),
             ),
             "LFE" => put(&mut self.lfe_level, number(value, MAX_LFE_LEVEL)),
+            "LFL" => put(
+                &mut self.lfe_external_input,
+                number(value, 15).filter(|db: &u8| LFE_EXTERNAL_INPUT_DB.contains(&u16::from(*db))),
+            ),
             "CLV" => put(&mut self.center_level, ChannelLevel::from_code(value)),
             "NEURAL" => put(&mut self.neural_x, on_off(value)),
             "PAN" => put(&mut self.panorama, on_off(value)),
@@ -354,7 +401,8 @@ pub enum SoundSettingValue {
     Auro3dMode(Auro3dMode),
     /// Auro-Matic preset.
     AuroMaticPreset(AuroMatic3dPreset),
-    /// Auro-Matic strength, from 0 to 15.
+    /// Auro-Matic strength, from 0 to 16. Some receivers take 0 to 15, others
+    /// 1 to 16.
     AuroMaticStrength(u8),
     /// Speakers used for the effect channels.
     EffectSpeakers(EffectSpeakerSelection),
@@ -370,11 +418,11 @@ pub enum SoundSettingValue {
     ImaxSubwooferOutput(ImaxSubwooferOutput),
     /// IMAX subwoofer mode.
     ImaxSubwooferMode(bool),
-    /// IMAX high pass filter in Hz: 40, 60, 80, 90, 100, 110, 120, 150, 180,
-    /// 200 or 250.
+    /// IMAX high pass filter in Hz: 40, 60, 70, 80, 90, 100, 110, 120, 150,
+    /// 180, 200 or 250.
     ImaxHighPass(u16),
-    /// IMAX low pass filter in Hz: 80, 90, 100, 110, 120, 150, 180, 200 or
-    /// 250.
+    /// IMAX low pass filter in Hz: 70, 80, 90, 100, 110, 120, 150, 180, 200
+    /// or 250.
     ImaxLowPass(u16),
     /// Subwoofer on or off.
     Subwoofer(bool),
@@ -408,6 +456,27 @@ pub enum SoundSettingValue {
     /// Low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100,
     /// 110, 120, 150, 180, 200 or 250.
     TactileLowPass(u16),
+    /// Channel of the tactile transducer on (`true`) or off (`false`)
+    /// (`CVTTR`). It is not the same switch as
+    /// [`SoundSettingValue::TactileTransducer`]. The receiver ignores the
+    /// `CVTTR` commands while that one is off.
+    TactileChannel(bool),
+    /// Channel level of the tactile transducer, from -12 to +12 dB
+    /// (`CVTTR`). It is not the same value as the level of `SSTTRLEV`. The
+    /// receiver ignores it while the channel is off.
+    TactileChannelLevel(ChannelLevel),
+    /// Raises the channel level of the tactile transducer by 0.5 dB.
+    TactileChannelUp,
+    /// Lowers the channel level of the tactile transducer by 0.5 dB.
+    TactileChannelDown,
+    /// LFE level of a 7.1 channel input in dB: 0, 5, 10 or 15.
+    LfeExternalInput(u8),
+    /// Balance, from -12 (left) to +12 (right). Few receivers have it.
+    Balance(i8),
+    /// Moves the balance one step to the left.
+    BalanceLeft,
+    /// Moves the balance one step to the right.
+    BalanceRight,
     /// Effect on (`true`) or off (`false`). Older receivers only.
     Effect(bool),
     /// Effect level, from 1 to 15.
@@ -415,7 +484,7 @@ pub enum SoundSettingValue {
     /// Center image in tenths, from 0 to 10 (0.0 to 1.0). Older receivers
     /// only.
     CenterImage(u8),
-    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older Marantz
+    /// Center gain in tenths, from 0 to 10 (0.0 to 1.0). Older
     /// receivers only.
     CenterGain(u8),
     /// Raises a setting by one step of the receiver.
@@ -551,6 +620,41 @@ impl SoundSettingValue {
                 hz,
                 &TACTILE_LOW_PASS_HZ,
             ),
+            Self::TactileChannel(on) => code(out, "CVTTR ", on_off_code(on)),
+            Self::TactileChannelLevel(level) => code(out, "CVTTR ", level.code()),
+            Self::TactileChannelUp => code(out, "CVTTR ", "UP"),
+            Self::TactileChannelDown => code(out, "CVTTR ", "DOWN"),
+            Self::LfeExternalInput(db) => {
+                if !LFE_EXTERNAL_INPUT_DB.contains(&u16::from(db)) {
+                    return Err(Error::ValueOutOfRange {
+                        what: "LFE level of a 7.1 input",
+                    });
+                }
+                digits(
+                    out,
+                    "PSLFL ",
+                    "LFE level of a 7.1 input",
+                    u16::from(db),
+                    15,
+                    2,
+                )
+            }
+            Self::Balance(step) => {
+                if step.unsigned_abs() > MAX_BALANCE.unsigned_abs() {
+                    return Err(Error::ValueOutOfRange { what: "balance" });
+                }
+                out.push_str("BL");
+                // The spec writes the center as `0`. Writing to a `String`
+                // cannot fail.
+                let _ = match step {
+                    0 => write!(out, "0"),
+                    ..0 => write!(out, "L{:02}", step.unsigned_abs()),
+                    _ => write!(out, "R{step:02}"),
+                };
+                Ok(())
+            }
+            Self::BalanceLeft => code(out, "BL", "LEFT"),
+            Self::BalanceRight => code(out, "BL", "RIGHT"),
             Self::Effect(on) => code(out, "PSEFF ", on_off_code(on)),
             Self::EffectLevel(level) if (1..=15).contains(&level) => digits(
                 out,
@@ -659,7 +763,7 @@ pub enum SoundStep {
     EffectLevel,
     /// Center image. Older receivers only.
     CenterImage,
-    /// Center gain. Older Marantz receivers only.
+    /// Center gain. Older receivers only.
     CenterGain,
     /// Dialog level. Older receivers only.
     DialogLevel,
@@ -763,6 +867,26 @@ fn hertz(
         return Err(Error::ValueOutOfRange { what });
     }
     digits(out, start, what, hz, u16::MAX, 3)
+}
+
+/// Reads a balance answer: `L12` to `L01` (or `L1`), `0`, `00` or `000`
+/// for the center, `R01` (or `R1`) to `R12`.
+fn balance_answer(text: &str) -> Option<i8> {
+    let (sign, digits) = match text.as_bytes().first()? {
+        b'L' => (-1, &text[1..]),
+        b'R' => (1, &text[1..]),
+        _ => (0, text),
+    };
+    if digits.is_empty() || digits.len() > 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let step: i8 = digits.parse().ok()?;
+    match (sign, step) {
+        (0, 0) => Some(0),
+        (0, _) | (_, 0) => None,
+        (sign, step) if step <= MAX_BALANCE => Some(sign * step),
+        _ => None,
+    }
 }
 
 /// Sets the value if there is one. `None` if there is none. Otherwise returns
@@ -1157,6 +1281,9 @@ mod tests {
             (SoundSettingValue::ImaxSubwooferMode(true), "PSIMAXSWM ON"),
             (SoundSettingValue::ImaxHighPass(80), "PSIMAXHPF 080"),
             (SoundSettingValue::ImaxLowPass(250), "PSIMAXLPF 250"),
+            (SoundSettingValue::ImaxHighPass(70), "PSIMAXHPF 070"),
+            (SoundSettingValue::ImaxLowPass(70), "PSIMAXLPF 070"),
+            (SoundSettingValue::AuroMaticStrength(16), "PSAUROST 16"),
             (SoundSettingValue::Subwoofer(false), "PSSWR OFF"),
             (
                 SoundSettingValue::SubwooferLevel {
@@ -1195,11 +1322,74 @@ mod tests {
     }
 
     #[test]
+    fn tactile_channel_lfe_input_and_balance_texts() {
+        let text = |value: SoundSettingValue| {
+            let mut out = String::new();
+            value.write(&mut out).map(|()| out)
+        };
+        let cases = [
+            (SoundSettingValue::TactileChannel(true), "CVTTR ON"),
+            (
+                SoundSettingValue::TactileChannelLevel(ChannelLevel::from_half_db(24).unwrap()),
+                "CVTTR 62",
+            ),
+            (SoundSettingValue::TactileChannelUp, "CVTTR UP"),
+            (SoundSettingValue::TactileChannelDown, "CVTTR DOWN"),
+            (SoundSettingValue::LfeExternalInput(0), "PSLFL 00"),
+            (SoundSettingValue::LfeExternalInput(15), "PSLFL 15"),
+            (SoundSettingValue::Balance(-12), "BLL12"),
+            (SoundSettingValue::Balance(-1), "BLL01"),
+            (SoundSettingValue::Balance(0), "BL0"),
+            (SoundSettingValue::Balance(1), "BLR01"),
+            (SoundSettingValue::Balance(12), "BLR12"),
+            (SoundSettingValue::BalanceLeft, "BLLEFT"),
+            (SoundSettingValue::BalanceRight, "BLRIGHT"),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn balance_answers() {
+        for (text, step) in [
+            ("L12", Some(-12)),
+            ("L01", Some(-1)),
+            ("L1", Some(-1)),
+            ("0", Some(0)),
+            ("00", Some(0)),
+            ("000", Some(0)),
+            ("R1", Some(1)),
+            ("R01", Some(1)),
+            ("R12", Some(12)),
+            ("R13", None),
+            ("L00", None),
+            ("R", None),
+            ("5", None),
+            ("", None),
+            ("X01", None),
+            ("R0001", None),
+        ] {
+            assert_eq!(balance_answer(text), step, "{text:?}");
+        }
+        let mut settings = SoundSettings::default();
+        assert!(settings.apply_balance("R03"));
+        assert!(!settings.apply_balance("R3"));
+        assert!(!settings.apply_balance("?"));
+        assert_eq!(settings.balance, Some(3));
+    }
+
+    #[test]
     fn setters_reject_numbers_out_of_range() {
         let level = ChannelLevel::from_half_db(0).unwrap();
         for value in [
-            SoundSettingValue::AuroMaticStrength(16),
-            SoundSettingValue::ImaxHighPass(70),
+            SoundSettingValue::AuroMaticStrength(17),
+            SoundSettingValue::LfeExternalInput(3),
+            SoundSettingValue::LfeExternalInput(20),
+            SoundSettingValue::Balance(13),
+            SoundSettingValue::Balance(-13),
+            SoundSettingValue::Balance(i8::MIN),
+            SoundSettingValue::ImaxHighPass(65),
             SoundSettingValue::ImaxLowPass(40),
             SoundSettingValue::SubwooferLevel { number: 0, level },
             SoundSettingValue::SubwooferLevel { number: 5, level },

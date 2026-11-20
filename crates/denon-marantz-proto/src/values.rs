@@ -196,6 +196,23 @@ code_enum! {
 }
 
 code_enum! {
+    /// Dynamic range control of the DAB tuner.
+    pub enum DabDrc {
+        One = "ONE", "1";
+        Half = "HLF", "1/2";
+        Off = "OFF", "Off";
+    }
+}
+
+code_enum! {
+    /// Order of the DAB stations.
+    pub enum DabStationOrder {
+        Alphanumeric = "ALP", "Alphanumeric";
+        Multiplex = "MLT", "Multiplex";
+    }
+}
+
+code_enum! {
     /// Tuning mode of the HD Radio tuner.
     pub enum HdTuningMode {
         AutoHd = "AUTOHD", "Automatic HD";
@@ -668,6 +685,8 @@ mod tests {
             PliizHeightGain,
             MaxHdmiResolution,
             FrontSpeakers,
+            DabDrc,
+            DabStationOrder,
             HdRadioBand,
             HdTuningMode,
             Illumination,

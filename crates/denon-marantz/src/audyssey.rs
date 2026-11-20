@@ -106,7 +106,8 @@ impl<'a> Audyssey<'a> {
     /// # Errors
     ///
     /// Returns [`Error::ContainmentOutOfRange`], and sends nothing, for a
-    /// value that is not from 1 to 7. See also [`Audyssey`].
+    /// value that is not from 1 to 7, and [`Error::NumberOutOfRange`] for a
+    /// value outside the range that the receiver lists. See also [`Audyssey`].
     pub async fn set_containment_level(&self, level: u8) -> Result<(), Error> {
         let amount = ContainmentAmount::new(level).ok_or(Error::ContainmentOutOfRange(level))?;
         self.set_containment_amount(amount).await

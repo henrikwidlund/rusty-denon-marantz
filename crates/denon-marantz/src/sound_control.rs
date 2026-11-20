@@ -2,11 +2,12 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, CenterWidthName, Channel,
-    ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc, DynamicCompression,
-    EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode,
-    Mdax, PliizHeightGain, ProLogicMode, RoomSize, SoundSettingValue, SoundStep, SpeakerPreset,
-    SurroundBackMode, SurroundLevelCompensation, Zone,
+    AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, BALANCE_QUERY, CenterWidthName,
+    Channel, ChannelLevel, ChannelVolumeCommand, DacFilter, DialogEnhancerLevel, Drc,
+    DynamicCompression, EffectSpeakerSelection, FrontSpeakers, ImaxAudio, ImaxMode,
+    ImaxSubwooferOutput, InputMode, LFE_EXTERNAL_INPUT_QUERY, Mdax, PliizHeightGain, ProLogicMode,
+    RoomSize, SoundSettingValue, SoundStep, SpeakerPreset, SurroundBackMode,
+    SurroundLevelCompensation, Zone,
 };
 
 use crate::avr::Avr;
@@ -21,7 +22,9 @@ use crate::error::Error;
 /// Each method returns when the command is sent, as [`Avr::send`] does.
 /// The new value comes as an event and changes the state. Each method returns
 /// the errors of [`Avr::send`]. A number that the receiver does not accept
-/// gives [`Error::InvalidCommand`], and nothing is sent.
+/// gives [`Error::NumberOutOfRange`], and nothing is sent. When the receiver
+/// lists a range in its device information ([`Info::ranges`](crate::Info::ranges)),
+/// that range and its step are used.
 #[derive(Debug, Clone, Copy)]
 pub struct SoundControl<'a> {
     avr: &'a Avr,
@@ -69,7 +72,7 @@ impl<'a> SoundControl<'a> {
         set_drc(Drc) => Drc, "the dynamic range compression";
         set_auro_3d_mode(Auro3dMode) => Auro3dMode, "the Auro-3D mode";
         set_auro_matic_preset(AuroMatic3dPreset) => AuroMaticPreset, "the Auro-Matic preset";
-        set_auro_matic_strength(u8) => AuroMaticStrength, "the Auro-Matic strength, from 0 to 15";
+        set_auro_matic_strength(u8) => AuroMaticStrength, "the Auro-Matic strength, from 0 to 16. Some receivers take 0 to 15, others 1 to 16";
         set_effect_speakers(EffectSpeakerSelection) => EffectSpeakers, "the speakers for the effect channels";
         set_mdax(Mdax) => Mdax, "MDAX. Marantz receivers only";
         set_dac_filter(DacFilter) => DacFilter, "the DAC filter. Marantz receivers only";
@@ -77,8 +80,8 @@ impl<'a> SoundControl<'a> {
         set_imax_audio(ImaxAudio) => ImaxAudio, "the IMAX audio settings";
         set_imax_subwoofer_output(ImaxSubwooferOutput) => ImaxSubwooferOutput, "the IMAX subwoofer output";
         set_imax_subwoofer_mode(bool) => ImaxSubwooferMode, "the IMAX subwoofer mode on (`true`) or off (`false`)";
-        set_imax_high_pass(u16) => ImaxHighPass, "the IMAX high pass filter in Hz: 40, 60, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
-        set_imax_low_pass(u16) => ImaxLowPass, "the IMAX low pass filter in Hz: 80, 90, 100, 110, 120, 150, 180, 200 or 250";
+        set_imax_high_pass(u16) => ImaxHighPass, "the IMAX high pass filter in Hz: 40, 60, 70, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
+        set_imax_low_pass(u16) => ImaxLowPass, "the IMAX low pass filter in Hz: 70, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
         set_subwoofer(bool) => Subwoofer, "the subwoofer on (`true`) or off (`false`)";
         set_lfe_level(u8) => LfeLevel, "the LFE level as dB below 0 dB, from 0 to 10";
         set_center_level(ChannelLevel) => CenterLevel, "the level of the center speaker";
@@ -90,7 +93,7 @@ impl<'a> SoundControl<'a> {
         set_effect(bool) => Effect, "the effect on (`true`) or off (`false`). Older receivers only";
         set_effect_level(u8) => EffectLevel, "the effect level, from 1 to 15";
         set_center_image(u8) => CenterImage, "the center image in tenths, from 0 to 10 (0.0 to 1.0). Older receivers only";
-        set_center_gain(u8) => CenterGain, "the center gain in tenths, from 0 to 10 (0.0 to 1.0). Older Marantz receivers only";
+        set_center_gain(u8) => CenterGain, "the center gain in tenths, from 0 to 10 (0.0 to 1.0). Older receivers only";
         set_tactile_transducer(bool) => TactileTransducer, "the tactile transducer on (`true`) or off (`false`)";
         set_tactile_low_pass(u16) => TactileLowPass, "the low pass filter of the tactile transducer in Hz: 40, 60, 80, 90, 100, 110, 120, 150, 180, 200 or 250";
         set_graphic_eq(bool) => GraphicEq, "the graphic EQ on (`true`) or off (`false`)";
@@ -103,6 +106,8 @@ impl<'a> SoundControl<'a> {
         set_dialog_control(u8) => DialogControl, "the dialog control in dB, from 0 to 6";
         set_delay_time(u16) => DelayTime, "the delay time in ms, from 0 to 300";
         set_audio_delay(u16) => AudioDelay, "the audio delay in ms, from 0 to 500";
+        set_lfe_external_input(u8) => LfeExternalInput, "the LFE level of a 7.1 channel input in dB: 0, 5, 10 or 15";
+        set_balance(i8) => Balance, "the balance, from -12 (left) to +12 (right). Few receivers have a balance";
         set_dialog_level_adjust(bool) => DialogLevelAdjust, "Dialog Level Adjust on (`true`) or off (`false`). Older receivers only";
         set_dialog_level(i8) => DialogLevel, "the dialog level in dB, from -12 to +12. Older receivers only";
         set_audyssey_dsx(AudysseyDsx) => AudysseyDsx, "Audyssey DSX. Older receivers only";
@@ -164,7 +169,7 @@ impl<'a> SoundControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, if `number` is
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, if `number` is
     /// not from 1 to 4. See also [`SoundControl`].
     pub async fn set_subwoofer_level(&self, number: u8, level: ChannelLevel) -> Result<(), Error> {
         self.send(SoundSettingValue::SubwooferLevel { number, level })
@@ -182,7 +187,7 @@ impl<'a> SoundControl<'a> {
         center_level_up, center_level_down => CenterLevel, "the level of the center speaker";
         effect_level_up, effect_level_down => EffectLevel, "the effect level";
         center_image_up, center_image_down => CenterImage, "the center image (older receivers)";
-        center_gain_up, center_gain_down => CenterGain, "the center gain (older Marantz receivers)";
+        center_gain_up, center_gain_down => CenterGain, "the center gain (older receivers)";
         dialog_level_up, dialog_level_down => DialogLevel, "the dialog level (older receivers)";
         stage_width_up, stage_width_down => StageWidth, "the stage width of Audyssey DSX (older receivers)";
         stage_height_up, stage_height_down => StageHeight, "the stage height of Audyssey DSX (older receivers)";
@@ -192,7 +197,7 @@ impl<'a> SoundControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
     /// that is not from 1 to 4. See also [`SoundControl`].
     pub async fn subwoofer_level_up(&self, number: u8) -> Result<(), Error> {
         self.send(SoundSettingValue::StepUp(SoundStep::SubwooferLevel(number)))
@@ -203,7 +208,7 @@ impl<'a> SoundControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
     /// that is not from 1 to 4. See also [`SoundControl`].
     pub async fn subwoofer_level_down(&self, number: u8) -> Result<(), Error> {
         self.send(SoundSettingValue::StepDown(SoundStep::SubwooferLevel(
@@ -277,6 +282,92 @@ impl<'a> SoundControl<'a> {
     /// See [`SoundControl`].
     pub async fn tactile_level_down(&self) -> Result<(), Error> {
         self.send(SoundSettingValue::TactileLevelDown).await
+    }
+
+    /// Sets the channel level of the tactile transducer (`CVTTR`). It is not
+    /// the same value as the level of [`SoundControl::tactile_level_up`]. The
+    /// receiver ignores it while the channel or the transducer is off.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn set_tactile_channel_level(&self, level: ChannelLevel) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileChannelLevel(level))
+            .await
+    }
+
+    /// Turns the channel of the tactile transducer on (`true`) or off
+    /// (`false`) (`CVTTR`). It is not the same switch as
+    /// [`SoundControl::set_tactile_transducer`]. The receiver ignores it while
+    /// the transducer is off.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn set_tactile_channel(&self, on: bool) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileChannel(on)).await
+    }
+
+    /// Raises the channel level of the tactile transducer by 0.5 dB.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn tactile_channel_up(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileChannelUp).await
+    }
+
+    /// Lowers the channel level of the tactile transducer by 0.5 dB.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn tactile_channel_down(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::TactileChannelDown).await
+    }
+
+    /// Asks for the balance. The answer fills
+    /// [`SoundSettings::balance`](denon_marantz_proto::SoundSettings::balance).
+    /// Few receivers have a balance, so the connection does not ask for it.
+    /// This always uses telnet.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn request_balance(&self) -> Result<(), Error> {
+        self.avr.send(Zone::Main, Command::Raw(BALANCE_QUERY)).await
+    }
+
+    /// Asks for the LFE level of a 7.1 channel input. The answer fills
+    /// [`SoundSettings::lfe_external_input`](denon_marantz_proto::SoundSettings::lfe_external_input).
+    /// Receivers answer only with a 7.1 channel input, so the connection does
+    /// not ask for it. This always uses telnet.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn request_lfe_external_input(&self) -> Result<(), Error> {
+        self.avr
+            .send(Zone::Main, Command::Raw(LFE_EXTERNAL_INPUT_QUERY))
+            .await
+    }
+
+    /// Moves the balance one step to the left. Few receivers have a balance.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn balance_left(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::BalanceLeft).await
+    }
+
+    /// Moves the balance one step to the right. Few receivers have a balance.
+    ///
+    /// # Errors
+    ///
+    /// See [`SoundControl`].
+    pub async fn balance_right(&self) -> Result<(), Error> {
+        self.send(SoundSettingValue::BalanceRight).await
     }
 
     /// Sets the audio input mode: automatic, or a forced HDMI, digital or

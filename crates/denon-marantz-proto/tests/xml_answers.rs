@@ -10,9 +10,10 @@ use common::{read_bytes, read_data, unescape};
 use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
+use denon_marantz_proto::telnet::state_queries;
 use denon_marantz_proto::{
-    Brand, DeviceDescription, DeviceInfo, Error, HdmiOutput, ListedQueries, NowPlaying, State,
-    TunerBand, TunerInfo, TunerPage, Zone, is_old_model_page,
+    Brand, DeviceDescription, DeviceFeature, DeviceInfo, Error, HdmiOutput, ListedQueries,
+    NowPlaying, State, TunerBand, TunerInfo, TunerPage, ValueRange, Zone, is_old_model_page,
 };
 
 const DEFINITIONS: [(&str, Definition); 10] = [
@@ -385,4 +386,149 @@ fn now_playing_pages_of_all_receivers_are_read() {
     }
     // Only the page of a DAB receiver is tuned.
     assert!(names.len() >= 15 && tuned == 1, "{} {tuned}", names.len());
+}
+
+#[test]
+fn device_info_lists_the_features() {
+    use DeviceFeature as F;
+    let features = |name: &str| {
+        let body = read_bytes(&format!("xml/{name}"));
+        DeviceInfo::parse(&body)
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .features
+    };
+    let a10h = features("AVC-A10H-Deviceinfo-8080.xml").unwrap();
+    for feature in [
+        F::Imax,
+        F::HighPassFilter,
+        F::AuroMatic3dStrength,
+        F::SurroundLevelCompensation,
+        F::DiracLive,
+        F::Zone3Setup,
+        F::Dimmer,
+        F::HdmiAudioOut,
+        F::DynamicEq,
+        F::AutoLipSync,
+    ] {
+        assert!(a10h.has(feature), "{feature:?}");
+    }
+    for feature in [F::SubwooferMode, F::PictureMode] {
+        assert!(!a10h.has(feature), "{feature:?}");
+    }
+    assert!(!a10h.allows("PSIMAXSWM ?"));
+    assert!(!a10h.allows("PVCN ?"));
+    assert!(a10h.allows("TFAN?"));
+    assert!(a10h.allows("PSIMAXHPF ?"));
+    assert!(a10h.allows("CV?"));
+    assert!(a10h.allows("SSQS ?"));
+    assert!(a10h.allows("XYZ ?"));
+    // Checked on the receiver: none of these gets an answer.
+    let skipped: Vec<_> = state_queries(Brand::Denon)
+        .filter(|query| !a10h.allows(query))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            "PSIMAXSWM ?",
+            "VSASP ?",
+            "VSSC ?",
+            "PV?",
+            "PVCN ?",
+            "PVBR ?",
+            "PVST ?",
+            "PVDNR ?",
+            "PVENH ?",
+            "PSDIL ?"
+        ]
+    );
+
+    let x4300h = features("AVR-X4300H-Deviceinfo-8080.xml").unwrap();
+    for feature in [F::SubwooferMode, F::PictureMode, F::Zone3Setup] {
+        assert!(x4300h.has(feature), "{feature:?}");
+    }
+    assert!(
+        !features("AVC-X3700H-Deviceinfo-8080.xml")
+            .unwrap()
+            .has(F::Zone3Setup)
+    );
+    // Files of about 2015 and older list only a few features.
+    for name in [
+        "AVR-X4100W-Deviceinfo.xml",
+        "AVR-X2100W-2-Deviceinfo.xml",
+        "DRA-N4-Deviceinfo.xml",
+        "AVR-X1100W-Deviceinfo.xml",
+        "AVR-X2000-Deviceinfo.xml",
+        "AVR-3313-Deviceinfo.xml",
+        "AVR-X4000-Deviceinfo.xml",
+    ] {
+        assert_eq!(features(name), None, "{name}");
+    }
+    for name in ["SR6011-Deviceinfo.xml", "NR1609-Deviceinfo-8080.xml"] {
+        assert!(features(name).is_some(), "{name}");
+    }
+}
+
+#[test]
+fn device_info_lists_the_ranges() {
+    let ranges = |name: &str| {
+        let body = read_bytes(&format!("xml/{name}"));
+        DeviceInfo::parse(&body)
+            .unwrap_or_else(|e| panic!("{name}: {e}"))
+            .ranges
+    };
+    let range = |min_tenths, max_tenths, step_tenths| {
+        Some(ValueRange {
+            min_tenths,
+            max_tenths,
+            step_tenths,
+        })
+    };
+    let a10h = ranges("AVC-A10H-Deviceinfo-8080.xml");
+    assert_eq!(a10h.auro_matic_strength, range(0, 150, Some(10)));
+    assert_eq!(a10h.bass_sync, range(0, 160, Some(10)));
+    assert_eq!(a10h.lfe, range(-100, 0, Some(10)));
+    assert_eq!(a10h.lfe_external_input, range(0, 150, Some(50)));
+    assert_eq!(a10h.eq_adjust_db, range(-200, 60, Some(5)));
+    assert_eq!(a10h.delay_time, range(0, 3000, None));
+    assert_eq!(a10h.audio_delay, range(0, 5000, Some(10)));
+    assert_eq!(a10h.containment_amount, range(10, 70, Some(10)));
+    assert_eq!(a10h.dialog_control, range(0, 60, Some(10)));
+    assert_eq!(a10h.effect_level, range(10, 150, Some(10)));
+    for zone in Zone::ALL {
+        assert_eq!(a10h.zone(zone).volume, range(0, 980, Some(5)), "{zone:?}");
+    }
+    assert_eq!(a10h.zone(Zone::Main).bass, None);
+    assert_eq!(a10h.zone(Zone::Zone2).bass, range(-100, 100, Some(10)));
+    assert_eq!(
+        a10h.zone(Zone::Zone3).right_level,
+        range(-120, 120, Some(10))
+    );
+
+    assert_eq!(
+        ranges("AVR-X4300H-Deviceinfo-8080.xml").auro_matic_strength,
+        range(10, 160, Some(10))
+    );
+    let x4100w = ranges("AVR-X4100W-Deviceinfo.xml");
+    assert_eq!(
+        x4100w.zone(Zone::Zone2).treble.map(|r| r.max_tenths),
+        Some(140)
+    );
+    assert_eq!(x4100w.audio_delay.map(|r| r.max_tenths), Some(2000));
+    let old = ranges("AVR-X2000-Deviceinfo.xml");
+    assert_eq!(old.auro_matic_strength, None);
+    assert_eq!(old.zone(Zone::Zone2).bass, None);
+
+    for name in fixtures(".xml") {
+        let body = read_bytes(&format!("xml/{name}"));
+        // Some captured files are HTML pages of old receivers.
+        let Ok(info) = DeviceInfo::parse(&body) else {
+            continue;
+        };
+        for range in info.ranges.all() {
+            assert!(range.min_tenths <= range.max_tenths, "{name}: {range:?}");
+            assert_ne!(range.step_tenths, Some(0), "{name}: {range:?}");
+        }
+    }
+    // 10 sound ranges, 3 volumes and 4 levels of zone 2 and of zone 3.
+    assert_eq!(a10h.all().count(), 21);
 }

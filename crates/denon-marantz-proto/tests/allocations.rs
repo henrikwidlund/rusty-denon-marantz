@@ -156,10 +156,11 @@ fn xml_parsing_allocates_little() {
                 .ok(),
         );
     });
-    // Each search of the whole file costs about 10, and the walk over the
-    // listed queries about 40. The file is read once at connect.
+    // Each search of the whole file costs about 10, the walk over the listed
+    // queries about 40, and the features and ranges about 120: each element
+    // that is read inside costs a few. The file is read once at connect.
     assert!(
-        info.count_total < 110,
+        info.count_total < 250,
         "device info used {} allocations",
         info.count_total
     );

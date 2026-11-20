@@ -8,6 +8,9 @@ use crate::values::{
     BluetoothOutputMode, DigitalCodec, DimmerMode, EcoMode, Illumination, PanelLock,
 };
 
+/// Bluetooth output levels: 30 is -50 dB, 80 is 0 dB and 90 is +10 dB.
+pub(crate) const BLUETOOTH_LEVELS: core::ops::RangeInclusive<u8> = 30..=90;
+
 /// A setting of the whole receiver, with the value to set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -35,13 +38,19 @@ pub enum DeviceSettingValue {
     /// Goes to the next brightness of the illumination: auto, bright, dim,
     /// dark, off. Marantz receivers only.
     IlluminationNext,
+    /// Bluetooth output level, from 30 (-50 dB) to 90 (+10 dB). 80 is 0 dB.
+    BluetoothLevel(u8),
+    /// Raises the Bluetooth output level by one step.
+    BluetoothLevelUp,
+    /// Lowers the Bluetooth output level by one step.
+    BluetoothLevelDown,
     /// Sets the digital input mode. The text is from the integration of the
     /// remote, the protocol spec has none.
     DigitalCodec(DigitalCodec),
-    /// Calls favorite 1 to 3. The text is from the integration of the remote,
-    /// the protocol spec has none.
+    /// Calls favorite 1 to 4. Favorite 4 exists only on some older Marantz
+    /// receivers.
     Favorite(u8),
-    /// Stores the current settings in favorite 1 to 3.
+    /// Stores the current settings in favorite 1 to 4.
     StoreFavorite(u8),
     /// Opens or closes the channel level menu on the screen.
     ChannelLevelMenu,
@@ -71,8 +80,15 @@ impl DeviceSettingValue {
         if wrong_brand {
             return Err(Error::UnsupportedKey);
         }
+        if let Self::BluetoothLevel(level) = self
+            && !BLUETOOTH_LEVELS.contains(&level)
+        {
+            return Err(Error::ValueOutOfRange {
+                what: "Bluetooth level",
+            });
+        }
         if let Self::Favorite(number) | Self::StoreFavorite(number) = self
-            && !(1..=3).contains(&number)
+            && !(1..=4).contains(&number)
         {
             return Err(Error::ValueOutOfRange { what: "favorite" });
         }
@@ -88,6 +104,9 @@ impl DeviceSettingValue {
             Self::PanelLock(PanelLock::PanelAndVolume) => write!(out, "SYPANEL+V LOCK ON"),
             Self::BluetoothTransmitter(on) => write!(out, "BTTX {}", on_off(on)),
             Self::BluetoothOutput(mode) => write!(out, "BTTX {}", mode.code()),
+            Self::BluetoothLevel(level) => write!(out, "BTLEV {level:02}"),
+            Self::BluetoothLevelUp => write!(out, "BTLEV UP"),
+            Self::BluetoothLevelDown => write!(out, "BTLEV DOWN"),
             Self::Illumination(mode) => write!(out, "ILB {}", mode.code()),
             Self::IlluminationNext => write!(out, "ILB SEL"),
             Self::DigitalCodec(mode) => write!(out, "DC{}", mode.code()),
@@ -154,6 +173,11 @@ mod tests {
             ),
             (DeviceSettingValue::Favorite(2), "ZMFAVORITE2"),
             (DeviceSettingValue::StoreFavorite(3), "ZMFAVORITE3 MEMORY"),
+            (DeviceSettingValue::Favorite(4), "ZMFAVORITE4"),
+            (DeviceSettingValue::BluetoothLevel(30), "BTLEV 30"),
+            (DeviceSettingValue::BluetoothLevel(90), "BTLEV 90"),
+            (DeviceSettingValue::BluetoothLevelUp, "BTLEV UP"),
+            (DeviceSettingValue::BluetoothLevelDown, "BTLEV DOWN"),
             (DeviceSettingValue::ChannelLevelMenu, "MNCHL"),
             (DeviceSettingValue::Status, "RCSHP0230030"),
             (DeviceSettingValue::RestartNetwork, "NSRBT"),
@@ -167,8 +191,21 @@ mod tests {
     }
 
     #[test]
-    fn a_favorite_is_from_1_to_3() {
-        for number in [0, 4] {
+    fn a_bluetooth_level_is_from_30_to_90() {
+        for level in [0, 29, 91] {
+            let mut out = String::new();
+            assert_eq!(
+                DeviceSettingValue::BluetoothLevel(level).write(Brand::Denon, &mut out),
+                Err(Error::ValueOutOfRange {
+                    what: "Bluetooth level"
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_favorite_is_from_1_to_4() {
+        for number in [0, 5] {
             for value in [
                 DeviceSettingValue::Favorite(number),
                 DeviceSettingValue::StoreFavorite(number),

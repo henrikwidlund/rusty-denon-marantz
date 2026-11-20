@@ -21,7 +21,7 @@ use denon_marantz_proto::telnet::{
     MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
     signal_queries,
 };
-use denon_marantz_proto::{Brand, HD_RADIO_QUERIES, TUNER_QUERIES};
+use denon_marantz_proto::{Brand, DAB_QUERIES, DeviceFeatures, HD_RADIO_QUERIES, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -259,9 +259,20 @@ struct Queries {
     single_zone: bool,
     /// The groups that the connection fetches, in this order.
     groups: &'static [QueryGroup],
+    /// The features from the device information. Queries of a feature that
+    /// it does not list are left out of the lists. `None` asks all.
+    features: Option<DeviceFeatures>,
+    /// The tuner has DAB: the DAB queries go with the tuner queries.
+    dab: bool,
 }
 
 impl Queries {
+    /// Returns false for a query of a feature that the receiver does not
+    /// list.
+    fn wanted(self, query: &str) -> bool {
+        self.features.is_none_or(|features| features.allows(query))
+    }
+
     fn all(self) -> VecDeque<Cow<'static, str>> {
         let power = if self.single_zone {
             DEVICE_POWER_QUERY
@@ -269,7 +280,7 @@ impl Queries {
             MAIN_ZONE_POWER_QUERY
         };
         std::iter::once(power)
-            .chain(queries(self.brand, self.groups))
+            .chain(queries(self.brand, self.groups).filter(|query| self.wanted(query)))
             .map(Cow::Borrowed)
             .collect()
     }
@@ -281,6 +292,8 @@ impl Telnet {
         background_pause: Duration,
         brand: Brand,
         single_zone: bool,
+        features: Option<DeviceFeatures>,
+        dab: bool,
     ) -> Self {
         Self {
             config,
@@ -289,6 +302,8 @@ impl Telnet {
                 brand,
                 single_zone,
                 groups: config.query_groups,
+                features,
+                dab,
             },
             events: broadcast::Sender::new(EVENT_CAPACITY),
             status: watch::Sender::new(TelnetStatus::Disconnected),
@@ -410,7 +425,14 @@ impl Telnet {
                 !QueryGroup::START_ORDER.contains(group) && !groups[..*index].contains(group)
             })
             .flat_map(|(_, group)| group_queries(self.queries.brand, *group))
+            .filter(|query| self.queries.wanted(query))
             .collect()
+    }
+
+    /// Returns false for a query of a feature that the receiver does not
+    /// list in its device information.
+    pub(crate) fn wanted(&self, query: &str) -> bool {
+        self.queries.wanted(query)
     }
 
     /// Waits until no query waits for a write and each written query is
@@ -889,6 +911,9 @@ impl Worker {
                         });
                         if tuner {
                             queue.add(TUNER_QUERIES);
+                            if self.queries.dab {
+                                queue.add(DAB_QUERIES);
+                            }
                         }
                         if hd_radio {
                             queue.add(HD_RADIO_QUERIES);
@@ -916,7 +941,10 @@ impl Worker {
                     }
                     Some(Request::RefreshGroup(group)) => {
                         filter.clear();
-                        queue.add(group_queries(self.queries.brand, group));
+                        let queries = self.queries;
+                        queue.add(
+                            group_queries(queries.brand, group).filter(|query| queries.wanted(query)),
+                        );
                     }
                     Some(Request::Queries(queries)) => {
                         filter.clear();
@@ -1166,6 +1194,8 @@ mod tests {
             brand: Brand::Denon,
             single_zone: false,
             groups: QueryGroup::DEFAULT_ORDER,
+            features: None,
+            dab: false,
         }
         .all();
         assert_eq!(multi.front().map(Cow::as_ref), Some("ZM?"));
@@ -1173,6 +1203,8 @@ mod tests {
             brand: Brand::Marantz,
             single_zone: true,
             groups: QueryGroup::DEFAULT_ORDER,
+            features: None,
+            dab: false,
         }
         .all();
         assert_eq!(single.front().map(Cow::as_ref), Some("PW?"));

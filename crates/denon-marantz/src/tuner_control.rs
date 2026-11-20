@@ -2,8 +2,8 @@
 
 use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::{
-    HD_RADIO_QUERIES, HdRadioBand, HdTuningMode, TUNER_PRESETS_QUERY, TUNER_QUERIES, TunerBand,
-    TunerCommand, TunerFrequency, TunerMode, Zone,
+    DAB_QUERIES, DabDrc, DabStationOrder, HD_RADIO_QUERIES, HdRadioBand, HdTuningMode,
+    TUNER_PRESETS_QUERY, TUNER_QUERIES, TunerBand, TunerCommand, TunerFrequency, TunerMode, Zone,
 };
 
 use crate::avr::{Avr, send_queries};
@@ -17,8 +17,8 @@ use crate::error::Error;
 ///
 /// Each method returns when the command is sent, as [`Avr::send`] does.
 /// Each method returns the errors of [`Avr::send`]. A preset that is not from
-/// 1 to 56, or a multicast channel above 8, gives [`Error::InvalidCommand`],
-/// and nothing is sent.
+/// 1 to 56, or a multicast channel above 8, gives
+/// [`Error::NumberOutOfRange`], and nothing is sent.
 #[derive(Debug, Clone, Copy)]
 pub struct TunerControl<'a> {
     avr: &'a Avr,
@@ -81,6 +81,33 @@ impl<'a> TunerControl<'a> {
     /// See [`TunerControl`].
     pub async fn preset_down(&self) -> Result<(), Error> {
         self.send(TunerCommand::PresetDown).await
+    }
+
+    /// Leaves the preset. North America models only.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn preset_off(&self) -> Result<(), Error> {
+        self.send(TunerCommand::PresetOff).await
+    }
+
+    /// Sets the dynamic range control of the DAB tuner. DAB models only.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn set_dab_drc(&self, drc: DabDrc) -> Result<(), Error> {
+        self.send(TunerCommand::DabDrc(drc)).await
+    }
+
+    /// Sets the order of the DAB stations. DAB models only.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn set_dab_station_order(&self, order: DabStationOrder) -> Result<(), Error> {
+        self.send(TunerCommand::DabStationOrder(order)).await
     }
 
     /// Goes to a preset, from 1 to 56. It sends the form A1 to G8 if the
@@ -280,6 +307,21 @@ impl<'a> TunerControl<'a> {
     /// See [`TunerControl`].
     pub async fn request(&self) -> Result<(), Error> {
         send_queries(&TUNER_QUERIES, async |command| {
+            self.avr.send(Zone::Main, command).await
+        })
+        .await
+    }
+
+    /// Asks the DAB tuner for the station, program type, ensemble, frequency,
+    /// quality, audio information, dynamic range control and station order.
+    /// The answers fill [`TunerState::dab`](denon_marantz_proto::TunerState::dab).
+    /// DAB models only. This always uses telnet.
+    ///
+    /// # Errors
+    ///
+    /// See [`TunerControl`].
+    pub async fn request_dab(&self) -> Result<(), Error> {
+        send_queries(&DAB_QUERIES, async |command| {
             self.avr.send(Zone::Main, command).await
         })
         .await

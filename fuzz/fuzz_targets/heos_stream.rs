@@ -21,16 +21,18 @@ fuzz_target!(|data: &[u8]| {
                 return;
             }
             let _ = response.status();
-            let _ = response.now_playing().map(|now| now.map(|now| now.into_owned()));
+            let _ = response
+                .now_playing()
+                .map(|now| now.map(|now| now.into_owned()));
             let _ = response.payload::<Vec<Player<'_>>>();
             let _ = response.payload::<Player<'_>>();
             let _ = response.payload::<Vec<QuickSelect<'_>>>();
-            let _ = response.payload::<Vec<QueueItem<'_>>>().map(|items| {
-                items.into_iter().map(QueueItem::into_owned).count()
-            });
-            let _ = response.payload::<Vec<BrowseItem<'_>>>().map(|items| {
-                items.into_iter().map(BrowseItem::into_owned).count()
-            });
+            let _ = response
+                .payload::<Vec<QueueItem<'_>>>()
+                .map(|items| items.into_iter().map(QueueItem::into_owned).count());
+            let _ = response
+                .payload::<Vec<BrowseItem<'_>>>()
+                .map(|items| items.into_iter().map(BrowseItem::into_owned).count());
             let _ = response.play_mode();
             let _ = response.volume();
             let _ = response.mute();

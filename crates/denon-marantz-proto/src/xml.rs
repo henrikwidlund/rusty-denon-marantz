@@ -109,8 +109,13 @@ impl<'a> Child<'a> {
     }
 
     /// Name of the element without a namespace prefix.
+    pub(crate) fn local_name(&self) -> &str {
+        self.start.local_name().into_inner()
+    }
+
+    /// [`Self::local_name`] as an owned text.
     pub(crate) fn name(&self) -> String {
-        self.start.local_name().as_ref().to_owned()
+        self.local_name().to_owned()
     }
 
     pub(crate) const fn node(&self) -> Node<'a> {

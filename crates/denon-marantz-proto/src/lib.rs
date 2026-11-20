@@ -4,6 +4,7 @@
 mod macros;
 
 mod brand;
+mod capabilities;
 mod channel;
 mod containment;
 mod device_description;
@@ -21,6 +22,7 @@ mod settings_availability;
 mod signal;
 mod signal_pages;
 mod sleep;
+mod sorted;
 mod sound_mode;
 mod sound_settings;
 mod speaker_extras;
@@ -51,6 +53,7 @@ pub mod telnet;
 pub mod zone;
 
 pub use brand::Brand;
+pub use capabilities::{DeviceFeature, DeviceFeatures, DeviceRanges, ValueRange, ZoneRanges};
 pub use channel::{Channel, ChannelLevel, ChannelVolumeCommand, Subwoofer};
 pub use containment::ContainmentAmount;
 pub use device_description::DeviceDescription;
@@ -86,7 +89,10 @@ pub use signal_pages::{
 pub use sleep::Sleep;
 pub use sound_mode::SoundModeGroup;
 pub use sound_mode_list::{SoundModeCategory, SoundModeEntry, SoundModeList};
-pub use sound_settings::{CenterWidthName, SoundSettingValue, SoundSettings, SoundStep};
+pub use sound_settings::{
+    BALANCE_QUERY, CenterWidthName, LFE_EXTERNAL_INPUT_QUERY, SoundSettingValue, SoundSettings,
+    SoundStep,
+};
 pub use source_list::{SourceInfo, SourceList};
 pub use speaker_extras::{
     LfeDistribution, PLAYBACK_2CH_PATH, Playback2Ch, SubwooferOutput2Ch, XLR_ASSIGN_PATH,
@@ -101,19 +107,20 @@ pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};
 pub use tone::ToneLevel;
 pub use tuner::{
-    HD_RADIO_QUERIES, HdRadioState, TUNER_PRESETS_QUERY, TUNER_QUERIES, TUNER_STATUS_PATH,
-    TunerCommand, TunerFrequency, TunerPage, TunerPreset, TunerState,
+    DAB_QUERIES, DabState, HD_RADIO_QUERIES, HdRadioState, TUNER_PRESETS_QUERY, TUNER_QUERIES,
+    TUNER_STATUS_PATH, TunerCommand, TunerFrequency, TunerPage, TunerPreset, TunerState,
+    station_name_query,
 };
 pub use values::{
     AspectRatio, AudioRestorer, AudysseyDsx, Auro3dMode, AuroMatic3dPreset, AutoStandby,
-    BluetoothOutputMode, ColorSpace, DacFilter, DialogEnhancerLevel, DigitalCodec, DimmerMode,
-    DiracFilter, Drc, DynamicCompression, DynamicVolume, EcoMode, EffectSpeakerSelection,
-    FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, Illumination, ImaxAudio,
-    ImaxMode, ImaxSubwooferOutput, InputMode, InputModeState, InputReport, MaxHdmiResolution, Mdax,
-    MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode, PixelDepth, PliizHeightGain, Power,
-    ProLogicMode, ReferenceLevelOffset, RoomSize, SpeakerPreset, SurroundBackMode,
-    SurroundLevelCompensation, Trigger, TunerBand, TunerMode, VideoProcessingMode, VideoResolution,
-    VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
+    BluetoothOutputMode, ColorSpace, DabDrc, DabStationOrder, DacFilter, DialogEnhancerLevel,
+    DigitalCodec, DimmerMode, DiracFilter, Drc, DynamicCompression, DynamicVolume, EcoMode,
+    EffectSpeakerSelection, FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput,
+    Illumination, ImaxAudio, ImaxMode, ImaxSubwooferOutput, InputMode, InputModeState, InputReport,
+    MaxHdmiResolution, Mdax, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
+    PixelDepth, PliizHeightGain, Power, ProLogicMode, ReferenceLevelOffset, RoomSize,
+    SpeakerPreset, SurroundBackMode, SurroundLevelCompensation, Trigger, TunerBand, TunerMode,
+    VideoProcessingMode, VideoResolution, VolumeDisplay, ZoneChannelMode, ZoneHdmiAudio,
 };
 pub use video::{HdmiUpscaler, VideoSettingValue, VideoSettings};
 pub use video_menu::{

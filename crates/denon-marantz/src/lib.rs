@@ -116,9 +116,10 @@ mod zone_control;
 pub use denon_marantz_heos as heos;
 pub use denon_marantz_proto as proto;
 pub use denon_marantz_proto::{
-    Brand, Change, Channel, ChannelLayout, ChannelLevel, DeviceState, InOut, ListedQueries,
-    NowPlaying, PlayingKind, ReceiverType, Setting, SignalState, SoundModeEntry, State, ToneLevel,
-    TunerBands, TunerInfo, VideoColor, Volume, Zone, ZoneState,
+    Brand, Change, Channel, ChannelLayout, ChannelLevel, DeviceFeature, DeviceFeatures,
+    DeviceRanges, DeviceState, InOut, ListedQueries, NowPlaying, PlayingKind, ReceiverType,
+    Setting, SignalState, SoundModeEntry, State, ToneLevel, TunerBands, TunerInfo, ValueRange,
+    VideoColor, Volume, Zone, ZoneRanges, ZoneState,
 };
 pub use error::{Error, ToneBlocker};
 #[cfg(feature = "heos")]

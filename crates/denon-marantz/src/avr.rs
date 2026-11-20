@@ -14,12 +14,12 @@ use denon_marantz_proto::telnet::Command;
 use denon_marantz_proto::telnet::QueryGroup;
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
-    DeviceDescription, GeneralPage, GroupAvailability, HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH,
-    InputAssignment, ListedQueries, NET_AUDIO_STATUS_PATH, NowPlaying, PLAYBACK_2CH_PATH,
-    Playback2Ch, PlayingKind, ReceiverType, SOURCE_LEVELS_PATH, SOURCE_NAMES_PATH,
-    SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames, SpeakerTable, State,
-    SystemSettings, TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage, WEB_INTERFACE_PORT,
-    XLR_ASSIGN_PATH, XlrAssign, Zone,
+    DeviceDescription, DeviceFeatures, DeviceRanges, GeneralPage, GroupAvailability,
+    HD_RADIO_STATUS_PATH, INPUT_ASSIGN_PATH, InputAssignment, ListedQueries, NET_AUDIO_STATUS_PATH,
+    NowPlaying, PLAYBACK_2CH_PATH, Playback2Ch, PlayingKind, ReceiverType, SOURCE_LEVELS_PATH,
+    SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames,
+    SpeakerTable, State, SystemSettings, TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage,
+    WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign, Zone,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -223,9 +223,24 @@ pub struct Info {
     /// Number of zones that the device information lists. `None` if it does
     /// not say: [`Info::zones`] has the main zone only then.
     pub zone_count: Option<u8>,
+    /// The features that the device information lists. The state queries of
+    /// a feature that it does not list are not sent at the start, with
+    /// [`Avr::refresh`] and with `Avr::telnet_refresh_group`. `None` for
+    /// receivers older than about 2016: then all are sent.
+    pub features: Option<DeviceFeatures>,
+    /// The value ranges that the device information lists. Setters refuse a
+    /// value outside a listed range or between its steps. A volume is checked
+    /// against the highest volume of the zone only.
+    pub ranges: DeviceRanges,
 }
 
 impl Info {
+    /// Returns true if the device information lists a DAB tuner band.
+    #[must_use]
+    pub const fn has_dab(&self) -> bool {
+        matches!(self.tuner, TunerInfo::Present(bands) if bands.dab)
+    }
+
     /// Returns true if the receiver has HEOS: [`Info::comm_api_version`] is
     /// 0301 or higher.
     #[must_use]
@@ -1076,13 +1091,20 @@ impl Avr {
     ///
     /// Returns [`Error::NotConnected`] if the telnet connection is not open.
     /// Nothing is queued then, so a command is never sent late. Returns
-    /// [`Error::InvalidCommand`] if the command has text that cannot be sent.
-    /// If the connection ends while the command is being written, this also
-    /// returns [`Error::NotConnected`], and the receiver may have got the line.
+    /// [`Error::InvalidCommand`] if the command has text that cannot be sent,
+    /// and [`Error::NumberOutOfRange`] for a value outside a range in
+    /// [`Info::ranges`] or between its steps. If the connection ends while
+    /// the command is being written, this also returns
+    /// [`Error::NotConnected`], and the receiver may have got the line.
     #[cfg(feature = "telnet")]
     pub async fn telnet_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         self.telnet
-            .send(command::encode(self.info.brand, zone, &command)?)
+            .send(command::encode_checked(
+                self.info.brand,
+                &self.info.ranges,
+                zone,
+                &command,
+            )?)
             .await
     }
 
@@ -1091,7 +1113,8 @@ impl Avr {
     /// or the tuner state.
     ///
     /// It asks for the lines of network audio, the HD radio information or the
-    /// tuner frequency and name, for the source of the main zone, and does
+    /// tuner frequency and name (and the DAB status on DAB models, see
+    /// [`Info::has_dab`]), for the source of the main zone, and does
     /// nothing for another source. Ask again to see changes. A receiver that
     /// uses HEOS for network audio does not answer.
     ///
@@ -1109,8 +1132,11 @@ impl Avr {
             Some(PlayingKind::Tuner) => {
                 let send = async |command| self.telnet_send(Zone::Main, command).await;
                 send_queries(&denon_marantz_proto::TUNER_QUERIES, send).await?;
-                self.telnet_send(Zone::Main, Command::Raw("TFANNAME?"))
-                    .await
+                if self.info.has_dab() {
+                    send_queries(&denon_marantz_proto::DAB_QUERIES, send).await?;
+                }
+                let query = denon_marantz_proto::station_name_query(self.info.brand);
+                self.telnet_send(Zone::Main, Command::Raw(query)).await
             }
             _ => Ok(()),
         }
@@ -1155,11 +1181,13 @@ impl Avr {
     /// # Errors
     ///
     /// Returns [`Error::InvalidCommand`] if the command has text that cannot be
-    /// sent. Returns [`Error::QueryNeedsTelnet`] for a query (a command that asks
-    /// for a value): the receiver answers it on telnet only. Returns the
-    /// errors of an HTTP request if it fails.
+    /// sent, and [`Error::NumberOutOfRange`] for a value outside a range in
+    /// [`Info::ranges`] or between its steps. Returns
+    /// [`Error::QueryNeedsTelnet`] for a query (a command that asks for a
+    /// value): the receiver answers it on telnet only. Returns the errors of
+    /// an HTTP request if it fails.
     pub async fn http_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
-        let line = command::encode(self.info.brand, zone, &command)?;
+        let line = command::encode_checked(self.info.brand, &self.info.ranges, zone, &command)?;
         if command::is_query(&line) {
             return Err(Error::QueryNeedsTelnet);
         }
@@ -1810,6 +1838,9 @@ impl AvrBuilder {
     /// [`Started::info_check`]; [`Avr::verify`] checks them without a
     /// start. If the receiver gives other values, connect again with the new
     /// [`Info`], or without this to look up everything again.
+    ///
+    /// A firmware update can change [`Info::features`] and [`Info::ranges`].
+    /// The check finds such a change too.
     #[must_use]
     pub fn known(mut self, info: Info) -> Self {
         self.known = Some(info);
@@ -1910,7 +1941,14 @@ impl AvrBuilder {
         };
         let appcommand0300_parts = [part(true)?, part(false)?];
         #[cfg(feature = "telnet")]
-        let telnet = Telnet::new(self.telnet, self.background_pause, info.brand, single_zone);
+        let telnet = Telnet::new(
+            self.telnet,
+            self.background_pause,
+            info.brand,
+            single_zone,
+            info.features,
+            info.has_dab(),
+        );
         let follow_up = FollowUp::start(
             self.follow_up_read,
             &http,
@@ -2093,6 +2131,8 @@ fn info_from(
         queries: device_info.queries,
         zones: Zone::ALL[..zone_count].to_vec(),
         zone_count: device_info.device_zones,
+        features: device_info.features,
+        ranges: device_info.ranges,
     }
 }
 

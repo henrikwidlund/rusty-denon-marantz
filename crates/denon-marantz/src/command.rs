@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, Setting, TunerCommand, VideoSettingValue, Zone};
+use denon_marantz_proto::{Brand, DeviceRanges, Setting, TunerCommand, VideoSettingValue, Zone};
 
 use crate::error::Error;
 
@@ -18,6 +18,18 @@ pub(crate) fn encode(brand: Brand, zone: Zone, command: &Command<'_>) -> Result<
         .write_line(brand, zone, &mut line)
         .map_err(Error::from_command)?;
     Ok(line)
+}
+
+/// As [`encode`], and refuses a value outside the ranges that the receiver
+/// lists.
+pub(crate) fn encode_checked(
+    brand: Brand,
+    ranges: &DeviceRanges,
+    zone: Zone,
+    command: &Command<'_>,
+) -> Result<String, Error> {
+    ranges.check(zone, command).map_err(Error::from_command)?;
+    encode(brand, zone, command)
 }
 
 /// Returns true if the line asks for a value. The receiver does not answer

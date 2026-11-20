@@ -178,11 +178,40 @@ impl<'a> DeviceControl<'a> {
         self.send(DeviceSettingValue::BluetoothOutput(mode)).await
     }
 
+    /// Sets the Bluetooth output level, from 30 (-50 dB) to 90 (+10 dB). 80
+    /// is 0 dB.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a level
+    /// that is not from 30 to 90. See also [`DeviceControl`].
+    pub async fn set_bluetooth_level(&self, level: u8) -> Result<(), Error> {
+        self.send(DeviceSettingValue::BluetoothLevel(level)).await
+    }
+
+    /// Raises the Bluetooth output level by one step.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn bluetooth_level_up(&self) -> Result<(), Error> {
+        self.send(DeviceSettingValue::BluetoothLevelUp).await
+    }
+
+    /// Lowers the Bluetooth output level by one step.
+    ///
+    /// # Errors
+    ///
+    /// See [`DeviceControl`].
+    pub async fn bluetooth_level_down(&self) -> Result<(), Error> {
+        self.send(DeviceSettingValue::BluetoothLevelDown).await
+    }
+
     /// Sets the brightness of the illumination. Marantz receivers only.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, on a Denon
+    /// Returns [`Error::Unsupported`], and sends nothing, on a Denon
     /// receiver. See also [`DeviceControl`].
     pub async fn set_illumination(&self, mode: Illumination) -> Result<(), Error> {
         self.send(DeviceSettingValue::Illumination(mode)).await
@@ -193,7 +222,7 @@ impl<'a> DeviceControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, on a Denon
+    /// Returns [`Error::Unsupported`], and sends nothing, on a Denon
     /// receiver. See also [`DeviceControl`].
     pub async fn illumination_next(&self) -> Result<(), Error> {
         self.send(DeviceSettingValue::IlluminationNext).await
@@ -209,24 +238,24 @@ impl<'a> DeviceControl<'a> {
         self.send(DeviceSettingValue::DigitalCodec(mode)).await
     }
 
-    /// Calls favorite 1 to 3. The text is from the integration of the remote.
-    /// The protocol spec has none.
+    /// Calls favorite 1 to 4. Favorite 4 exists only on some older Marantz
+    /// receivers.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number that
-    /// is not from 1 to 3. See also [`DeviceControl`].
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
+    /// that is not from 1 to 4. See also [`DeviceControl`].
     pub async fn select_favorite(&self, number: u8) -> Result<(), Error> {
         self.send(DeviceSettingValue::Favorite(number)).await
     }
 
-    /// Stores the current settings in favorite 1 to 3. This replaces what the
+    /// Stores the current settings in favorite 1 to 4. This replaces what the
     /// favorite had.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number that
-    /// is not from 1 to 3. See also [`DeviceControl`].
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
+    /// that is not from 1 to 4. See also [`DeviceControl`].
     pub async fn store_favorite(&self, number: u8) -> Result<(), Error> {
         self.send(DeviceSettingValue::StoreFavorite(number)).await
     }
@@ -258,7 +287,7 @@ impl<'a> DeviceControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, on a Marantz
+    /// Returns [`Error::Unsupported`], and sends nothing, on a Marantz
     /// receiver. See also [`DeviceControl`].
     pub async fn show_status(&self) -> Result<(), Error> {
         self.send(DeviceSettingValue::Status).await

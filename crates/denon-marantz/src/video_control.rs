@@ -41,7 +41,7 @@ macro_rules! picture_setters {
         $(
             #[doc = concat!(
                 "Sets ", $what, ". Older receivers only.\n\n# Errors\n\nSee [`VideoControl`]. ",
-                "A value outside the range gives [`Error::InvalidCommand`], and nothing is sent."
+                "A value outside the range gives [`Error::NumberOutOfRange`], and nothing is sent."
             )]
             pub async fn $name(&self, value: $ty) -> Result<(), Error> {
                 self.send_picture(PictureSettingValue::$variant(value)).await

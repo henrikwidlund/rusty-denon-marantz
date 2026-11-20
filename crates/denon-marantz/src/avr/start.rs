@@ -466,7 +466,9 @@ impl Avr {
             let brand = self.info.brand;
             // `AppCommand0300.xml` gives the audio values, or the fallback
             // asks for them.
-            let mut queries: Vec<&'static str> = after_appcommand_queries(brand).collect();
+            let mut queries: Vec<&'static str> = after_appcommand_queries(brand)
+                .filter(|query| self.telnet.wanted(query))
+                .collect();
             queries.extend(signal_queries(brand, SignalPart::TelnetOnly));
             // The groups that were asked for, after the ones that are needed first.
             for query in self.telnet.extra_start_queries() {

@@ -14,6 +14,7 @@
 use std::borrow::Cow;
 
 use crate::appcommand::Field;
+use crate::device_settings::BLUETOOTH_LEVELS;
 use crate::general_menu::{GeneralPart, GeneralSettings};
 use crate::input_pages::SourceLevels;
 use crate::input_pages::{InputAssignment, SourceNames};
@@ -325,6 +326,9 @@ pub struct DeviceState {
     /// Where the sound goes when the Bluetooth transmitter is on. Telnet
     /// reports it.
     pub bluetooth_output: Option<BluetoothOutputMode>,
+    /// Bluetooth output level, from 30 (-50 dB) to 90 (+10 dB). 80 is 0 dB.
+    /// Telnet reports it.
+    pub bluetooth_level: Option<u8>,
     /// Brightness of the illumination. Marantz receivers only. Telnet reports
     /// it.
     pub illumination: Option<Illumination>,
@@ -586,7 +590,7 @@ impl State {
                 let limit = if matches!(value, "OFF" | "") {
                     None
                 } else {
-                    Some(Volume::from_telnet(value)?)
+                    Some(Volume::from_telnet_clamped(value)?)
                 };
                 self.zone_change(Zone::Main, Setting::MaxVolume, |z| {
                     set(&mut z.max_volume, limit)
@@ -594,6 +598,9 @@ impl State {
             }
             Event::Sy if parameter.contains("LOCK") => self.apply_lock(parameter),
             Event::Sy => self.signal_change(|signal| signal.apply_sy(parameter)),
+            Event::Bl if zone == Some(Zone::Main) => {
+                self.sound_change(|s| s.apply_balance(parameter))
+            }
             Event::Dim => {
                 let value = DimmerMode::from_telnet(parameter.get(1..)?)?;
                 self.device_change(Setting::Dimmer, |d| set(&mut d.dimmer, Some(value)))
@@ -1101,6 +1108,7 @@ impl State {
             Event::Tf => self.apply_tuner(|tuner| tuner.apply_frequency(parameter)),
             Event::Tp => self.apply_tuner(|tuner| tuner.apply_preset(parameter)),
             Event::Tm => self.apply_tuner(|tuner| tuner.apply_band_or_mode(parameter)),
+            Event::Da => self.apply_tuner(|tuner| tuner.dab.apply(parameter)),
             Event::Nse => self.apply_now_playing_event(|now| now.apply_net_audio_line(parameter)),
             Event::Hd => self
                 .apply_now_playing_event(|now| now.apply_hd_radio(parameter))
@@ -1193,8 +1201,22 @@ impl State {
         })
     }
 
-    /// Applies a `BT` event: `TX ON`, `TX OFF`, `TX SP` or `TX BT`.
+    /// Applies a `BT` event: `TX ON`, `TX OFF`, `TX SP`, `TX BT` or the level,
+    /// for example `LEV 80`.
     fn apply_bluetooth(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(level) = parameter.strip_prefix("LEV ") {
+            let level = level.trim();
+            if level.len() != 2 || !level.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            let level: u8 = level
+                .parse()
+                .ok()
+                .filter(|l| BLUETOOTH_LEVELS.contains(l))?;
+            return self.device_change(Setting::Bluetooth, |d| {
+                set(&mut d.bluetooth_level, Some(level))
+            });
+        }
         let value = parameter.strip_prefix("TX ")?.trim();
         if let Some(on) = on_off(value) {
             return self.device_change(Setting::Bluetooth, |d| {
@@ -1513,6 +1535,9 @@ impl State {
     /// closes a list: the channels of the list are then the active channels.
     /// An unknown channel or level is ignored.
     fn apply_channel_volume(&mut self, parameter: &str) -> Option<Change> {
+        if let Some(value) = parameter.strip_prefix("TTR ") {
+            return self.sound_change(|s| s.apply_tactile_channel(value));
+        }
         let changed = if parameter.trim() == "END" {
             let list = std::mem::take(&mut self.pending_channels);
             set_active_channels(&mut self.device.active_channels, list)
@@ -1605,6 +1630,13 @@ impl State {
             }
         }
         change
+    }
+
+    fn sound_change(&mut self, update: impl FnOnce(&mut SoundSettings) -> bool) -> Option<Change> {
+        update(&mut self.device.sound_settings).then_some(Change {
+            zone: None,
+            setting: Setting::SoundSettings,
+        })
     }
 
     fn signal_change(&mut self, update: impl FnOnce(&mut SignalState) -> bool) -> Option<Change> {
@@ -1849,6 +1881,23 @@ mod tests {
     }
 
     #[test]
+    fn balance_and_lfe_of_a_7_1_input_follow_events() {
+        let mut state = State::new(false);
+        let changed = || change(None, Setting::SoundSettings);
+        assert_eq!(apply(&mut state, "BLL03"), changed());
+        assert_eq!(apply(&mut state, "BLL03"), None);
+        assert_eq!(state.device().sound_settings.balance, Some(-3));
+        assert_eq!(apply(&mut state, "BL000"), changed());
+        assert_eq!(state.device().sound_settings.balance, Some(0));
+        assert_eq!(apply(&mut state, "Z2BLR01"), None);
+        assert_eq!(apply(&mut state, "PSLFL 10"), changed());
+        assert_eq!(state.device().sound_settings.lfe_external_input, Some(10));
+        // A value that is not known is kept as text.
+        assert_eq!(apply(&mut state, "PSLFL 07"), changed());
+        assert_eq!(state.device().sound_settings.lfe_external_input, Some(10));
+    }
+
+    #[test]
     fn volume_and_mute_per_zone() {
         let mut state = State::new(false);
         assert_eq!(
@@ -1877,6 +1926,21 @@ mod tests {
         );
         assert_eq!(state.zone(Zone::Main).muted, Some(false));
         assert_eq!(state.zone(Zone::Zone2).muted, Some(true));
+    }
+
+    #[test]
+    fn old_lowest_volume_code_is_the_lowest_volume() {
+        let mut state = State::new(false);
+        for (text, zone) in [
+            ("MV99", Zone::Main),
+            ("MV995", Zone::Main),
+            ("Z299", Zone::Zone2),
+            ("Z399", Zone::Zone3),
+        ] {
+            apply(&mut state, text);
+            assert_eq!(state.zone(zone).volume, Some(Volume::MIN), "{text}");
+            apply(&mut state, &format!("{}50", &text[..2]));
+        }
     }
 
     #[test]
@@ -2703,8 +2767,19 @@ mod tests {
         assert_eq!(settings.tactile_transducer, Some(false));
         assert_eq!(settings.tactile_low_pass, Some(80));
         assert!(settings.other.is_empty());
-        // The channel group answers `ON` while the transducer is off, so it stays out.
-        assert_eq!(apply(&mut state, "CVTTR ON"), None);
+        // The channel has its own switch and level, separate from `SSTTR`.
+        assert_eq!(apply(&mut state, "CVTTR ON"), changed());
+        assert_eq!(apply(&mut state, "CVTTR 52"), changed());
+        assert_eq!(apply(&mut state, "CVTTR 52"), None);
+        assert_eq!(apply(&mut state, "CVTTR ?"), None);
+        let settings = &state.device().sound_settings;
+        assert_eq!(settings.tactile_channel, Some(true));
+        assert_eq!(
+            settings.tactile_channel_level,
+            ChannelLevel::from_code("52")
+        );
+        assert_eq!(settings.tactile_level, ChannelLevel::from_code("50"));
+        assert_eq!(settings.tactile_transducer, Some(false));
     }
 
     #[test]
@@ -2727,6 +2802,27 @@ mod tests {
         for line in ["TFANUP", "TPANDOWN", "TMAN?", "TFAN?"] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }
+        // DAB models.
+        assert_eq!(apply(&mut state, "DASTN BBC Radio 2"), changed());
+        assert_eq!(apply(&mut state, "DASTN BBC Radio 2"), None);
+        assert_eq!(apply(&mut state, "DAPTY Pop Music"), changed());
+        assert_eq!(apply(&mut state, "DADRC HLF"), changed());
+        assert_eq!(apply(&mut state, "DAODR ALP"), changed());
+        for line in ["DA ?", "DADRC ?", "DAXYZ 1", "DADRC MAYBE"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
+        let dab = &state.device().tuner.dab;
+        assert_eq!(dab.station_name.as_deref(), Some("BBC Radio 2"));
+        assert_eq!(dab.program_type.as_deref(), Some("Pop Music"));
+        assert_eq!(dab.drc, Some(crate::DabDrc::Half));
+        assert_eq!(
+            dab.station_order,
+            Some(crate::DabStationOrder::Alphanumeric)
+        );
+        // Marantz receivers send the name on `TP`.
+        assert_eq!(apply(&mut state, "TPANNAMEKEXP____"), changed());
+        assert_eq!(state.device().tuner.station_name.as_deref(), Some("KEXP"));
+        assert_eq!(state.device().tuner.preset, Some(5));
     }
 
     #[test]
@@ -2791,6 +2887,12 @@ mod tests {
     fn bluetooth_illumination_and_quick_select_follow_events() {
         let mut state = State::new(false);
         let changed = |setting| change(None, setting);
+        assert_eq!(apply(&mut state, "BTLEV 80"), changed(Setting::Bluetooth));
+        assert_eq!(apply(&mut state, "BTLEV 80"), None);
+        assert_eq!(state.device().bluetooth_level, Some(80));
+        for line in ["BTLEV 29", "BTLEV 91", "BTLEV UP", "BTLEV ?", "BTLEV 8"] {
+            assert_eq!(apply(&mut state, line), None, "{line}");
+        }
         assert_eq!(apply(&mut state, "BTTX OFF"), changed(Setting::Bluetooth));
         assert_eq!(apply(&mut state, "BTTX OFF"), None);
         assert_eq!(apply(&mut state, "BTTX SP"), changed(Setting::Bluetooth));

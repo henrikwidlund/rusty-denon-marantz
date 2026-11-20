@@ -43,6 +43,8 @@ code_enum! {
         Sy = "SY", "SY";
         Tm = "TM", "TM";
         Mu = "MU", "MU";
+        Bl = "BL", "BL";
+        Da = "DA", "DA";
     }
 }
 
@@ -75,6 +77,7 @@ impl Event {
                 | Self::Tf
                 | Self::Tp
                 | Self::Tm
+                | Self::Da
                 | Self::Nse
                 | Self::Hd
                 | Self::Sv
@@ -102,6 +105,7 @@ impl Event {
                 | Self::Tm
                 | Self::Nsa
                 | Self::Tp
+                | Self::Da
         )
     }
 }
@@ -304,7 +308,7 @@ mod tests {
 
     #[test]
     fn events_round_trip() {
-        assert_eq!(Event::ALL.len(), 37);
+        assert_eq!(Event::ALL.len(), 39);
         for &event in Event::ALL {
             assert_eq!(Event::from_code(event.code()), Some(event));
             let line = format!("{}X", event.code());

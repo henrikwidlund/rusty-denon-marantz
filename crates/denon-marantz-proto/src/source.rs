@@ -98,6 +98,19 @@ pub const TELNET_SOURCES: &[&str] = &[
     "USB/IPOD",
     "USB DIRECT",
     "IPOD DIRECT",
+    // Older Marantz receivers.
+    "CDR",
+    "FVP",
+    "IPD",
+    "MXPORT",
+    "NAPSTER",
+    "OTP",
+    "RHAPSODY",
+    "SAT",
+    "SIRIUS",
+    "USB",
+    "V.AUX",
+    "VCR",
 ];
 
 /// Returns true if receivers accept the name as a telnet source.
@@ -196,6 +209,7 @@ mod tests {
     #[test]
     fn source_groups() {
         assert!(is_telnet_source("SAT/CBL"));
+        assert!(is_telnet_source("V.AUX"));
         assert!(!is_telnet_source("sat/cbl"));
         assert!(is_playing_source("TUNER"));
         assert!(is_playing_source("HDRADIO"));

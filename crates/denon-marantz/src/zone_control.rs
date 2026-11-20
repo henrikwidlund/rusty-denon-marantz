@@ -16,7 +16,7 @@ macro_rules! setters {
             #[doc = concat!(
                 "Sets ", $what, ".\n\n# Errors\n\n",
                 "See [`ZoneControl`]. A zone that does not have the setting gives ",
-                "[`Error::InvalidCommand`], and nothing is sent."
+                "[`Error::Unsupported`], and nothing is sent."
             )]
             pub async fn $name(&self, value: $ty) -> Result<(), Error> {
                 self.send(Command::SetZoneSetting(ZoneSettingValue::$variant(value))).await
@@ -31,7 +31,7 @@ macro_rules! steps {
         $(
             #[doc = concat!(
                 $what, ". Zone 2 and zone 3 only.\n\n# Errors\n\n",
-                "See [`ZoneControl`]. The main zone gives [`Error::InvalidCommand`]."
+                "See [`ZoneControl`]. The main zone gives [`Error::Unsupported`]."
             )]
             pub async fn $name(&self) -> Result<(), Error> {
                 self.send(Command::SetZoneSetting(ZoneSettingValue::$variant)).await
@@ -48,7 +48,11 @@ macro_rules! steps {
 /// main zone. The volume limit, the power on volume and the mute level work
 /// for all zones, and so do the auto standby and the sleep timer. A method
 /// that the zone does not have sends nothing and
-/// returns [`Error::InvalidCommand`].
+/// returns [`Error::Unsupported`]. A number outside the range, or outside
+/// a range that the receiver lists ([`Info::ranges`](crate::Info::ranges)),
+/// gives [`Error::NumberOutOfRange`], and nothing is sent. A listed step is
+/// checked too. Each volume (limit, power on, fixed) is checked against the
+/// highest volume of the zone.
 ///
 /// Each method returns when the command is sent, as [`Avr::send`] does.
 /// That does not mean that the receiver did it: the new value comes as an
@@ -114,7 +118,8 @@ impl<'a> ZoneControl<'a> {
     /// # Errors
     ///
     /// Returns [`Error::VolumeOutOfRange`], and sends nothing, if the value is
-    /// not from -80 to +18 dB. See also [`ZoneControl`].
+    /// not from -80 to +18 dB, and [`Error::NumberOutOfRange`] if it is above
+    /// the highest volume that the receiver lists. See also [`ZoneControl`].
     pub async fn set_volume_db(&self, db: f32) -> Result<(), Error> {
         let volume = Volume::from_db_rounded(db).ok_or(Error::VolumeOutOfRange(db))?;
         self.set_volume(volume).await
@@ -155,7 +160,7 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
     /// that is not from 1 to 6. See also [`ZoneControl`].
     pub async fn select_quick_select(&self, number: u8) -> Result<(), Error> {
         self.send(Command::SetZoneSetting(ZoneSettingValue::QuickSelect(
@@ -169,7 +174,7 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`], and sends nothing, for a number
+    /// Returns [`Error::NumberOutOfRange`], and sends nothing, for a number
     /// that is not from 1 to 6. See also [`ZoneControl`].
     pub async fn store_quick_select(&self, number: u8) -> Result<(), Error> {
         self.send(Command::SetZoneSetting(ZoneSettingValue::StoreQuickSelect(
@@ -241,7 +246,7 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`] with
+    /// Returns [`Error::Unsupported`] with
     /// [`denon_marantz_proto::Error::UnsupportedKey`] if the brand or the zone
     /// has no such key. See also [`ZoneControl`].
     pub async fn press(&self, key: RemoteKey) -> Result<(), Error> {
@@ -253,8 +258,9 @@ impl<'a> ZoneControl<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidCommand`] if the number has more than 4 digits,
-    /// or if the receiver is a Marantz. See also [`ZoneControl`].
+    /// Returns [`Error::NumberOutOfRange`] if the number has more than 4
+    /// digits, and [`Error::Unsupported`] if the receiver is a Marantz. See also
+    /// [`ZoneControl`].
     pub async fn press_denon_code(&self, code: u16) -> Result<(), Error> {
         self.send(Command::DenonKeyCode(code)).await
     }
@@ -265,15 +271,15 @@ impl<'a> ZoneControl<'a> {
     /// # Errors
     ///
     /// Returns [`Error::InvalidCommand`] if the text is empty or has a
-    /// character that is not a digit, or if the receiver is a Denon. See also
-    /// [`ZoneControl`].
+    /// character that is not a digit, and [`Error::Unsupported`] if the
+    /// receiver is a Denon. See also [`ZoneControl`].
     pub async fn press_marantz_code(&self, digits: &str) -> Result<(), Error> {
         self.send(Command::MarantzKeyCode(digits)).await
     }
 
     setters! {
-        set_bass(ToneLevel) => Bass, "the bass level, from -10 to +10 dB. Zone 2 and zone 3 only";
-        set_treble(ToneLevel) => Treble, "the treble level, from -10 to +10 dB. Zone 2 and zone 3 only";
+        set_bass(ToneLevel) => Bass, "the bass level, from -10 to +10 dB on most receivers, see [`ToneLevel`]. A range that the receiver lists is used. Zone 2 and zone 3 only";
+        set_treble(ToneLevel) => Treble, "the treble level, from -10 to +10 dB on most receivers, see [`ToneLevel`]. A range that the receiver lists is used. Zone 2 and zone 3 only";
         set_left_level(i8) => LeftLevel, "the level of the left channel in whole dB, from -12 to 12. Zone 2 and zone 3 only";
         set_right_level(i8) => RightLevel, "the level of the right channel in whole dB, from -12 to 12. Zone 2 and zone 3 only";
         set_high_pass_filter(bool) => HighPassFilter, "the high pass filter on (`true`) or off (`false`). Zone 2 and zone 3 only";

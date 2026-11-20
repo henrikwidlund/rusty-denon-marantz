@@ -19,13 +19,14 @@ use denon_marantz::{
 use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
-    DigitalCodec, DimmerMode, DiracFilter, DynamicCompression, DynamicVolume, EcoMode,
-    FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler,
-    Illumination, InputMode, MultiEq, MuteLevel, NoiseReduction, PanelLock, PictureMode,
-    PliizHeightGain, Power, PowerOnVolume, ProLogicMode, ReceiverType, ReferenceLevelOffset,
-    RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset, SurroundBackMode, ToneLevel, Trigger,
-    TunerBand, TunerFrequency, TunerMode, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode,
-    Zone, ZoneChannelMode, ZoneHdmiAudio,
+    DabDrc, DabStationOrder, DeviceFeature, DeviceFeatures, DigitalCodec, DimmerMode, DiracFilter,
+    DynamicCompression, DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand, HdTuningMode,
+    HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel,
+    NoiseReduction, PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume, ProLogicMode,
+    ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset,
+    SurroundBackMode, ToneLevel, Trigger, TunerBand, TunerBands, TunerFrequency, TunerInfo,
+    TunerMode, ValueRange, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
+    ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
 
@@ -1437,7 +1438,7 @@ async fn digital_codec_and_favorites_are_sent_and_read() {
     device.set_digital_codec(DigitalCodec::Dts).await.unwrap();
     device.select_favorite(2).await.unwrap();
     device.store_favorite(3).await.unwrap();
-    let error = device.select_favorite(4).await.unwrap_err();
+    let error = device.select_favorite(5).await.unwrap_err();
     assert!(error.is_invalid_input(), "{error:?}");
     wait_until("the commands", || commands_sent(&telnet).len() >= 3).await;
     assert_eq!(
@@ -1767,7 +1768,7 @@ async fn sound_methods_refuse_numbers_out_of_range() {
     let errors = [
         sound.set_audio_delay(501).await.unwrap_err(),
         sound.set_center_width(8).await.unwrap_err(),
-        sound.set_imax_high_pass(70).await.unwrap_err(),
+        sound.set_imax_high_pass(65).await.unwrap_err(),
         sound.set_subwoofer_level(5, level).await.unwrap_err(),
     ];
     for error in errors {
@@ -2472,6 +2473,8 @@ async fn now_playing_is_requested_for_the_source_that_plays() {
         telnet.received().contains("TFANNAME?\r")
     })
     .await;
+    // The receiver has no DAB tuner.
+    assert!(!telnet.received().contains("DAODR ?\r"));
 }
 
 #[tokio::test]
@@ -2813,4 +2816,229 @@ async fn a_sound_mode_of_the_list_is_selected_with_its_code() {
     );
     wait_until("the command", || !commands_sent(&telnet).is_empty()).await;
     assert_eq!(commands_sent(&telnet), ["MSDOLBY DIGITAL"]);
+}
+
+/// An `Avr` with telnet that uses the stored values `info`, changed by `edit`.
+async fn connected_known(
+    telnet: &FakeTelnet,
+    edit: impl FnOnce(&mut denon_marantz::Info),
+) -> (Avr, common::Fake) {
+    let http = avr_x_receiver().await;
+    let mut info = builder(&http, ReceiverType::AvrX)
+        .connect()
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    edit(&mut info);
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .known(info)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    (avr, http)
+}
+
+#[tokio::test]
+async fn setters_refuse_values_outside_the_ranges_of_the_receiver() {
+    let telnet = FakeTelnet::start().await;
+    let range = |min_tenths, max_tenths| {
+        Some(ValueRange {
+            min_tenths,
+            max_tenths,
+            step_tenths: Some(10),
+        })
+    };
+    let (avr, _http) = connected_known(&telnet, |info| {
+        info.ranges.auro_matic_strength = range(0, 150);
+        info.ranges.lfe = range(-50, 0);
+        info.ranges.zones[1].bass = range(-60, 60);
+        info.ranges.zones[1].treble = Some(ValueRange {
+            min_tenths: -140,
+            max_tenths: 140,
+            step_tenths: Some(20),
+        });
+    })
+    .await;
+    let sound = avr.sound();
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    let errors = [
+        sound.set_auro_matic_strength(16).await.unwrap_err(),
+        sound.set_lfe_level(6).await.unwrap_err(),
+        zone2
+            .set_bass(ToneLevel::from_db(7).unwrap())
+            .await
+            .unwrap_err(),
+        // Between two steps.
+        zone2
+            .set_treble(ToneLevel::from_db(13).unwrap())
+            .await
+            .unwrap_err(),
+    ];
+    for error in errors {
+        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+    }
+    sound.set_auro_matic_strength(15).await.unwrap();
+    sound.set_lfe_level(5).await.unwrap();
+    zone2
+        .set_bass(ToneLevel::from_db(-6).unwrap())
+        .await
+        .unwrap();
+    zone2
+        .set_treble(ToneLevel::from_db(14).unwrap())
+        .await
+        .unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 4).await;
+    assert_eq!(
+        commands_sent(&telnet),
+        ["PSAUROST 15", "PSLFE 05", "Z2PSBAS 44", "Z2PSTRE 64"]
+    );
+}
+
+#[tokio::test]
+async fn queries_of_features_that_the_receiver_does_not_list_are_not_sent() {
+    let telnet = FakeTelnet::start().await;
+    let (_avr, _http) = connected_known(&telnet, |info| {
+        info.features = Some(DeviceFeatures::default().with(DeviceFeature::Imax));
+    })
+    .await;
+    // The last query of the default order.
+    wait_until("the queries", || telnet.received().contains("MNPRV?\r")).await;
+    let received = telnet.received();
+    for asked in ["MV?\r", "PSIMAX ?\r", "CV?\r", "SSQS ?\r"] {
+        assert!(received.contains(asked), "{asked:?} in {received:?}");
+    }
+    for skipped in [
+        "PSIMAXSWM ?\r",
+        "PSAUROST ?\r",
+        "PV?\r",
+        "Z3?\r",
+        "SSVCTZ3S ?\r",
+    ] {
+        assert!(!received.contains(skipped), "{skipped:?} in {received:?}");
+    }
+}
+
+#[tokio::test]
+async fn balance_lfe_input_tactile_bluetooth_and_dab_setters_send_their_text() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected(telnet_config(telnet.port)).await;
+    let sound = avr.sound();
+    sound.set_balance(-2).await.unwrap();
+    sound.set_balance(0).await.unwrap();
+    sound.balance_right().await.unwrap();
+    sound.request_balance().await.unwrap();
+    sound.request_lfe_external_input().await.unwrap();
+    sound.set_lfe_external_input(5).await.unwrap();
+    sound
+        .set_tactile_channel_level(ChannelLevel::from_half_db(-24).unwrap())
+        .await
+        .unwrap();
+    sound.set_tactile_channel(false).await.unwrap();
+    avr.device().set_bluetooth_level(85).await.unwrap();
+    let tuner = avr.tuner();
+    tuner.preset_off().await.unwrap();
+    tuner.set_dab_drc(DabDrc::Off).await.unwrap();
+    tuner
+        .set_dab_station_order(DabStationOrder::Alphanumeric)
+        .await
+        .unwrap();
+    for error in [
+        sound.set_balance(13).await.unwrap_err(),
+        sound.set_lfe_external_input(4).await.unwrap_err(),
+        avr.device().set_bluetooth_level(91).await.unwrap_err(),
+    ] {
+        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+    }
+    wait_until("the commands", || commands_sent(&telnet).len() >= 10).await;
+    // The state queries do not ask for these.
+    assert!(telnet.received().contains("BL?\r"));
+    assert!(telnet.received().contains("PSLFL ?\r"));
+    assert_eq!(
+        commands_sent(&telnet),
+        [
+            "BLL02",
+            "BL0",
+            "BLRIGHT",
+            "PSLFL 05",
+            "CVTTR 38",
+            "CVTTR OFF",
+            "BTLEV 85",
+            "TPANOFF",
+            "DADRC OFF",
+            "DAODR ALP"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_dab_tuner_is_asked_for_its_status_with_the_tuner() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected_known(&telnet, |info| {
+        info.tuner = TunerInfo::Present(TunerBands::default().with(TunerBand::Dab));
+    })
+    .await;
+    telnet.send(b"SITUNER\r");
+    wait_until("the DAB queries", || {
+        telnet.received().contains("DAODR ?\r")
+    })
+    .await;
+    // `SYSDA ?` ends with the same text.
+    assert!(telnet.received().contains("\rDA ?\r"));
+    wait_until("the source", || {
+        avr.snapshot().zone(Zone::Main).source.as_deref() == Some("TUNER")
+    })
+    .await;
+    avr.telnet_refresh_now_playing().await.unwrap();
+    wait_until("the DAB queries again", || {
+        telnet.received().matches("DAODR ?\r").count() == 2
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_group_refresh_skips_the_queries_of_features_that_are_not_listed() {
+    let telnet = FakeTelnet::start().await;
+    let (avr, _http) = connected_known(&telnet, |info| {
+        info.features = Some(DeviceFeatures::default().with(DeviceFeature::Imax));
+    })
+    .await;
+    wait_until("the start queries", || {
+        telnet.received().contains("MNPRV?\r")
+    })
+    .await;
+    avr.telnet_refresh_group(QueryGroup::Sound).await.unwrap();
+    wait_until("the group", || {
+        telnet.received().matches("PSIMAX ?\r").count() == 2
+    })
+    .await;
+    assert!(!telnet.received().contains("PSIMAXSWM ?\r"));
+}
+
+#[tokio::test]
+async fn zone_levels_refuse_values_outside_the_ranges_of_the_receiver() {
+    let telnet = FakeTelnet::start().await;
+    let range = Some(ValueRange {
+        min_tenths: -60,
+        max_tenths: 60,
+        step_tenths: Some(10),
+    });
+    let (avr, _http) = connected_known(&telnet, |info| {
+        info.ranges.zones[1].left_level = range;
+        info.ranges.zones[1].right_level = range;
+    })
+    .await;
+    let zone2 = avr.zone(Zone::Zone2).unwrap();
+    for error in [
+        zone2.set_left_level(7).await.unwrap_err(),
+        zone2.set_right_level(-7).await.unwrap_err(),
+    ] {
+        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+    }
+    zone2.set_left_level(6).await.unwrap();
+    zone2.set_right_level(-6).await.unwrap();
+    wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
+    assert_eq!(commands_sent(&telnet), ["Z2CVFL 56", "Z2CVFR 44"]);
 }

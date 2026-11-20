@@ -3,6 +3,7 @@
 use std::borrow::Cow;
 
 use crate::brand::Brand;
+use crate::capabilities::{self, DeviceFeatures, DeviceRanges};
 use crate::error::Error;
 use crate::values::TunerBand;
 use crate::xml::{Node, check_well_formed};
@@ -37,6 +38,11 @@ pub struct DeviceInfo<'a> {
     /// The queries that the file lists. `None` if it has no list, as on
     /// receivers older than about 2015.
     pub queries: Option<ListedQueries>,
+    /// The features that the file lists. `None` for files older than about
+    /// 2016, which lack most entries.
+    pub features: Option<DeviceFeatures>,
+    /// The value ranges that the file lists.
+    pub ranges: DeviceRanges,
 }
 
 /// The `AppCommand` queries that `Deviceinfo.xml` lists as supported. Each
@@ -292,6 +298,7 @@ impl<'a> DeviceInfo<'a> {
         }
         let root = root.node();
         let text = |name: &str| root.child(name).and_then(|child| child.node().text());
+        let (features, ranges) = capabilities::parse(root);
         Ok(Self {
             comm_api_version: text("CommApiVers"),
             model_name: text("ModelName"),
@@ -303,6 +310,8 @@ impl<'a> DeviceInfo<'a> {
             tuner: TunerInfo::parse(root),
             quick_select_count: quick_select_count(root),
             queries: ListedQueries::parse(root),
+            features,
+            ranges,
         })
     }
 
@@ -320,6 +329,8 @@ impl<'a> DeviceInfo<'a> {
             tuner: self.tuner,
             quick_select_count: self.quick_select_count,
             queries: self.queries,
+            features: self.features,
+            ranges: self.ranges,
         }
     }
 

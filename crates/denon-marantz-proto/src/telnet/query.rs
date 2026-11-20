@@ -3,6 +3,7 @@
 use QueryGroup::{Core, Device, Names, Older, Picture, Signal, Sound, Speakers, Toggles, Zones};
 
 use crate::brand::Brand;
+use crate::sorted::{self, Keyed};
 
 /// Asks for the power state of the main zone.
 pub const MAIN_ZONE_POWER_QUERY: &str = "ZM?";
@@ -255,7 +256,7 @@ query_values! {
         AudioInputMode,
         /// Center image.
         CenterImage,
-        /// Center gain (Marantz).
+        /// Center gain.
         CenterGain,
         /// Channel volume of the main zone (`CV?`). Some receivers do not answer
         /// this query and send the list after an input change.
@@ -276,6 +277,28 @@ query_values! {
         Zone3ChannelLevels,
         /// Volume settings of zone 3.
         Zone3VolumeSettings,
+        /// Bass of zone 2.
+        Zone2Bass,
+        /// Treble of zone 2.
+        Zone2Treble,
+        /// High pass filter of zone 2.
+        Zone2HighPassFilter,
+        /// Stereo or mono of zone 2.
+        Zone2ChannelMode,
+        /// HDMI audio of zone 2.
+        Zone2HdmiAudio,
+        /// Bass of zone 3.
+        Zone3Bass,
+        /// Treble of zone 3.
+        Zone3Treble,
+        /// High pass filter of zone 3.
+        Zone3HighPassFilter,
+        /// Stereo or mono of zone 3.
+        Zone3ChannelMode,
+        /// Bluetooth output level.
+        BluetoothLevel,
+        /// Channel and channel level of the tactile transducer (`CVTTR ?`).
+        TactileChannel,
         /// Contrast.
         Contrast,
         /// Brightness.
@@ -318,6 +341,31 @@ impl Query {
             .find(|entry| entry.query == self && entry.is_for(brand))
             .map(|entry| entry.text)
     }
+}
+
+/// The value that a query text of any brand asks for. A binary search, so
+/// that filtering a whole list stays fast.
+pub(crate) fn query_for_text(text: &str) -> Option<Query> {
+    sorted::find(&BY_TEXT, (text, ""))
+}
+
+/// The values of [`QUERIES`], sorted by text.
+static BY_TEXT: [Keyed<Query>; QUERIES.len()] = sorted::sort(by_text());
+
+const fn by_text() -> [Keyed<Query>; QUERIES.len()] {
+    let mut list = [Keyed {
+        key: ("", ""),
+        value: Query::Source,
+    }; QUERIES.len()];
+    let mut i = 0;
+    while i < list.len() {
+        list[i] = Keyed {
+            key: (QUERIES[i].text, ""),
+            value: QUERIES[i].query,
+        };
+        i += 1;
+    }
+    list
 }
 
 /// Brands that a query is for.
@@ -404,9 +452,11 @@ impl QueryGroup {
     /// 4. [`Signal`](Self::Signal): video and audio signal information, which
     ///    clients show.
     /// 5. [`Device`](Self::Device): dimmer, eco, sleep, standby, remote lock,
-    ///    video select, video and picture settings.
+    ///    video select, video and picture settings, Bluetooth level.
     /// 6. [`Sound`](Self::Sound): the sound settings and levels.
-    /// 7. [`Zones`](Self::Zones): the volume settings and levels of the zones.
+    /// 7. [`Zones`](Self::Zones): the volume settings, levels, tone, high
+    ///    pass filter and channel mode of the zones, and the HDMI audio of
+    ///    zone 2.
     /// 8. [`Picture`](Self::Picture): the picture mode and the picture
     ///    adjustments. Only older receivers answer these.
     /// 9. [`Speakers`](Self::Speakers): the speaker configuration, the
@@ -552,7 +602,7 @@ pub(super) fn known_answer_prefixes(brand: Brand) -> impl Iterator<Item = &'stat
         .map(|query| super::answers::answer_prefix(query.text))
 }
 
-static QUERIES: [Entry; 141] = [
+static QUERIES: [Entry; 152] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -598,6 +648,7 @@ static QUERIES: [Entry; 141] = [
     both(Device, Query::HdmiOutput, "VSMONI ?"), // HDMI Output
     both(Device, Query::RemoteLock, "SYREMOTE LOCK ?"), // Remote lock
     both(Device, Query::VideoSelect, "SV?"), // Video Select
+    both(Device, Query::BluetoothLevel, "BTLEV ?"), // Bluetooth Level
     both(Sound, Query::AllZoneStereo, "MNZST?"), // All zone stereo
     both(Sound, Query::AudioDelay, "PSDELAY ?"), // Audio Delay
     both(Signal, Query::VideoResolution, "SSINFSIGRES ?"), // Video Signal
@@ -669,7 +720,8 @@ static QUERIES: [Entry; 141] = [
     both(Sound, Query::Effect, "PSEFF ?"), // Effect
     both(Sound, Query::AudioInputMode, "SD?"), // Audio input mode
     both(Sound, Query::CenterImage, "PSCEI ?"), // Center image
-    marantz(Sound, Query::CenterGain, "PSCEG ?"), // Center gain
+    both(Sound, Query::CenterGain, "PSCEG ?"), // Center gain
+    both(Sound, Query::TactileChannel, "CVTTR ?"), // Tactile Transducer channel
     // The A10H and its app never get an answer to this query. It pushes the list after an input change.
     both(Sound, Query::ChannelVolume, "CV?"), // Channel Volume
     denon(Speakers, Query::SpeakerConfiguration, "SSSPC ?"), // Speaker configuration
@@ -680,6 +732,15 @@ static QUERIES: [Entry; 141] = [
     both(Zones, Query::Zone2ChannelLevels, "Z2CV?"), // Channel levels of zone 2
     both(Zones, Query::Zone3ChannelLevels, "Z3CV?"), // Channel levels of zone 3
     both(Zones, Query::Zone3VolumeSettings, "SSVCTZ3S ?"), // Volume settings of zone 3
+    both(Zones, Query::Zone2Bass, "Z2PSBAS ?"), // Z2 Bass
+    both(Zones, Query::Zone2Treble, "Z2PSTRE ?"), // Z2 Treble
+    both(Zones, Query::Zone2HighPassFilter, "Z2HPF?"), // Z2 HPF
+    both(Zones, Query::Zone2ChannelMode, "Z2CS?"), // Z2 Channel Setting
+    both(Zones, Query::Zone2HdmiAudio, "Z2HDA?"), // Z2 HDMI Audio
+    both(Zones, Query::Zone3Bass, "Z3PSBAS ?"), // Z3 Bass
+    both(Zones, Query::Zone3Treble, "Z3PSTRE ?"), // Z3 Treble
+    both(Zones, Query::Zone3HighPassFilter, "Z3HPF?"), // Z3 HPF
+    both(Zones, Query::Zone3ChannelMode, "Z3CS?"), // Z3 Channel Setting
     both(Picture, Query::Contrast, "PVCN ?"), // Contrast
     both(Picture, Query::Brightness, "PVBR ?"), // Brightness
     both(Picture, Query::Saturation, "PVST ?"), // Saturation
@@ -773,6 +834,22 @@ mod tests {
     }
 
     #[test]
+    fn each_query_text_is_found() {
+        for entry in &QUERIES {
+            assert_eq!(
+                query_for_text(entry.text),
+                Some(entry.query),
+                "{}",
+                entry.text
+            );
+        }
+        assert_eq!(query_for_text("XYZ ?"), None);
+        assert_eq!(query_for_text(""), None);
+        // Each text is listed once.
+        assert!(sorted::is_strictly_sorted(&BY_TEXT));
+    }
+
+    #[test]
     fn brand_specific_queries() {
         let denon: Vec<_> = state_queries(Brand::Denon).collect();
         let marantz: Vec<_> = state_queries(Brand::Marantz).collect();
@@ -792,8 +869,8 @@ mod tests {
         for query in ["OPALS ?", "SSQS ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }
-        assert_eq!(denon.len(), 131);
-        assert_eq!(marantz.len(), 129);
+        assert_eq!(denon.len(), 143);
+        assert_eq!(marantz.len(), 140);
         for query in ["PSSB: ?", "PSAFD ?", "PSDIL ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }

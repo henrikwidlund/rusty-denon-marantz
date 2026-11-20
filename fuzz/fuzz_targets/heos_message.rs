@@ -26,7 +26,10 @@ fuzz_target!(|text: &str| {
     // A command line has no line break inside, and the value comes back.
     let pid = PlayerId(1);
     let mut line = String::new();
-    if (Command::PlayStream { pid, url: text }).write(&mut line).is_ok() {
+    if (Command::PlayStream { pid, url: text })
+        .write(&mut line)
+        .is_ok()
+    {
         let body = line.strip_suffix("\r\n").unwrap();
         assert!(!body.contains(['\r', '\n']));
         let url = body.split_once("&url=").unwrap().1;

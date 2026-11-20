@@ -157,7 +157,9 @@ that the library does not know. `telnet_refresh_group` asks a whole group.
 
 The query groups, in the order of `QueryGroup::DEFAULT_ORDER`. Ask for one group
 again with `telnet_refresh_group`. The counts are the queries for a Denon and for
-a Marantz receiver.
+a Marantz receiver. A receiver from about 2016 lists its features in
+`Deviceinfo.xml` (`Info::features`). The queries of a feature that it does not
+list are not sent.
 
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|
@@ -165,9 +167,9 @@ a Marantz receiver.
 | `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots, quick select names | 7 | 7 |
 | `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 23 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
-| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings | 21 | 21 |
-| `Sound` | no | Sound settings and levels | 37 | 37 |
-| `Zones` | no | Volume settings and levels of the zones | 5 | 5 |
+| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings, Bluetooth level | 22 | 22 |
+| `Sound` | no | Sound settings and levels | 39 | 38 |
+| `Zones` | no | Volume settings, levels, tone, high pass filter, channel mode of the zones, HDMI audio of zone 2 | 14 | 14 |
 | `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
 | `Speakers` | no | Speaker configuration, crossovers and graphic EQ, Denon only | 3 | 0 |
 | `Older` | no | Settings of receivers from about 2011 to 2015, for example Pro Logic mode, Audyssey DSX and InstaPrevue. Not in the command lists of receivers with HEOS | 10 | 7 |
@@ -381,6 +383,18 @@ have not run on a receiver:
   texts other than `BT.2020`: the FRL rate is only seen as no signal. The values
   of `ALLM` and `QFT` (1 is on) were only seen as off.
 - The query `MNZST?` and the `MNZST` event of all zone stereo on other receivers.
+- The tactile transducer channel (`CVTTR`) with a connected transducer. The
+  AVC-A10H has none, and it ignores `CVTTR` while the transducer is off.
+- Bass and treble of zone 2 and zone 3 from -14 to +14 dB in steps of 2 dB.
+  The AVC-A10H has -10 to +10 dB in steps of 1 dB.
+- The LFE level of a 7.1 channel input (`PSLFL`). The AVC-A10H answers
+  `PSLFL ?` only with a 7.1 input, and the setter was not sent to it.
+- Favorite 4 (`ZMFAVORITE4`) and the lowest volume as `99` and
+  `995`, which receivers from before about 2013 send.
+- Balance (`BL`), the DAB tuner (`DA`) and `TPANOFF`. They follow the protocol
+  specifications and are tested with unit tests and fake receivers only.
+- The features and value ranges in `Deviceinfo.xml` of receivers other than
+  the AVC-A10H. They are tested with captured files only.
 - The reset of the channel levels with `CVZRL`.
 - Sound settings that the receiver ignores in some modes, for example delay
   time, dialog control, Auro-Matic strength and effect level. The receiver

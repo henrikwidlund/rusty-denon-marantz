@@ -45,8 +45,9 @@
 //! picture-mode CODE (OFF, STD, MOV, VVD, STM, CTM, DAY, NGT), contrast DB, brightness DB, saturation DB,
 //! contrast-up, contrast-down, brightness-up, brightness-down, saturation-up, saturation-down,
 //! noise-reduction CODE (OFF, LOW, MID, HI), enhancer N, enhancer-up, enhancer-down,
-//! digital-codec CODE (AUTO, PCM, DTS), favorite N, favorite-store N (N is 1 to 3),
-//! bluetooth on or off, bluetooth-output SP or BT, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
+//! digital-codec CODE (AUTO, PCM, DTS), favorite N, favorite-store N (N is 1 to 4),
+//! bluetooth on or off, bluetooth-output SP or BT, bluetooth-level N (30 to 90), bluetooth-level-up,
+//! bluetooth-level-down, illumination CODE (AUTO, BRI, DIM, DAR, OFF),
 //! illumination-next, quick-select N, quick-select-store N (N is 1 to 6, some models have only 5), panel-lock off, panel or panel-volume, channel-level-menu, show-status, restart-network,
 //! sound-mode-entry CATEGORY/NAME (MOV, MUS, GAM or PUR, from the list of the receiver), sound-mode-next, sound-mode-previous, auto-standby CODE (OFF, 15M, 30M, 60M, 2H, 4H, 8H),
 //! sleep off or MINUTES, zone-bass DB, zone-bass-up, zone-bass-down, zone-treble DB, zone-treble-up,
@@ -55,7 +56,7 @@
 //! volume-limit DB or off, power-on-volume muted, last or DB, mute-level CODE (MUT, 040, 060),
 //! volume-mode variable or DB, volume-display REL or ABS (main zone only; the other zone
 //! commands are for --zone 2 and --zone 3, volume-limit, power-on-volume and mute-level work for all),
-//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL, ANALOG or 7.1IN), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
+//! room-size CODE, audio-restorer CODE, dialog-enhancer CODE, graphic-eq on or off, input-mode CODE (AUTO, HDMI, DIGITAL, ANALOG or 7.1IN), front-speakers CODE (SPA, SPB, A+B), panorama on or off, speaker-preset 1 or 2, tactile on or off, tactile-up, tactile-down, tactile-lpf HZ, tactile-channel on or off, tactile-channel-level DB, tactile-channel-up, tactile-channel-down (CVTTR, not the same switch as tactile), balance N (-12 to 12, few receivers), balance-left, balance-right, balance-request, lfe-71 DB (0, 5, 10 or 15, LFE level of a 7.1 input), lfe-71-request, channel-volume CHANNEL DB (CHANNEL is FL, FR, C, SW, SL ..., not while a Dirac ART filter is on), channel-up CHANNEL, channel-down CHANNEL, channel-reset, speaker-details (reads the distances, crossovers, channel levels, bass, playback of two-channel sources and the XLR outputs from port 11080), source-details (reads the physical inputs, the source names and the input levels from port 11080), video-details (reads the video menu from port 11080), general-settings (reads the language, the firmware update settings, usage data and the trigger assignment from port 11080), now-playing (reads what network audio, HD radio or the tuner plays and the picture address from the status pages), refresh-now-playing (telnet if it is open, else the status page), request-now-playing (asks on telnet, then use watch to see the events), signal (reads the video signal and the channels from the web interface, asks telnet for the rest), refresh-signal (the same call, `Avr::refresh_signal`), system-settings (reads HDMI control, the menu lock, updates, network control and streaming services from port 11080), settings-availability (lists the settings that the receiver does not offer or blocks now, from port 11080), setting-details (the same for the surround parameters, the HDMI setup and the video output settings),
 //! tuner-up, tuner-down, tuner-frequency HUNDREDTHS, tuner-band CODE (AM, FM, DAB), tuner-mode CODE (AUTO or MANUAL),
 //! tuner-preset-up, tuner-preset-down, tuner-preset N, tuner-store N (N is 1 to 56),
 //! tuner-preset-lettered N, tuner-store-lettered N (always as A1 to G8; tuner-preset and tuner-store choose the form the receiver reports),
@@ -64,6 +65,8 @@
 //! hd-preset-up, hd-preset-down, hd-preset N, hd-store N (N is 1 to 56),
 //! hd-frequency HUNDREDTHS or HUNDREDTHS:CHANNEL (8750 is 87.50 MHz, 105000 is 1050 kHz),
 //! hd-request (asks for the HD Radio state), tuner-presets (asks for the preset names),
+//! tuner-preset-off (North America models only), dab-drc CODE (ONE, HLF, OFF), dab-order CODE (ALP or MLT),
+//! dab-request (asks for the DAB state),
 //! video-mode CODE (AUTO, GAME, MOVI, BYP), hdmi-output CODE (MONIAUTO, MONI1, MONI2),
 //! hdmi-audio CODE (AMP or TV), aspect CODE (NRM or FUL), vertical-stretch on or off,
 //! resolution CODE (AUTO, 48P, 10I, 72P, 10P, 10P24, 4K, 4KF, 8K), upscaler CODE (OFF or a resolution code) (a
@@ -88,13 +91,14 @@ use denon_marantz::{
 };
 use denon_marantz_proto::{
     AspectRatio, AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Channel,
-    ChannelLevel, DialogEnhancerLevel, DigitalCodec, DimmerMode, DiracFilter, DynamicCompression,
-    DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand, HdTuningMode, HdmiAudioDecode, HdmiOutput,
-    HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel, NetworkAudioCommand, NoiseReduction,
-    PanelLock, PictureMode, PliizHeightGain, PowerOnVolume, ProLogicMode, ReferenceLevelOffset,
-    RepeatMode, RoomSize, Sleep, SoundSettingValue, SoundStep, SpeakerPreset, SurroundBackMode,
-    ToneLevel, Trigger, TunerBand, TunerFrequency, TunerMode, VideoProcessingMode, VideoResolution,
-    Volume, VolumeDisplay, VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
+    ChannelLevel, DabDrc, DabStationOrder, DialogEnhancerLevel, DigitalCodec, DimmerMode,
+    DiracFilter, DynamicCompression, DynamicVolume, EcoMode, FrontSpeakers, HdRadioBand,
+    HdTuningMode, HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq,
+    MuteLevel, NetworkAudioCommand, NoiseReduction, PanelLock, PictureMode, PliizHeightGain,
+    PowerOnVolume, ProLogicMode, ReferenceLevelOffset, RepeatMode, RoomSize, Sleep,
+    SoundSettingValue, SoundStep, SpeakerPreset, SurroundBackMode, ToneLevel, Trigger, TunerBand,
+    TunerFrequency, TunerMode, VideoProcessingMode, VideoResolution, Volume, VolumeDisplay,
+    VolumeMode, Zone, ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::time::{Instant, sleep};
@@ -171,7 +175,7 @@ const VIDEO_COMMANDS: [&str; 21] = [
 ];
 
 /// Commands that the device control has methods for.
-const DEVICE_COMMANDS: [&str; 17] = [
+const DEVICE_COMMANDS: [&str; 20] = [
     "dimmer",
     "dimmer-next",
     "eco",
@@ -181,6 +185,9 @@ const DEVICE_COMMANDS: [&str; 17] = [
     "panel-lock",
     "bluetooth",
     "bluetooth-output",
+    "bluetooth-level",
+    "bluetooth-level-up",
+    "bluetooth-level-down",
     "illumination",
     "illumination-next",
     "digital-codec",
@@ -192,7 +199,7 @@ const DEVICE_COMMANDS: [&str; 17] = [
 ];
 
 /// Commands that the tuner control has methods for.
-const TUNER_COMMANDS: [&str; 23] = [
+const TUNER_COMMANDS: [&str; 27] = [
     "tuner-up",
     "tuner-down",
     "tuner-band",
@@ -216,6 +223,10 @@ const TUNER_COMMANDS: [&str; 23] = [
     "hd-request",
     "tuner-frequency",
     "tuner-presets",
+    "tuner-preset-off",
+    "dab-drc",
+    "dab-order",
+    "dab-request",
 ];
 
 /// Commands that the tone control has methods for.
@@ -231,7 +242,7 @@ const TONE_COMMANDS: [&str; 8] = [
 ];
 
 /// Commands that the Audyssey, Dirac and sound controls have methods for.
-const SOUND_COMMANDS: [&str; 57] = [
+const SOUND_COMMANDS: [&str; 67] = [
     "dynamic-eq-on",
     "dynamic-eq-off",
     "multi-eq",
@@ -253,6 +264,16 @@ const SOUND_COMMANDS: [&str; 57] = [
     "tactile-up",
     "tactile-down",
     "tactile-lpf",
+    "tactile-channel",
+    "tactile-channel-level",
+    "tactile-channel-up",
+    "tactile-channel-down",
+    "balance",
+    "balance-left",
+    "balance-right",
+    "balance-request",
+    "lfe-71",
+    "lfe-71-request",
     "front-speakers",
     "panorama",
     "speaker-preset",
@@ -662,6 +683,32 @@ async fn older_sound_command(
             let on = arg.on_off("auto flag detect")?;
             avr.sound().set_auto_flag_detect(on).await?;
         }
+        "tactile-channel" => {
+            let on = arg.on_off("tactile channel")?;
+            avr.sound().set_tactile_channel(on).await?;
+        }
+        "tactile-channel-level" => {
+            let db: f32 = arg.need()?.parse().map_err(|_| "DB is a number in dB")?;
+            let level = ChannelLevel::from_db(db).ok_or("DB is from -12 to 12 in steps of 0.5")?;
+            avr.sound().set_tactile_channel_level(level).await?;
+        }
+        "tactile-channel-up" => avr.sound().tactile_channel_up().await?,
+        "tactile-channel-down" => avr.sound().tactile_channel_down().await?,
+        "balance" => {
+            let balance = arg.need()?.parse().map_err(|_| "balance is -12 to 12")?;
+            avr.sound().set_balance(balance).await?;
+        }
+        "balance-left" => avr.sound().balance_left().await?,
+        "balance-right" => avr.sound().balance_right().await?,
+        "balance-request" => avr.sound().request_balance().await?,
+        "lfe-71" => {
+            let db = arg
+                .need()?
+                .parse()
+                .map_err(|_| "lfe-71 is 0, 5, 10 or 15")?;
+            avr.sound().set_lfe_external_input(db).await?;
+        }
+        "lfe-71-request" => avr.sound().request_lfe_external_input().await?,
         other => return Err(format!("unknown command {other}").into()),
     }
     Ok(())
@@ -782,13 +829,19 @@ async fn device_command(
             device.set_digital_codec(mode).await?;
         }
         "favorite" => {
-            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 4")?;
             device.select_favorite(number).await?;
         }
         "favorite-store" => {
-            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 3")?;
+            let number = arg.need()?.parse().map_err(|_| "favorite is 1 to 4")?;
             device.store_favorite(number).await?;
         }
+        "bluetooth-level" => {
+            let level = arg.need()?.parse().map_err(|_| "level is 30 to 90")?;
+            device.set_bluetooth_level(level).await?;
+        }
+        "bluetooth-level-up" => device.bluetooth_level_up().await?,
+        "bluetooth-level-down" => device.bluetooth_level_down().await?,
         "channel-level-menu" => device.channel_level_menu().await?,
         "show-status" => device.show_status().await?,
         "restart-network" => device.restart_network().await?,
@@ -856,6 +909,16 @@ async fn tuner_command(
             tuner.set_frequency(frequency).await?;
         }
         "tuner-presets" => tuner.request_presets().await?,
+        "tuner-preset-off" => tuner.preset_off().await?,
+        "dab-drc" => {
+            let drc = DabDrc::from_code(arg.need()?).ok_or("DAB DRC is ONE, HLF or OFF")?;
+            tuner.set_dab_drc(drc).await?;
+        }
+        "dab-order" => {
+            let order = DabStationOrder::from_code(arg.need()?).ok_or("DAB order is ALP or MLT")?;
+            tuner.set_dab_station_order(order).await?;
+        }
+        "dab-request" => tuner.request_dab().await?,
         "hd-frequency" => {
             let text = arg.need()?;
             let (hundredths, channel) = match text.split_once(':') {
@@ -1021,7 +1084,7 @@ async fn zone_setting_command(
     let arg = Argument { name, argument };
     let tone = |text: &str| -> Result<ToneLevel, String> {
         let db: i8 = text.parse().map_err(|_| "a level is whole dB")?;
-        ToneLevel::from_db(db).ok_or_else(|| "a level is from -10 to 10 dB".to_owned())
+        ToneLevel::from_db(db).ok_or_else(|| "a level is from -14 to 14 dB".to_owned())
     };
     let whole = |text: &str| -> Result<i8, String> {
         text.parse().map_err(|_| "a level is whole dB".to_owned())
