@@ -77,6 +77,22 @@ pub struct TelnetConfig {
     /// Some receivers never answer some queries. The time counts from the
     /// last answer or the last query, whichever is later.
     pub answer_quiet: Duration,
+    /// Shortest wait before the video signal is asked after a hint. Some
+    /// receivers do not send video signal changes. When the signal changes,
+    /// they send the sound mode (`MS`) or `SSINFAISSIG`, also with the same
+    /// value, or a new audio sample rate (`SSINFAISFSV`). After the first such
+    /// line, the video signal queries are sent after a random wait between
+    /// this and [`TelnetConfig::signal_wait_max`]. Answers to queries of this
+    /// connection are not hints. A line with a known input resolution in the
+    /// meantime cancels these queries, for example when another client asked.
+    /// If that client asked only for the resolution, the other values can stay
+    /// old. The random wait makes it less likely that several clients ask at
+    /// the same time. When the answer has no input resolution yet (`---`), the
+    /// queries are sent once more after 1 s.
+    pub signal_wait_min: Duration,
+    /// Longest wait before the video signal is asked after a hint, see
+    /// [`TelnetConfig::signal_wait_min`].
+    pub signal_wait_max: Duration,
     /// The groups of queries that fill the state after a connect, in the order
     /// that they are sent. A group that is left out stays empty until the
     /// receiver reports a change, or until it is fetched with
@@ -101,6 +117,8 @@ impl Default for TelnetConfig {
             query_interval: Duration::from_millis(50),
             query_quiet: Duration::from_millis(50),
             answer_quiet: Duration::from_secs(2),
+            signal_wait_min: Duration::from_millis(300),
+            signal_wait_max: Duration::from_millis(1200),
             query_groups: QueryGroup::START_ORDER,
         }
     }
@@ -123,6 +141,11 @@ impl TelnetConfig {
         if self.reconnect_min > self.reconnect_max {
             return Err(Error::InvalidConfig(
                 "reconnect_min must not be above reconnect_max",
+            ));
+        }
+        if self.signal_wait_min > self.signal_wait_max {
+            return Err(Error::InvalidConfig(
+                "signal_wait_min must not be above signal_wait_max",
             ));
         }
         Ok(())
@@ -602,6 +625,105 @@ struct Waiter {
     start: bool,
 }
 
+/// When to ask the video signal after a hint, see
+/// [`TelnetConfig::signal_wait_min`].
+#[derive(Debug, Default)]
+struct SignalHint {
+    /// When the video signal queries are added.
+    due: Option<Instant>,
+    /// `due` is the second read after an answer without values.
+    again_due: bool,
+    /// The last read was the first one after a hint.
+    may_ask_again: bool,
+    /// The last audio sample rate that the receiver sent by itself. It
+    /// repeats it every few seconds.
+    sample_rate: String,
+}
+
+impl SignalHint {
+    /// Checks a line from the receiver. `answer` says how the line belongs to
+    /// the queries of this connection: only `Other` lines are hints. `wait`
+    /// gives a random wait.
+    fn line(
+        &mut self,
+        line: &str,
+        answer: AnswerLine,
+        now: Instant,
+        wait: impl FnOnce() -> Duration,
+    ) {
+        // Only lines that the receiver sends by itself keep the sample rate.
+        // A new sample rate in an answer to this connection is found when the
+        // receiver repeats it.
+        let hint = answer == AnswerLine::Other && self.is_hint(line);
+        match input_resolution(line).map(|value| matches!(value.trim(), "" | "---")) {
+            Some(false) => {
+                // Somebody asked, so the values are new.
+                self.due = None;
+                self.may_ask_again = false;
+            }
+            // The answer came before the receiver had the new values.
+            Some(true) => {
+                if answer == AnswerLine::Answer && self.may_ask_again {
+                    self.may_ask_again = false;
+                    if self.due.is_none() {
+                        self.due = Some(now + SIGNAL_AGAIN);
+                        self.again_due = true;
+                    }
+                }
+            }
+            None if hint && self.due.is_none() => {
+                // Later hints of the burst do not move the time.
+                self.due = Some(now + wait());
+                self.again_due = false;
+            }
+            None => {}
+        }
+    }
+
+    /// True for a sound mode, `SSINFAISSIG`, or a new audio sample rate.
+    fn is_hint(&mut self, line: &str) -> bool {
+        let Some(rate) = line.strip_prefix("SSINFAISFSV ") else {
+            return line.starts_with("MS") || line.starts_with("SSINFAISSIG");
+        };
+        let rate = rate.trim();
+        if self.sample_rate == rate {
+            return false;
+        }
+        // The first value is no change.
+        let changed = !self.sample_rate.is_empty();
+        self.sample_rate.clear();
+        self.sample_rate.push_str(rate);
+        changed
+    }
+
+    /// Takes the due time when the queries are added.
+    const fn take_due(&mut self) {
+        self.due = None;
+        self.may_ask_again = !self.again_due;
+        self.again_due = false;
+    }
+}
+
+/// Wait before the video signal is asked again after an answer without values.
+const SIGNAL_AGAIN: Duration = Duration::from_secs(1);
+
+/// The input resolution of a line, which every answer with the video values
+/// has. Some receivers send `---` by themselves when the input signal is
+/// lost, before the new values are known.
+fn input_resolution(line: &str) -> Option<&str> {
+    line.strip_prefix("SSINFSIGRES I")
+        .or_else(|| line.strip_prefix("SYSDVIN "))
+}
+
+/// A random time from `min` to `max`.
+fn random_wait(min: Duration, max: Duration) -> Duration {
+    use std::hash::{BuildHasher, Hasher, RandomState};
+    let span = u64::try_from(max.saturating_sub(min).as_millis()).unwrap_or(u64::MAX);
+    // Each `RandomState` has other keys, so the result changes.
+    let random = RandomState::new().build_hasher().finish();
+    min + Duration::from_millis(random % span.saturating_add(1))
+}
+
 /// Time without a line of an answer after which the answers count as complete.
 /// Some answers have more lines, for example `TR?`, without an end line. Such
 /// a line counts only this long after the last answer, so that the events of
@@ -673,8 +795,9 @@ impl Queue {
     }
 
     /// Notes what a line from the receiver means for the written queries.
-    fn answer_line(&mut self, line: &str, now: Instant) {
-        match self.answers.line(line) {
+    fn answer_line(&mut self, line: &str, now: Instant) -> AnswerLine {
+        let kind = self.answers.line(line);
+        match kind {
             AnswerLine::Answer => {
                 self.last_answer = now;
                 self.last_activity = now;
@@ -684,6 +807,7 @@ impl Queue {
             }
             _ => {}
         }
+        kind
     }
 
     /// When [`Queue::check_answers`] has work. `None` if there is none. A
@@ -883,6 +1007,8 @@ impl Worker {
         // Only data from the receiver counts. Writes say nothing about it.
         let mut idle_since = Instant::now();
         let mut asked = false;
+        let mut signal = SignalHint::default();
+        let (wait_min, wait_max) = (self.config.signal_wait_min, self.config.signal_wait_max);
         let end = loop {
             let write_time = queue.write_time(&self.config, self.background_pause);
             let answer_time = queue.answer_time(self.config.answer_quiet);
@@ -905,19 +1031,13 @@ impl Worker {
                             // The source of the main zone changed to the tuner.
                             tuner |= text == "SITUNER";
                             hd_radio |= text == "SIHDRADIO";
-                            // Before the filter: a repeated value still answers.
-                            queue.answer_line(text, idle_since);
+                            // Before the filter: a repeated value still answers,
+                            // and is still a hint.
+                            let answer = queue.answer_line(text, idle_since);
+                            signal.line(text, answer, idle_since, || random_wait(wait_min, wait_max));
                             self.handle_line(text, &mut filter);
                         });
-                        if tuner {
-                            queue.add(TUNER_QUERIES);
-                            if self.queries.dab {
-                                queue.add(DAB_QUERIES);
-                            }
-                        }
-                        if hd_radio {
-                            queue.add(HD_RADIO_QUERIES);
-                        }
+                        self.add_source_queries(&mut queue, tuner, hd_radio);
                         // A change made BT.2020 not known: ask once more. The
                         // answer can repeat the last value, so the filter must
                         // let it through. This asks only when it becomes not
@@ -964,6 +1084,10 @@ impl Worker {
                     idle_since = Instant::now();
                     tracing::trace!(host = %self.host, "telnet idle, sending a query");
                     queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
+                }
+                () = tokio::time::sleep_until(signal.due.unwrap_or_else(Instant::now)), if signal.due.is_some() => {
+                    signal.take_due();
+                    queue.add(self.video_queries());
                 }
                 () = tokio::time::sleep_until(answer_time.unwrap_or_else(Instant::now)), if answer_time.is_some() => {
                     queue.check_answers(Instant::now(), self.config.answer_quiet);
@@ -1032,6 +1156,26 @@ impl Worker {
             });
         }
         result.map_err(End::Failed)
+    }
+
+    /// Asks for the tuner or HD Radio values after the source changed to it.
+    fn add_source_queries(&self, queue: &mut Queue, tuner: bool, hd_radio: bool) {
+        if tuner {
+            queue.add(TUNER_QUERIES);
+            if self.queries.dab {
+                queue.add(DAB_QUERIES);
+            }
+        }
+        if hd_radio {
+            queue.add(HD_RADIO_QUERIES);
+        }
+    }
+
+    /// The video signal queries of a hint. Answers that change the signal
+    /// make BT.2020 not known, and that asks for it.
+    fn video_queries(&self) -> impl Iterator<Item = &'static str> + use<> {
+        let queries = self.queries;
+        signal_queries(queries.brand, SignalPart::Video).filter(move |query| queries.wanted(query))
     }
 
     fn colorimetry_unknown(&self) -> bool {
@@ -1173,6 +1317,10 @@ mod tests {
                 answer_quiet: Duration::ZERO,
                 ..default
             },
+            TelnetConfig {
+                signal_wait_min: Duration::from_secs(3),
+                ..default
+            },
         ];
         for config in bad {
             assert!(
@@ -1186,6 +1334,138 @@ mod tests {
             ..default
         };
         assert!(none.check().is_ok());
+    }
+
+    #[test]
+    fn a_hint_asks_for_the_video_signal_after_its_first_line() {
+        let start = Instant::now();
+        let ms = Duration::from_millis;
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, start, || ms(500));
+        assert_eq!(hint.due, Some(start + ms(500)));
+        // Other lines and later hints of the burst do not move it.
+        hint.line("PSLFE 00", AnswerLine::Other, start + ms(100), || ms(9));
+        hint.line("SSINFAISSIG 25", AnswerLine::Other, start + ms(200), || {
+            ms(9)
+        });
+        assert_eq!(hint.due, Some(start + ms(500)));
+    }
+
+    #[test]
+    fn an_answer_to_a_query_of_this_connection_is_not_a_hint() {
+        for answer in [AnswerLine::Answer, AnswerLine::Related] {
+            let mut hint = SignalHint::default();
+            hint.line("MSSTEREO", answer, Instant::now(), || {
+                Duration::from_secs(1)
+            });
+            assert_eq!(hint.due, None, "{answer:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_known_input_resolution_cancels_the_hint() {
+        let start = Instant::now();
+        let wait = || Duration::from_secs(1);
+        let cancels = [
+            ("SSINFSIGRES I4K24", true),
+            ("SYSDVIN 4K24", true),
+            // Sent by itself when the input signal is lost.
+            ("SSINFSIGRES I--- ", false),
+            ("SYSDVIN --- ", false),
+            ("SSINFSIGRES I", false),
+            ("SSINFSIGRES O4K24", false),
+            ("SSINFSIGHDR I---", false),
+        ];
+        for (line, cancel) in cancels {
+            let mut hint = SignalHint::default();
+            hint.line("MSSTEREO", AnswerLine::Other, start, wait);
+            hint.line(line, AnswerLine::Other, start, wait);
+            assert_eq!(hint.due.is_none(), cancel, "{line}");
+        }
+    }
+
+    #[test]
+    fn only_a_new_sample_rate_is_a_hint() {
+        let now = Instant::now();
+        let wait = || Duration::from_secs(1);
+        let mut hint = SignalHint::default();
+        hint.line("SSINFAISFSV 48K", AnswerLine::Other, now, wait);
+        // The receiver repeats it every few seconds.
+        hint.line("SSINFAISFSV 48K", AnswerLine::Other, now, wait);
+        assert_eq!(hint.due, None);
+        hint.line("SSINFAISFSV 441", AnswerLine::Other, now, wait);
+        assert_eq!(hint.due, Some(now + wait()));
+        // The first value is no change.
+        let mut first = SignalHint::default();
+        first.line("SSINFAISFSV 441", AnswerLine::Other, now, wait);
+        assert_eq!(first.due, None);
+    }
+
+    #[test]
+    fn an_answer_without_values_asks_once_more() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        hint.take_due();
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(hint.due, Some(now + SIGNAL_AGAIN));
+        hint.take_due();
+        // Only once.
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(hint.due, None);
+        // The same for the other resolution line.
+        let mut dv = SignalHint::default();
+        dv.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        dv.take_due();
+        dv.line("SYSDVIN --- ", AnswerLine::Answer, now, wait);
+        assert_eq!(dv.due, Some(now + SIGNAL_AGAIN));
+    }
+
+    #[test]
+    fn a_new_sample_rate_in_an_own_answer_is_found_at_its_repeat() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("SSINFAISFSV 48K", AnswerLine::Other, now, wait);
+        for answer in [AnswerLine::Answer, AnswerLine::Related] {
+            hint.line("SSINFAISFSV 441", answer, now, wait);
+            assert_eq!(hint.due, None);
+        }
+        hint.line("SSINFAISFSV 441", AnswerLine::Other, now, wait);
+        assert_eq!(hint.due, Some(now + wait()));
+    }
+
+    #[test]
+    fn an_answer_without_values_outside_a_hint_read_asks_nothing() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        // An answer of the start, or of a refresh.
+        let mut hint = SignalHint::default();
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(hint.due, None);
+        // An answer to another client.
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        hint.take_due();
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Other, now, wait);
+        assert_eq!(hint.due, None);
+        // Known values end the hint read.
+        hint.line("SSINFSIGRES I4K24", AnswerLine::Answer, now, wait);
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(hint.due, None);
+    }
+
+    #[test]
+    fn the_random_wait_is_in_its_range() {
+        let TelnetConfig {
+            signal_wait_min: min,
+            signal_wait_max: max,
+            ..
+        } = TelnetConfig::default();
+        let waits: Vec<_> = (0..50).map(|_| random_wait(min, max)).collect();
+        assert!(waits.iter().all(|wait| (min..=max).contains(wait)));
+        assert!(waits.iter().any(|wait| *wait != waits[0]));
+        assert_eq!(random_wait(min, min), min);
     }
 
     #[test]

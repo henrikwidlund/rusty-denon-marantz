@@ -192,11 +192,26 @@ To read all values again, call `avr.refresh().await?`. If telnet is open it asks
 telnet and reads only the zone names over HTTP. If not, it reads everything over
 HTTP. Your code does not choose.
 
-To see the video and audio signal now, call `avr.refresh_signal().await?`. It
-reads the resolution, the audio signal and the channels with one fast request
-(`update_signal_and_settings`) if the receiver has it, the HDR and color values
-from the web interface, and asks telnet for the rest if it is open. Your code
-does not choose.
+To see the video and audio signal now, call `avr.refresh_signal().await?`. If
+telnet is open, it asks only telnet. If not, it reads the resolution, the audio
+signal and the channels with one fast request (`update_signal_and_settings`) if
+the receiver has it, and the HDR and color values from the web interface. Your
+code does not choose. Auto low latency mode and quick frame transport come only
+from the web interface.
+
+Some receivers do not send video signal changes on telnet. When the signal
+changes, they send the sound mode (`MS`) or `SSINFAISSIG`, also with the same
+value, or a new audio sample rate (`SSINFAISFSV`). Telnet asks for the video
+signal after the first such line, after a random wait
+(`TelnetConfig::signal_wait_min` and `signal_wait_max`, 0.3 to 1.2 s). Answers
+to queries of this connection are not hints. A line with a known input
+resolution in the meantime cancels this, for example the answer to another
+client's query: the receiver sends answers to every telnet client. When the
+answer has no input resolution yet (`---`), telnet asks once more after 1 s. The
+receiver sends the sample rate only every few seconds, so a change found this
+way comes later. A source that changes the video signal without any of these
+lines is not found. To catch such changes, call `refresh_signal` at a fixed
+interval.
 
 The signal fields keep the values as the receiver sends them. Two methods of
 `SignalState` add what the receiver leaves out. `effective_pixel_depth()` gives

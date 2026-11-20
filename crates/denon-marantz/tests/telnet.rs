@@ -44,6 +44,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         query_interval: Duration::ZERO,
         query_quiet: Duration::ZERO,
         answer_quiet: Duration::from_millis(200),
+        signal_wait_min: Duration::from_millis(300),
+        signal_wait_max: Duration::from_millis(1200),
         query_groups: QueryGroup::DEFAULT_ORDER,
     }
 }
@@ -2737,6 +2739,112 @@ async fn a_signal_change_asks_for_the_colorimetry_again() {
     wait_until("BT.2020 again", || bt2020() == Some(true)).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(asked(), 1);
+}
+
+/// An `Avr` with telnet that asks nothing after the connect, and the given
+/// wait after a signal hint.
+async fn connected_with_signal_wait(telnet: &FakeTelnet, wait: Duration) -> Avr {
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        signal_wait_min: wait,
+        signal_wait_max: wait,
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    avr
+}
+
+fn count_sent(telnet: &FakeTelnet, query: &str) -> usize {
+    sent(telnet).iter().filter(|line| *line == query).count()
+}
+
+#[tokio::test]
+async fn a_signal_hint_asks_for_the_video_signal_once() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
+    // The burst of a signal change, with values that did not change.
+    telnet.send(b"MSDOLBY ATMOS\rPSLFE 00\rSSINFAISSIG 25\rSYSDA Dolby Atmos\r");
+    telnet.send(b"MSDOLBY ATMOS\rSSINFAISSIG 25\r");
+    wait_until("the video queries", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 1 && count_sent(&telnet, "SSINFSIGHDR ?") == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 1);
+}
+
+#[tokio::test]
+async fn a_new_sample_rate_is_a_signal_hint() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
+    telnet.send(b"SSINFAISFSV 48K\r");
+    telnet.send(b"SSINFAISFSV 48K\r");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 0);
+    telnet.send(b"SSINFAISFSV 441\r");
+    wait_until("the video queries", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 1
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_signal_read_without_values_asks_once_more() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
+    telnet.send(b"MSDOLBY ATMOS\r");
+    wait_until("the video queries", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 1
+    })
+    .await;
+    // Not ready yet.
+    telnet.send(b"SSINFSIGRES I--- \rSSINFSIGRES O--- \r");
+    wait_until("the second read", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 2
+    })
+    .await;
+    telnet.send(b"SSINFSIGRES I--- \rSSINFSIGRES O--- \r");
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 2);
+}
+
+#[tokio::test]
+async fn a_video_signal_line_cancels_the_signal_hint() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(300)).await;
+    telnet.send(b"MSSTEREO\r");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Another client asked.
+    telnet.send(b"SSINFSIGRES I4K24\r");
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(
+        count_sent(&telnet, "SSINFSIGRES ?"),
+        0,
+        "{:?}",
+        sent(&telnet)
+    );
+}
+
+#[tokio::test]
+async fn the_answer_to_an_own_sound_mode_query_is_not_a_signal_hint() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
+    avr.telnet_ask(&[Ask::Raw("MS?")]).await.unwrap();
+    wait_until("the query", || count_sent(&telnet, "MS?") == 1).await;
+    telnet.send(b"MSSTEREO\r");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        count_sent(&telnet, "SSINFSIGRES ?"),
+        0,
+        "{:?}",
+        sent(&telnet)
+    );
 }
 
 #[tokio::test]

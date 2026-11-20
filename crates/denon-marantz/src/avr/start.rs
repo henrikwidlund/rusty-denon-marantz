@@ -8,7 +8,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 #[cfg(feature = "telnet")]
-use denon_marantz_proto::telnet::{SignalPart, after_appcommand_queries, signal_queries};
+use denon_marantz_proto::telnet::{
+    QueryGroup, SignalPart, after_appcommand_queries, signal_queries,
+};
 use denon_marantz_proto::{
     AUDIO_CHANNELS_PATH, AudioChannelsPage, GroupAvailability, SettingsGroup, State,
     VIDEO_SIGNAL_PATH, VideoSignalPage,
@@ -660,16 +662,17 @@ impl Avr {
 
     /// Reads the video and audio signal again, in the way that fits.
     ///
-    /// The web interface answers the video signal and the channels at once.
-    /// If telnet is open, it is asked for the rest: the audio signal, the
-    /// sampling rate and the HDMI limit, and for the video signal and the
-    /// channels too if their page could not be read. Your code does not
-    /// choose. The values from telnet arrive as events after the call returns.
+    /// If telnet is open, only telnet is asked, and the values arrive as
+    /// events after the call returns. Else `AppCommand0300.xml`, if the
+    /// receiver has it, and the web interface are read: the video signal and
+    /// the channels. Your code does not choose. Auto low latency mode and
+    /// quick frame transport come only from the web interface.
     ///
-    /// The signal does not send changes over HTTP. Some receivers send changes
-    /// on telnet by themselves, and others do not. Call this to see the signal
-    /// now, for example when the source changed, or on a timer if the receiver
-    /// does not send changes. The library does not call it by itself.
+    /// The signal does not send changes over HTTP. Some receivers do not send
+    /// video signal changes on telnet. Telnet asks for them after a hint, see
+    /// [`TelnetConfig::signal_wait_min`](crate::TelnetConfig::signal_wait_min).
+    /// Call this to see the signal now, or on a timer if the receiver sends
+    /// neither changes nor hints.
     ///
     /// # Errors
     ///
@@ -677,6 +680,16 @@ impl Avr {
     /// and the web interface does not answer, or answers with no page that
     /// can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal(&self) -> Result<(), Error> {
+        #[cfg(feature = "telnet")]
+        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+            // The group asks BT.2020 last, so that its answer comes after the
+            // video values.
+            match self.telnet.refresh_group(QueryGroup::Signal).await {
+                // Telnet closed after the check: read the web interface.
+                Err(Error::NotConnected) => {}
+                result => return result,
+            }
+        }
         // A receiver that answers `AppCommand0300.xml` gives the resolution, the
         // audio signal and the channels at once, and its answer for the
         // channels is more complete than the page.
@@ -692,25 +705,6 @@ impl Avr {
         };
         let is_read =
             |result: &Result<PageStatus, Error>| result.as_ref().is_ok_and(|s| s.has_values());
-        #[cfg(feature = "telnet")]
-        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
-            let (video, channels) = (is_read(&video), is_read(&channels));
-            let mut queries: Vec<&'static str> =
-                signal_queries(self.info.brand, SignalPart::TelnetOnly).collect();
-            // `AppCommand0300.xml` gave the audio values, if it answered.
-            if !answered {
-                queries.extend(signal_queries(self.info.brand, SignalPart::AudioInfo));
-            }
-            if !video {
-                queries.extend(signal_queries(self.info.brand, SignalPart::Video));
-            }
-            if !channels {
-                queries.extend(signal_queries(self.info.brand, SignalPart::Channels));
-            }
-            // Last, so that its answer comes after the video values.
-            queries.extend(signal_queries(self.info.brand, SignalPart::Colorimetry));
-            return self.telnet.ask(queries).await;
-        }
         if answered || is_read(&video) || is_read(&channels) {
             return Ok(());
         }

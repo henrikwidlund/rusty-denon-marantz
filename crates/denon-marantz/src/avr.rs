@@ -1436,8 +1436,8 @@ impl Avr {
     /// resolution that the receiver gets and sends, the kind of the audio
     /// signal and of the sound, the sampling rate, and the channels of the
     /// signal and of the speakers. HDR, the pixel depth, the color space and
-    /// the FRL rate are not in it: [`Avr::refresh_signal`] reads them from
-    /// the web interface. The values are in
+    /// the FRL rate are not in it: [`Avr::refresh_signal`] reads them over
+    /// telnet, or from the web interface without telnet. The values are in
     /// [`DeviceState::signal`](denon_marantz_proto::DeviceState::signal) and,
     /// for Audyssey and the HDMI output, in the fields of
     /// [`DeviceState`](denon_marantz_proto::DeviceState).

@@ -62,6 +62,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         query_quiet: Duration::ZERO,
         // Long, so that a wait does not end while a test answers.
         answer_quiet: Duration::from_secs(5),
+        signal_wait_min: Duration::from_millis(300),
+        signal_wait_max: Duration::from_millis(1200),
         query_groups: QueryGroup::START_ORDER,
     }
 }
@@ -799,7 +801,7 @@ async fn a_web_interface_that_does_not_answer_is_in_the_report() {
 }
 
 #[tokio::test]
-async fn refresh_signal_reads_the_pages_and_asks_telnet_for_the_audio() {
+async fn refresh_signal_with_telnet_asks_only_telnet() {
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = started(&web, &telnet).await;
     avr.start().await.unwrap().basic_synced().await;
@@ -816,19 +818,21 @@ async fn refresh_signal_reads_the_pages_and_asks_telnet_for_the_audio() {
     })
     .await;
     let before = telnet.received().len();
+    let pages = web.requests().len();
     let (eci, audio) = (count("SSINFSIGECI ?"), count("SYSDA ?"));
     avr.refresh_signal().await.unwrap();
-    wait_until("the audio queries", || {
+    wait_until("the signal queries", || {
         count("SSINFSIGECI ?") > eci && count("SYSDA ?") > audio
     })
     .await;
     let received = telnet.received();
     let sent = lines(&received[before..]);
-    assert!(sent.contains(&"SYSDA ?"));
-    assert!(sent.contains(&"SSINFSIGECI ?"));
-    // The pages were read, so telnet is not asked for these.
-    assert!(!sent.contains(&"SSINFSIGRES ?"));
-    assert!(!sent.contains(&"OPINFASP ?"));
+    for query in ["SYSDA ?", "SSINFSIGRES ?", "OPINFASP ?", "SSINFSIGECI ?"] {
+        assert!(sent.contains(&query), "{query} {sent:?}");
+    }
+    // BT.2020 last, so that its answer comes after the video values.
+    assert_eq!(sent.last(), Some(&"SSINFSIGECI ?"));
+    assert_eq!(web.requests().len(), pages, "no HTTP while telnet is open");
 }
 
 #[tokio::test]
