@@ -325,11 +325,15 @@ async fn all_synced_ends_with_no_answer_after_the_wait() {
         .expect("all_synced did not end");
     assert_eq!(report.telnet_sync, TelnetSync::NoAnswer);
     assert!(matches!(report.telnet, TelnetStart::Open));
-    // The written queries are open, each once, as sent.
+    // The written queries are open, each once, as sent. The last query is
+    // open too, written or not: on Windows, each write waits for a timer tick.
     let open = &report.telnet_not_answered;
+    assert!(
+        open.iter().any(|query| query == "SSINFSIGECI ?"),
+        "{open:?}"
+    );
     let received = telnet.received();
     let written = lines(&received);
-    assert!(written.contains(&"SSINFSIGECI ?"), "{written:?}");
     for query in written.iter().filter(|line| line.ends_with('?')) {
         assert_eq!(
             open.iter().filter(|open| open == query).count(),
