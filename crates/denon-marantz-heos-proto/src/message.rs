@@ -120,8 +120,7 @@ pub fn decode(value: &str) -> Cow<'_, str> {
 }
 
 /// Appends `value` with `&`, `=` and `%` encoded.
-#[cfg(test)]
-fn push_encoded(out: &mut String, value: &str) {
+pub(crate) fn push_encoded(out: &mut String, value: &str) {
     let mut rest = value;
     while let Some(index) = rest.find(['&', '=', '%']) {
         out.push_str(&rest[..index]);

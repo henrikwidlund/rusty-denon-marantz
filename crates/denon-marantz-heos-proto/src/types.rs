@@ -198,7 +198,8 @@ pub struct Player<'a> {
     /// Firmware version.
     #[serde(default, borrow, deserialize_with = "de::option_text")]
     pub version: Option<Cow<'a, str>>,
-    /// IP address as text.
+    /// IP address as text. Not in the protocol specification, but the
+    /// AVC-A10H sends it.
     #[serde(default, borrow, deserialize_with = "de::option_text")]
     pub ip: Option<Cow<'a, str>>,
     /// Network type: `wired`, `wifi` or `unknown`.

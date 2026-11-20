@@ -282,6 +282,7 @@ use denon_marantz_heos::Heos;
 use tokio::sync::broadcast::error::RecvError;
 
 let heos = Heos::connect("192.168.1.20").await?; // the state is read when this returns
+// `None` for some time after the device wakes up, see the notes below.
 let pid = heos.player_by_ip("192.168.1.20".parse()?).ok_or("no player")?;
 let mut changes = heos.changes();
 heos.play_preset(pid, 1).await?; // the first HEOS Favorite
@@ -302,8 +303,11 @@ loop {
 The client keeps two connections: one for commands and one for events. It
 sends one command at a time. A command whose future is dropped before it is
 sent is not sent. It connects again after a drop, waits longer after each
-failed try, and then reads the state again. `HeosConfig` has the times. The
-`denon-marantz-heos-proto` crate has the protocol without IO.
+failed try, and then reads the state again. If the device refuses to send
+change events, it connects again too, and waits longer after each refusal in a
+row. A refusal during `Heos::connect` can make the connect fail. `HeosConfig`
+has the times. The `denon-marantz-heos-proto` crate has the protocol without
+IO.
 
 With the `heos` feature, `Avr` opens HEOS too. The start opens it in the
 background on receivers with HEOS (`Info::has_heos`), and neither the start
@@ -336,6 +340,12 @@ Notes about HEOS:
   device must be able to reach the URL.
 - Reading the HEOS Favorites can take longer than other commands. The device
   first answers that it works on the command (`HeosConfig::slow_command_limit`).
+- Text in the payload of answers, such as song names, is used as the device
+  sends it. The AVC-A10H sends `&` as it is, not as `%26` as the HEOS CLI
+  specification says. Values in the `message` part are decoded.
+- After the device wakes up, it can take some time to find its players. A
+  player that is not known yet comes later with `Change::Players`. With `Avr`,
+  the status is `HeosPlayerStatus::WaitingForPlayer` until then.
 
 ## Features of the `denon-marantz` crate
 

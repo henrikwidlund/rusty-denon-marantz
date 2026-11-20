@@ -45,7 +45,8 @@ pub struct HeosConfig {
     /// heartbeat is a command, so [`HeosConfig::command_timeout`] applies.
     pub keep_alive: Duration,
     /// Time to wait before the first try to connect again. It doubles with
-    /// each failed try up to [`HeosConfig::reconnect_max`].
+    /// each failed try up to [`HeosConfig::reconnect_max`]. After a refused
+    /// register for change events, it also doubles with each refusal in a row.
     pub reconnect_min: Duration,
     /// Longest time to wait between two tries to connect again.
     pub reconnect_max: Duration,
@@ -153,6 +154,8 @@ impl Heos {
 
     /// Opens the connections and reads the players and their state. Returns
     /// when the state is read. It is an error if the players cannot be read.
+    /// It can be an error if the device refuses to send change events; a
+    /// refusal after the state is read shows as a reconnect.
     ///
     /// `host` is a host name or an IP address. An IPv6 address can have
     /// brackets. Link-local IPv6 addresses with a zone, for example
@@ -245,6 +248,10 @@ impl Heos {
 
     /// The player with this IP address. The AVC-A10H has one player for all
     /// its zones.
+    ///
+    /// After the device wakes up, it can take some time to find its players.
+    /// A player that is not known yet comes later with
+    /// [`Change::Players`](crate::Change::Players).
     #[must_use]
     pub fn player_by_ip(&self, ip: IpAddr) -> Option<PlayerId> {
         self.shared.read(|states| {
@@ -393,7 +400,8 @@ impl Heos {
     }
 
     /// Reads the players and their state again. Returns when all is read.
-    /// It is an error if the players cannot be read.
+    /// It is an error if the players cannot be read, or if there is no
+    /// connection or it ends.
     pub async fn refresh(&self) -> Result<(), Error> {
         let (done, read) = oneshot::channel();
         self.request(Request::Refresh(done)).await?;

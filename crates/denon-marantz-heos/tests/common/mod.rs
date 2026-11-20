@@ -23,6 +23,9 @@ pub(crate) const PID: PlayerId = PlayerId(1_234_567);
 /// The IP address of the player in [`DATA`].
 pub(crate) const IP: &str = "192.168.1.20";
 
+/// Name of the command that registers for change events.
+pub(crate) const REGISTER: &str = "system/register_for_change_events";
+
 /// The address that the fakes listen on.
 pub(crate) const LOOPBACK: &str = "127.0.0.1:0";
 
@@ -128,11 +131,21 @@ pub(crate) fn from_data(line: &str) -> Reply {
     Reply::Lines(answer_lines(name(line)))
 }
 
+/// Registers for change events that the fake refuses.
+#[derive(Default)]
+struct Refusals {
+    /// How many registers in a row are refused.
+    count: AtomicUsize,
+    /// Wait before the refusal is sent.
+    delay: Mutex<Duration>,
+}
+
 pub(crate) struct Fake {
     pub(crate) port: u16,
     seen: Arc<Mutex<Vec<String>>>,
     connections: Arc<AtomicUsize>,
     closed: Arc<AtomicUsize>,
+    refusals: Arc<Refusals>,
     events: broadcast::Sender<String>,
     close: broadcast::Sender<()>,
 }
@@ -154,14 +167,16 @@ impl Fake {
             seen: Arc::default(),
             connections: Arc::default(),
             closed: Arc::default(),
+            refusals: Arc::default(),
             events: broadcast::Sender::new(64),
             close: broadcast::Sender::new(4),
         };
         let handler = Arc::new(handler);
-        let (seen, connections, closed) = (
+        let (seen, connections, closed, refusals) = (
             fake.seen.clone(),
             fake.connections.clone(),
             fake.closed.clone(),
+            fake.refusals.clone(),
         );
         let (events, close) = (fake.events.clone(), fake.close.clone());
         tokio::spawn(async move {
@@ -171,6 +186,7 @@ impl Fake {
                     socket,
                     handler.clone(),
                     seen.clone(),
+                    refusals.clone(),
                     events.clone(),
                     close.subscribe(),
                 );
@@ -214,6 +230,16 @@ impl Fake {
         self.events.send(line).unwrap();
     }
 
+    /// Refuses the next `count` registers for change events.
+    pub(crate) fn refuse_registers(&self, count: usize) {
+        self.refusals.count.store(count, Ordering::SeqCst);
+    }
+
+    /// Waits this long before each refusal of a register.
+    pub(crate) fn delay_refusals(&self, delay: Duration) {
+        *self.refusals.delay.lock().unwrap() = delay;
+    }
+
     /// Closes all open connections.
     pub(crate) fn close_all(&self) {
         let _ = self.close.send(());
@@ -224,6 +250,7 @@ async fn serve(
     socket: TcpStream,
     handler: Arc<dyn Fn(&str) -> Reply + Send + Sync>,
     seen: Arc<Mutex<Vec<String>>>,
+    refusals: Arc<Refusals>,
     events: broadcast::Sender<String>,
     mut close: broadcast::Receiver<()>,
 ) {
@@ -247,9 +274,18 @@ async fn serve(
                 };
                 let line = line.trim_end_matches('\r').to_owned();
                 seen.lock().unwrap().push(line.clone());
-                if name(&line) == "system/register_for_change_events" {
-                    register = true;
-                    vec![answer(name(&line))]
+                if name(&line) == REGISTER {
+                    let refused = refusals
+                        .count
+                        .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+                        .is_ok();
+                    if refused {
+                        pause = *refusals.delay.lock().unwrap();
+                        vec![failure(name(&line), "eid=12&text=System error&syserrno=-9")]
+                    } else {
+                        register = true;
+                        vec![answer(name(&line))]
+                    }
                 } else {
                     match handler(&line) {
                         Reply::Lines(lines) => lines,
@@ -292,6 +328,13 @@ pub(crate) async fn next_change(changes: &mut broadcast::Receiver<Change>) -> Ch
         .await
         .expect("no change")
         .unwrap()
+}
+
+/// Waits until the fake has seen `count` registers for change events.
+/// Connect does not wait for the event connection, so call this before a
+/// test changes what the fake does with a register.
+pub(crate) async fn wait_for_registers(fake: &Fake, count: usize) {
+    wait_until(|| fake.count(REGISTER) == count).await;
 }
 
 /// Waits until `done` is true. Panics after two seconds.

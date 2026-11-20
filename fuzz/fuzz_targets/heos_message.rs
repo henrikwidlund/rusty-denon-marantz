@@ -23,7 +23,8 @@ fuzz_target!(|text: &str| {
         let _ = Event::parse(name, message);
     }
 
-    // A command line has no line break inside, and the value comes back.
+    // A command line has no line break inside, and the value comes back:
+    // the URL as it is, the input name encoded.
     let pid = PlayerId(1);
     let mut line = String::new();
     if (Command::PlayStream { pid, url: text })
@@ -33,6 +34,21 @@ fuzz_target!(|text: &str| {
         let body = line.strip_suffix("\r\n").unwrap();
         assert!(!body.contains(['\r', '\n']));
         let url = body.split_once("&url=").unwrap().1;
-        assert_eq!(decode(url), text);
+        assert_eq!(url, text);
+    }
+    line.clear();
+    if (Command::PlayInput {
+        pid,
+        source: None,
+        input: text,
+    })
+    .write(&mut line)
+    .is_ok()
+    {
+        let body = line.strip_suffix("\r\n").unwrap();
+        assert!(!body.contains(['\r', '\n']));
+        let input = body.split_once("&input=").unwrap().1;
+        assert!(!input.contains(['&', '=']));
+        assert_eq!(decode(input), text);
     }
 });

@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 
 use crate::error::Error;
+use crate::message::push_encoded;
 use crate::types::{MAX_VOLUME, PlayState, PlayerId, QueueId, RepeatMode, SourceId};
 
 /// Highest quick select slot.
@@ -214,7 +215,7 @@ pub enum Command<'a> {
         pid: PlayerId,
         /// Player that has the input, if it is another player.
         source: Option<PlayerId>,
-        /// Input name. It is sent as it is: the device does not decode it.
+        /// Input name. `&`, `=` and `%` in it are encoded.
         input: &'a str,
     },
     /// Plays a stream from a URL.
@@ -399,7 +400,9 @@ impl Command<'_> {
                 if let Some(spid) = source {
                     write!(out, "&spid={spid}")?;
                 }
-                write!(out, "&input={input}")
+                out.push_str("&input=");
+                push_encoded(out, input);
+                Ok(())
             }
             Self::PlayStream { pid, url } => {
                 // The URL must be the last argument, so that `&` and `=` in it
@@ -501,6 +504,14 @@ mod tests {
                     input: "inputs/aux_in_1",
                 },
                 "heos://browse/play_input?pid=-12&spid=7&input=inputs/aux_in_1",
+            ),
+            (
+                Command::PlayInput {
+                    pid,
+                    source: None,
+                    input: "inputs/a&b=c%",
+                },
+                "heos://browse/play_input?pid=-12&input=inputs/a%26b%3Dc%25",
             ),
             (
                 Command::PlayStream {
@@ -729,12 +740,14 @@ mod tests {
                 Command::PlayStream { pid, url: &text },
                 Command::PlayInput { pid, source: None, input: &text },
             ];
-            for command in commands {
+            let mut encoded = String::new();
+            push_encoded(&mut encoded, &text);
+            for (command, value) in commands.into_iter().zip([text.as_str(), &encoded]) {
                 let mut out = String::new();
                 if command.write(&mut out).is_ok() {
                     let body = out.strip_suffix("\r\n").unwrap_or_default();
                     proptest::prop_assert!(!body.contains(['\r', '\n']), "{out:?}");
-                    proptest::prop_assert!(body.ends_with(&*text), "{out:?}");
+                    proptest::prop_assert!(body.ends_with(value), "{out:?}");
                 } else {
                     proptest::prop_assert!(out.is_empty());
                 }

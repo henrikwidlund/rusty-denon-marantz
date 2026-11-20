@@ -32,11 +32,13 @@
 //! # }
 //! ```
 //!
-//! # Values in commands
+//! # Values in commands and answers
 //!
-//! The URL of [`Command::PlayStream`] and the name of [`Command::PlayInput`]
-//! are sent as they are: the device does not decode them. Values in answers
-//! and events are decoded by [`Message::get`].
+//! The URL of [`Command::PlayStream`] is sent as it is: the device does not
+//! decode it. `&`, `=` and `%` in the name of [`Command::PlayInput`] are
+//! encoded. Values in the `message` of answers and events are decoded by
+//! [`Message::get`]. Text in the payload is used as the device sends it: the
+//! AVC-A10H sends `&` in a song name as it is, not as `%26`.
 
 mod command;
 mod controls;

@@ -73,17 +73,25 @@ impl Error {
 }
 
 /// Error code and text of a failure, for the error message.
-struct FailureText<'a>(&'a Failure<'a>);
+pub(crate) struct FailureText<'a>(pub(crate) &'a Failure<'a>);
 
 impl std::fmt::Display for FailureText<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Failure { code, text, .. } = self.0;
+        let Failure {
+            code,
+            text,
+            system_code,
+        } = self.0;
         match (code, text.is_empty()) {
             (Some(code), true) => write!(f, "error {}", code.id()),
             (Some(code), false) => write!(f, "error {}: {text}", code.id()),
             (None, false) => f.write_str(text),
             (None, true) => f.write_str("no details"),
+        }?;
+        if let Some(number) = system_code {
+            write!(f, " (syserrno {number})")?;
         }
+        Ok(())
     }
 }
 
@@ -95,30 +103,38 @@ mod tests {
 
     #[test]
     fn failure_message_has_the_code_and_the_text() {
-        let failed = |code, text: &'static str| Error::Failed {
+        let failed = |code, text: &'static str, system_code| Error::Failed {
             command: "player/play_next",
             failure: Failure {
                 code,
                 text: text.into(),
-                system_code: None,
+                system_code,
             },
         };
         let cases = [
             (
                 Some(ErrorCode::InvalidId),
                 "ID Not Valid",
+                None,
                 "player/play_next failed: error 2: ID Not Valid",
             ),
             (
                 Some(ErrorCode::InvalidId),
                 "",
+                None,
                 "player/play_next failed: error 2",
             ),
-            (None, "Busy", "player/play_next failed: Busy"),
-            (None, "", "player/play_next failed: no details"),
+            (
+                Some(ErrorCode::SystemError),
+                "System error",
+                Some(-9),
+                "player/play_next failed: error 12: System error (syserrno -9)",
+            ),
+            (None, "Busy", None, "player/play_next failed: Busy"),
+            (None, "", None, "player/play_next failed: no details"),
         ];
-        for (code, text, expected) in cases {
-            assert_eq!(failed(code, text).to_string(), expected);
+        for (code, text, system_code, expected) in cases {
+            assert_eq!(failed(code, text, system_code).to_string(), expected);
         }
     }
 }

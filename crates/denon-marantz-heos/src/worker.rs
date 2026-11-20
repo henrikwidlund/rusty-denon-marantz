@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::time::Instant;
 
 use crate::client::{Answer, HeosConfig};
-use crate::error::Error;
+use crate::error::{Error, FailureText};
 use crate::host::UrlHost;
 use crate::state::{Change, HeosStatus, Shared};
 
@@ -34,6 +34,7 @@ const READ_BUFFER: usize = 4096;
 const MAX_PROGRESS_MS: u64 = 2_147_483_647;
 
 const GET_PLAYERS: &str = Command::GetPlayers.name();
+const REGISTER: &str = Command::RegisterForChangeEvents { enable: true }.name();
 const GET_PLAY_STATE: &str = Command::GetPlayState { pid: PlayerId(0) }.name();
 const GET_NOW_PLAYING: &str = Command::GetNowPlayingMedia { pid: PlayerId(0) }.name();
 const GET_PLAY_MODE: &str = Command::GetPlayMode { pid: PlayerId(0) }.name();
@@ -157,6 +158,7 @@ enum End {
     Closed,
     Failed(std::io::Error),
     Silent,
+    NotRegistered(Failure<'static>),
     Timeout {
         command: &'static str,
         limit: Duration,
@@ -170,6 +172,11 @@ impl std::fmt::Display for End {
             Self::Closed => f.write_str("closed by the device"),
             Self::Failed(error) => write!(f, "read or write failed: {error}"),
             Self::Silent => f.write_str("no answer to the heartbeat on the event connection"),
+            Self::NotRegistered(failure) => write!(
+                f,
+                "the device refused to send change events: {}",
+                FailureText(failure)
+            ),
             Self::Timeout { command, .. } => write!(f, "no answer to {command}"),
         }
     }
@@ -204,11 +211,18 @@ impl Worker {
         let mut connections = Some(first);
         let mut synced = Some(synced);
         let mut reconnected = false;
+        let mut first_wait = self.config.reconnect_min;
+        // The wait after a refused register. It doubles with each refusal in
+        // a row, so a device that always refuses is not asked too often.
+        let mut refused_wait = self.config.reconnect_min;
         loop {
             let connections = if let Some(connections) = connections.take() {
                 connections
             } else {
-                let Some(connections) = self.reconnect(&mut shutdown, &mut requests).await else {
+                let Some(connections) = self
+                    .reconnect(first_wait, &mut shutdown, &mut requests)
+                    .await
+                else {
                     return;
                 };
                 // Requests that came while there was no connection are late.
@@ -225,20 +239,28 @@ impl Worker {
                 return;
             }
             reconnected = true;
+            if matches!(end, End::NotRegistered(_)) {
+                first_wait = refused_wait;
+                refused_wait = (refused_wait * 2).min(self.config.reconnect_max);
+            } else {
+                first_wait = self.config.reconnect_min;
+                refused_wait = self.config.reconnect_min;
+            }
             tracing::debug!(host = %self.host, reason = %end, "HEOS connection lost");
         }
     }
 
     /// Tries to connect until it works. `None` if the task is stopped.
     ///
-    /// It waits before each try, longer after each failed one. A request
-    /// that comes in the meantime is refused at once.
+    /// It waits `first_wait` before the first try, and longer after each
+    /// failed one. A request that comes in the meantime is refused at once.
     async fn reconnect(
         &self,
+        first_wait: Duration,
         shutdown: &mut watch::Receiver<bool>,
         requests: &mut mpsc::Receiver<Request>,
     ) -> Option<Connections> {
-        let mut wait = self.config.reconnect_min;
+        let mut wait = first_wait;
         loop {
             until_stopped(
                 shutdown,
@@ -325,13 +347,22 @@ impl<'a> Session<'a> {
                 request: command.to_owned(),
                 limit,
             },
+            End::NotRegistered(ref failure) => Error::Failed {
+                command: REGISTER,
+                failure: failure.clone(),
+            },
             _ => Error::NotConnected,
         };
         if let Some(Pending {
             reply: Some(reply), ..
         }) = self.pending.take()
         {
-            let _ = reply.send(Err(error()));
+            // The device may have done the command, so it is not failed.
+            let error = match end {
+                End::NotRegistered(_) => Error::NotConnected,
+                _ => error(),
+            };
+            let _ = reply.send(Err(error));
         }
         for job in self.queue.drain(..) {
             job.fail(error);
@@ -379,7 +410,16 @@ impl<'a> Session<'a> {
                     Ok(count) => {
                         self.event_read = Instant::now();
                         self.event_asked = false;
-                        event_decoder.decode(&event_buffer[..count], |line| self.on_event(line));
+                        let mut refused = None;
+                        event_decoder.decode(&event_buffer[..count], |line| {
+                            if let Some(failure) = self.on_event(line) {
+                                refused.get_or_insert(failure);
+                            }
+                        });
+                        // Without events the state goes stale, so connect again.
+                        if let Some(failure) = refused {
+                            return End::NotRegistered(failure);
+                        }
                     }
                     Err(error) => return End::Failed(error),
                 },
@@ -677,12 +717,13 @@ impl<'a> Session<'a> {
         self.shared().publish(Change::PlayersNotRead);
     }
 
-    /// A line from the event connection.
-    fn on_event(&mut self, line: &str) {
+    /// A line from the event connection. Gives the failure if the device
+    /// refused to register for change events.
+    fn on_event(&mut self, line: &str) -> Option<Failure<'static>> {
         log_line(line);
         let Ok(response) = Response::parse(line) else {
             tracing::debug!(host = %self.worker.host, "HEOS line that is not valid");
-            return;
+            return None;
         };
         // The answers to the register command and to heartbeats are not events.
         let event = match response.event() {
@@ -690,12 +731,13 @@ impl<'a> Session<'a> {
             Ok(None) => {
                 if let Status::Fail(failure) = response.status() {
                     tracing::debug!(command = response.command(), code = ?failure.code, "HEOS command on the event connection failed");
+                    return (response.command() == REGISTER).then(|| failure.into_owned());
                 }
-                return;
+                return None;
             }
             Err(error) => {
                 tracing::debug!(event = response.command(), %error, "HEOS event not valid");
-                return;
+                return None;
             }
         };
         let shared = self.shared();
@@ -734,6 +776,7 @@ impl<'a> Session<'a> {
             _ => {}
         }
         self.shared().send_event(event);
+        None
     }
 }
 

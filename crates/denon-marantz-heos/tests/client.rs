@@ -2,11 +2,12 @@
 
 mod common;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{
-    Fake, IP, LOOPBACK, LOOPBACK_V6, PID, Reply, answer, config, connect, counter, event, failure,
-    from_data, name, next_change, now_playing, wait_until,
+    Fake, IP, LOOPBACK, LOOPBACK_V6, PID, REGISTER, Reply, answer, answer_lines, config, connect,
+    counter, event, failure, from_data, name, next_change, now_playing, wait_for_registers,
+    wait_until,
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
@@ -36,7 +37,7 @@ async fn connect_reads_the_players_and_their_state() {
     assert_eq!(heos.with_player(PID, PlayerState::pid), Some(PID));
     assert_eq!(heos.with_player(PlayerId(1), PlayerState::pid), None);
     let seen = fake.seen();
-    assert!(seen.contains(&"heos://system/register_for_change_events?enable=on".to_owned()));
+    assert!(seen.contains(&format!("heos://{REGISTER}?enable=on")));
     let commands: Vec<_> = seen
         .iter()
         .filter(|line| !line.contains("register"))
@@ -285,7 +286,7 @@ async fn a_command_without_an_answer_times_out_and_connects_again() {
         .unwrap();
     wait_until(|| fake.count("player/get_now_playing_media") == 2).await;
     assert_eq!(fake.connections(), 4);
-    assert_eq!(fake.count("system/register_for_change_events"), 2);
+    wait_for_registers(&fake, 2).await;
     heos.play_next(PID).await.unwrap();
 }
 
@@ -309,6 +310,119 @@ async fn a_closed_connection_is_opened_again() {
     let mut changes = heos.changes();
     fake.push(event("player_state_changed", "pid=1234567&state=play"));
     assert_eq!(next_change(&mut changes).await, Change::PlayState(PID));
+}
+
+#[tokio::test]
+async fn a_refused_register_fails_the_connect() {
+    // The players come late, so the refused register ends the first read.
+    let fake = Fake::start(|line| match name(line) {
+        "player/get_players" => Reply::Paced(Duration::from_millis(300), answer_lines(name(line))),
+        _ => from_data(line),
+    })
+    .await;
+    fake.refuse_registers(1);
+    let error = Heos::connect_with("127.0.0.1", config(fake.port))
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.to_string(),
+        "system/register_for_change_events failed: error 12: System error (syserrno -9)"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_register_opens_the_connections_again() {
+    let fake = Fake::start(from_data).await;
+    let heos = connect(&fake).await;
+    wait_for_registers(&fake, 1).await;
+    let mut status = heos.watch_status();
+    fake.refuse_registers(1);
+    fake.close_all();
+    // Without events the state would go stale, so both connections open a
+    // third time.
+    wait_for_registers(&fake, 3).await;
+    status
+        .wait_for(|status| *status == HeosStatus::Connected)
+        .await
+        .unwrap();
+    assert_eq!(fake.connections(), 6);
+    let mut changes = heos.changes();
+    fake.push(event("player_state_changed", "pid=1234567&state=play"));
+    // The state is read again after the reconnect, which gives other changes.
+    while next_change(&mut changes).await != Change::PlayState(PID) {}
+}
+
+#[tokio::test]
+async fn a_command_in_flight_is_not_failed_by_a_refused_register() {
+    let fake = Fake::start(|line| match name(line) {
+        "player/play_next" => Reply::Hang,
+        _ => from_data(line),
+    })
+    .await;
+    let heos = Heos::connect_with(
+        "127.0.0.1",
+        HeosConfig {
+            command_timeout: Duration::from_secs(2),
+            ..config(fake.port)
+        },
+    )
+    .await
+    .unwrap();
+    wait_for_registers(&fake, 1).await;
+    let mut status = heos.watch_status();
+    // The refusal comes late, so that the command is written first.
+    fake.refuse_registers(1);
+    fake.delay_refusals(Duration::from_millis(300));
+    fake.close_all();
+    status
+        .wait_for(|status| *status == HeosStatus::Disconnected)
+        .await
+        .unwrap();
+    status
+        .wait_for(|status| *status == HeosStatus::Connected)
+        .await
+        .unwrap();
+    let error = heos.play_next(PID).await.unwrap_err();
+    // The device may have done the command, so it is not `Failed`.
+    assert!(error.is_not_connected(), "{error:?}");
+    assert_eq!(fake.count("player/play_next"), 1);
+}
+
+#[tokio::test]
+async fn the_wait_doubles_with_each_refused_register_in_a_row() {
+    let fake = Fake::start(from_data).await;
+    let heos = Heos::connect_with(
+        "127.0.0.1",
+        HeosConfig {
+            reconnect_min: Duration::from_millis(100),
+            reconnect_max: Duration::from_secs(2),
+            ..config(fake.port)
+        },
+    )
+    .await
+    .unwrap();
+    wait_for_registers(&fake, 1).await;
+    let mut status = heos.watch_status();
+    let mut reconnect = async |refusals: usize| {
+        let registers = fake.count(REGISTER) + refusals + 1;
+        fake.refuse_registers(refusals);
+        let start = Instant::now();
+        fake.close_all();
+        wait_for_registers(&fake, registers).await;
+        let waited = start.elapsed();
+        status
+            .wait_for(|status| *status == HeosStatus::Connected)
+            .await
+            .unwrap();
+        waited
+    };
+    // Waits of 100, 100, 200 and 400 ms. Without doubling: 400 ms.
+    let waited = reconnect(3).await;
+    assert!(waited >= Duration::from_millis(700), "{waited:?}");
+    // The register worked, so the wait starts again at 100 ms: 100 and 100 ms.
+    let waited = reconnect(1).await;
+    assert!(waited < Duration::from_millis(700), "{waited:?}");
 }
 
 #[tokio::test]
