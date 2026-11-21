@@ -11,7 +11,7 @@ use crate::volume::{PowerOnVolume, Volume, VolumeMode};
 use crate::zone::Zone;
 
 /// Lowest and highest channel level in whole dB.
-const MAX_CHANNEL_DB: i8 = 12;
+pub(crate) const MAX_CHANNEL_DB: i8 = 12;
 
 /// The highest quick select (or SMART select) number. The protocol spec has
 /// five, and some models have six.

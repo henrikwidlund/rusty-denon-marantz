@@ -7,6 +7,7 @@ use std::sync::atomic::Ordering;
 #[cfg(feature = "telnet")]
 use std::time::Duration;
 
+use denon_marantz_proto::appcommand::SettingsPart;
 #[cfg(feature = "telnet")]
 use denon_marantz_proto::telnet::{
     QueryGroup, SignalPart, after_appcommand_queries, signal_queries,
@@ -24,12 +25,17 @@ use super::{Avr, Info};
 use crate::details::{PageStatus, SettingsAvailabilityDetails, SkipReason};
 use crate::error::Error;
 #[cfg(feature = "telnet")]
-use crate::telnet::{SyncResult, TelnetStatus};
+use crate::telnet::SyncResult;
 
 /// What [`Avr::start_with`] does. The default does everything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    all(feature = "heos", feature = "telnet"),
+    expect(clippy::struct_excessive_bools, reason = "each field is one switch")
+)]
 pub struct StartOptions {
     signal_pages: bool,
+    settings: bool,
     #[cfg(feature = "heos")]
     heos: bool,
     #[cfg(feature = "telnet")]
@@ -45,11 +51,13 @@ impl Default for StartOptions {
 }
 
 impl StartOptions {
-    /// The default: read the signal pages, and open telnet and HEOS.
+    /// The default: read the signal pages and the settings, and open telnet
+    /// and HEOS.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             signal_pages: true,
+            settings: true,
             #[cfg(feature = "heos")]
             heos: true,
             #[cfg(feature = "telnet")]
@@ -66,6 +74,16 @@ impl StartOptions {
     #[must_use]
     pub const fn signal_pages(mut self, on: bool) -> Self {
         self.signal_pages = on;
+        self
+    }
+
+    /// Reads the settings over `AppCommand0300.xml` when telnet is not
+    /// connected, see [`Avr::start_with`]. The default is on. It is only for
+    /// the start: [`Avr::refresh`] and the reads after commands over HTTP
+    /// still read these settings.
+    #[must_use]
+    pub const fn settings(mut self, on: bool) -> Self {
+        self.settings = on;
         self
     }
 
@@ -123,6 +141,13 @@ pub enum TelnetStart {
     /// The start was stopped before it finished, so this is not known. It
     /// happens only when the runtime shuts down.
     Unknown,
+}
+
+impl TelnetStart {
+    /// A telnet connection is open or being opened.
+    const fn is_open(&self) -> bool {
+        matches!(self, Self::Open | Self::AlreadyRunning)
+    }
 }
 
 /// What the start did with the HEOS connection.
@@ -189,7 +214,9 @@ pub enum InfoCheck {
     NotNeeded,
     /// The receiver gives the same values.
     Same,
-    /// The receiver gives other values. Connect again with them.
+    /// The receiver gives other values. Connect again with them, and store
+    /// them: values stored by an older version of this library can lack
+    /// queries that newer versions read.
     Changed(Box<Info>),
     /// The check failed. [`Error::Stopped`] if the start was stopped before
     /// the check ended.
@@ -263,6 +290,8 @@ pub struct Started {
     avr: Arc<Avr>,
     #[cfg(feature = "telnet")]
     telnet_wait: Duration,
+    /// Ends when the slow settings are read, or are not read.
+    slow_settings: Option<oneshot::Receiver<()>>,
 }
 
 impl Started {
@@ -282,8 +311,10 @@ impl Started {
     }
 
     /// Waits until the basic information is in the state: everything that the
-    /// start reads over HTTP, the zones and the pages. It does not wait for the
-    /// answers to the telnet queries, which can still be on their way:
+    /// start reads over HTTP, the zones and the pages. Without telnet, the
+    /// slow settings of `AppCommand0300.xml` are read after this ends. It does
+    /// not wait for the answers to the telnet queries, which can still be on
+    /// their way:
     /// [`Started::all_synced`] does. The report has [`TelnetSync::NotWaited`]
     /// until `all_synced` ends.
     ///
@@ -303,8 +334,10 @@ impl Started {
     }
 
     /// Waits as [`Started::basic_synced`] does, and then until the telnet
-    /// queries of the start are answered, as [`Avr::telnet_sync`] does. The
-    /// queries that were not answered are in
+    /// queries of the start are answered, as [`Avr::telnet_sync`] does.
+    /// Without telnet it waits for the slow settings of `AppCommand0300.xml`
+    /// instead, at most about as long as the HTTP timeout, longer while
+    /// commands are sent. The queries that were not answered are in
     /// [`StartReport::telnet_not_answered`]. It takes as long as the paced
     /// queries and the lists do, a few seconds, and ends with
     /// [`TelnetSync::NoAnswer`] after [`StartOptions::telnet_wait`].
@@ -318,10 +351,7 @@ impl Started {
     /// Panics if the task of the start panicked.
     pub async fn all_synced(&mut self) -> &StartReport {
         #[cfg_attr(not(feature = "telnet"), expect(unused_variables))]
-        let telnet_open = matches!(
-            self.basic_synced().await.telnet,
-            TelnetStart::Open | TelnetStart::AlreadyRunning
-        );
+        let telnet_open = self.basic_synced().await.telnet.is_open();
         if self
             .report
             .as_ref()
@@ -340,6 +370,11 @@ impl Started {
                 report.telnet_sync = sync;
                 report.telnet_not_answered = not_answered;
             }
+        }
+        if let Some(slow_settings) = &mut self.slow_settings {
+            // An error means that the slow settings were not read.
+            let _ = slow_settings.await;
+            self.slow_settings = None;
         }
         self.report.get_or_insert_with(stopped_report)
     }
@@ -402,6 +437,16 @@ impl Avr {
     /// from telnet arrive as events later. Calls that follow, for example commands,
     /// need not wait.
     ///
+    /// While telnet is not connected, also while it tries to connect again,
+    /// the start also reads the settings that telnet would give over
+    /// `AppCommand0300.xml`, for the queries that
+    /// [`Info::queries`](crate::Info::queries) lists, if it has version 2 of
+    /// `GetSurroundParameter`. The slow ones are read after
+    /// [`Started::basic_synced`] ends, and [`Started::all_synced`] waits for
+    /// them. Nothing is read if the signal request got no answer, and the
+    /// slow ones are not read if the fast ones failed. The result of these
+    /// reads is not in the report. [`StartOptions::settings`] turns them off.
+    ///
     /// # Errors
     ///
     /// The errors of [`Avr::update`]. Telnet is not opened then. A failure of
@@ -409,7 +454,8 @@ impl Avr {
     ///
     /// [`Error::StartRunning`] if another start of this receiver is still
     /// running, also in the background. Nothing is read then. A start after
-    /// a finished one reads again.
+    /// a finished one reads again. The read of the slow settings does not
+    /// count as running.
     ///
     /// If the future is dropped before it returns, for example by a timeout,
     /// no connection stays open.
@@ -438,11 +484,20 @@ impl Avr {
         } else {
             (None, None, Some(InfoCheck::NotNeeded))
         };
+        let (slow_sender, slow_settings) = oneshot::channel();
         Ok(Started {
             handle: tokio::spawn(async move {
-                let report = task.finish_reads(options, telnet, info_sender).await;
+                let (report, read_slow) = task.finish_reads(options, telnet, info_sender).await;
                 let report = StartReport { heos, ..report };
                 drop(running);
+                // The slow settings come after the report, so that waiting
+                // for it does not take longer.
+                if read_slow {
+                    tokio::spawn(async move {
+                        let _ = task.read_settings(SettingsPart::Slow).await;
+                        let _ = slow_sender.send(());
+                    });
+                }
                 report
             }),
             report: None,
@@ -452,6 +507,7 @@ impl Avr {
             avr,
             #[cfg(feature = "telnet")]
             telnet_wait,
+            slow_settings: Some(slow_settings),
         })
     }
 
@@ -507,13 +563,14 @@ impl Avr {
 
     /// The reads of the start. The report has [`HeosStart::Disabled`].
     /// `info_sender` is set for known values, which are checked first, so
-    /// that [`Started::info_check`] has the result soon.
+    /// that [`Started::info_check`] has the result soon. The flag is true if
+    /// the slow settings should be read.
     async fn finish_reads(
         &self,
         options: StartOptions,
         telnet: TelnetStart,
         info_sender: Option<oneshot::Sender<InfoCheck>>,
-    ) -> StartReport {
+    ) -> (StartReport, bool) {
         if let Some(sender) = info_sender {
             let check = match self.verify().await {
                 Ok(None) => InfoCheck::Same,
@@ -549,14 +606,27 @@ impl Avr {
         {
             self.ask_for_signal(&web_interface).await;
         }
-        StartReport {
+        // The read sends nothing while telnet is connected, also when this
+        // start was told not to open it. A telnet task that only tries to
+        // connect again gives nothing, so the settings are read then. If the
+        // signal requests got no answer (none was read, and one could not
+        // reach the same port), or the fast read failed, another read would
+        // most likely fail the same way.
+        let read_slow = options.settings
+            && signal != PageStatus::NoAnswer
+            && self
+                .read_settings(SettingsPart::Fast)
+                .await
+                .is_ok_and(|count| count > 0);
+        let report = StartReport {
             telnet,
             telnet_sync: TelnetSync::NotWaited,
             telnet_not_answered: Vec::new(),
             heos: HeosStart::Disabled,
             signal,
             web_interface,
-        }
+        };
+        (report, read_slow)
     }
 
     /// Asks on telnet for the signal values that the pages did not give, and
@@ -682,7 +752,7 @@ impl Avr {
     /// can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
-        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+        if self.telnet_connected() {
             // The group asks BT.2020 last, so that its answer comes after the
             // video values.
             match self.telnet.refresh_group(QueryGroup::Signal).await {

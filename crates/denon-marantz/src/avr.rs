@@ -6,12 +6,10 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use denon_marantz_proto::appcommand::{
-    self, Cmd, Definition, Endpoint, Field, Response, write_body,
+    self, Cmd, Definition, Endpoint, Field, Response, SettingsPart, write_body,
 };
 use denon_marantz_proto::status_page::{self, Page};
-use denon_marantz_proto::telnet::Command;
-#[cfg(feature = "telnet")]
-use denon_marantz_proto::telnet::QueryGroup;
+use denon_marantz_proto::telnet::{Command, Message, QueryGroup};
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
     DeviceDescription, DeviceFeatures, DeviceRanges, GeneralPage, GroupAvailability,
@@ -97,6 +95,65 @@ const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
 
 // `Avr::update_signal_and_settings` keeps one bit for each command in a `u8`.
 const _: () = assert!(APPCOMMAND0300_COMMANDS.len() <= 8);
+
+/// The body of the settings request for `part`, with its number of commands.
+/// `None` if there is nothing to ask.
+fn settings_request(info: &Info, part: SettingsPart) -> Option<(Bytes, usize)> {
+    // `Missing::appcommand0300` is not checked: it is also set when no
+    // signal query is listed. A receiver that lists a settings query has the
+    // file.
+    let listed = info.queries?;
+    if info.update_method != UpdateMethod::AppCommand {
+        return None;
+    }
+    let zones = u8::try_from(info.zones.len()).unwrap_or(u8::MAX);
+    let mut body = Vec::new();
+    match appcommand::write_settings_request(&listed, zones, info.features, part, &mut body) {
+        Ok(count @ 1..) => Some((body.into(), count)),
+        _ => None,
+    }
+}
+
+/// Sends a settings request of `count` commands and puts the answer into the
+/// state. Telnet can open while the request runs. Then it asks for its
+/// `groups` itself, and its answers are newer: values of these groups are left
+/// out, and `forget` is called after the answer was read.
+async fn read_settings_request(
+    http: &HttpClient,
+    channels: &Channels,
+    (body, count): (Bytes, usize),
+    brand: Brand,
+    groups: &[QueryGroup],
+    telnet_open: impl FnOnce() -> bool,
+    forget: impl FnOnce(),
+) -> Result<(), Error> {
+    let mut opened = false;
+    http.post_parsed(Endpoint::AppCommand0300.path(), body, |body| {
+        opened = telnet_open();
+        // A busy receiver can leave items out.
+        let response = Response::parse_at_most(body, count)?;
+        channels.modify(|state, notify| {
+            appcommand::settings_lines(&response, |line, query| {
+                if opened
+                    && query
+                        .group(brand)
+                        .is_some_and(|group| groups.contains(&group))
+                {
+                    return;
+                }
+                if let Some(message) = Message::parse(line) {
+                    notify(state.apply_message(&message));
+                }
+            });
+        });
+        Ok(())
+    })
+    .await?;
+    if opened {
+        forget();
+    }
+    Ok(())
+}
 
 /// The queries of [`APPCOMMAND0300_COMMANDS`] that the receiver answers. A
 /// receiver can fail the whole request for a query that it does not know.
@@ -215,7 +272,10 @@ pub struct Info {
     pub hdmi_output_over_http: bool,
     /// The `AppCommand` queries that `Deviceinfo.xml` lists. `None` if it has
     /// no list, as on receivers older than about 2015: then the library asks
-    /// as if all but the HDMI output were there.
+    /// as if all but the HDMI output were there, but does not read the
+    /// settings of `AppCommand0300.xml`. These are also not read when the
+    /// list does not have version 2 of `GetSurroundParameter`
+    /// ([`ListedQueries::surround_parameter`]).
     pub queries: Option<ListedQueries>,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
     /// receiver has.
@@ -499,7 +559,8 @@ impl Avr {
     /// over HTTP only what telnet does not report: the names of the zones, and
     /// the dimmer, eco and auto standby if `TelnetConfig::query_groups` has
     /// no `Device` group. If telnet is not open, it does what [`Avr::update`]
-    /// does.
+    /// does, and then reads the settings over `AppCommand0300.xml` that the
+    /// start reads without telnet.
     ///
     /// Values from telnet arrive as events after the call returns. With
     /// telnet open both are tried, and the first error is returned. Use
@@ -510,14 +571,28 @@ impl Avr {
     /// # Errors
     ///
     /// The errors of [`Avr::update`] or, if telnet is open, of
-    /// `Avr::telnet_refresh` and of the read of the zone names.
+    /// `Avr::telnet_refresh` and of the read of the zone names. If
+    /// [`Avr::update`] fails, the settings are not read. If the fast part of
+    /// the settings fails, the slow part is not read. Of the settings, only
+    /// a timeout or a network error is returned; other errors are only
+    /// logged.
     pub async fn refresh(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
-        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+        if self.telnet_connected() {
             let http = self.update_http_only().await;
             return http.and(self.telnet_refresh().await);
         }
-        self.update().await
+        self.update().await?;
+        // Only a receiver that does not answer counts as an error: a refused
+        // settings query must not make each refresh fail.
+        let settings = match self.read_settings(SettingsPart::Fast).await {
+            Ok(_) => self.read_settings(SettingsPart::Slow).await,
+            error => error,
+        };
+        match settings {
+            Err(error) if error.is_unreachable() => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Reads the speaker distances, the crossovers, the channel levels, the
@@ -863,7 +938,7 @@ impl Avr {
     /// The errors of the way that was used.
     pub async fn refresh_now_playing(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
-        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+        if self.telnet_connected() {
             return self.telnet_refresh_now_playing().await;
         }
         self.update_now_playing().await.map(|_| ())
@@ -1158,7 +1233,7 @@ impl Avr {
     /// connected.
     pub async fn send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
-        if *self.telnet.watch_status().borrow() == TelnetStatus::Connected {
+        if self.telnet_connected() {
             return self.telnet_send(zone, command).await;
         }
         self.http_send(zone, command).await
@@ -1175,8 +1250,12 @@ impl Avr {
     /// answer does not say if the receiver did the command, as on telnet. The
     /// receiver does not send events over HTTP, so a command that changes a
     /// value of [`Avr::update`] makes a read of these values later, see
-    /// [`AvrBuilder::follow_up_read`]. The values of other settings change
-    /// when they are read.
+    /// [`AvrBuilder::follow_up_read`]. So does a command for one of the
+    /// settings that the start reads over `AppCommand0300.xml`. A sound mode
+    /// command reads the fast ones of these settings again, and a source
+    /// command or a quick select of the main zone all of them. The settings
+    /// reads are skipped while telnet is open. The values of other settings
+    /// change when they are read.
     ///
     /// # Errors
     ///
@@ -1195,8 +1274,17 @@ impl Avr {
             let _turn = self.priority.command().await;
             self.http.command(&command::http_path(&line)).await?;
         }
-        if let (Some(follow_up), Some(reads)) = (&self.follow_up, Reads::after(zone, &command)) {
-            follow_up.note(reads);
+        if let Some(follow_up) = &self.follow_up {
+            if let Some(reads) = Reads::after(zone, &command) {
+                follow_up.note(reads);
+            }
+            for part in appcommand::settings_parts_of_command(&line) {
+                follow_up.note(if *part == SettingsPart::Fast {
+                    Reads::Settings
+                } else {
+                    Reads::SlowSettings
+                });
+            }
         }
         Ok(())
     }
@@ -1525,10 +1613,7 @@ impl Avr {
         }
         // Telnet reports the Audyssey values and the HDMI output, so a blank
         // one must not clear them.
-        #[cfg(feature = "telnet")]
-        let telnet_open = *self.telnet.watch_status().borrow() == TelnetStatus::Connected;
-        #[cfg(not(feature = "telnet"))]
-        let telnet_open = false;
+        let telnet_open = self.telnet_connected();
         let result = self
             .http
             .post_parsed(Endpoint::AppCommand0300.path(), body.clone(), |body| {
@@ -1601,6 +1686,56 @@ impl Avr {
                 Ok((status, false))
             }
         }
+    }
+
+    /// Reads the settings of `part` from `AppCommand0300.xml`, the queries
+    /// that `Deviceinfo.xml` lists. Telnet gives the same values, so nothing
+    /// is sent while telnet is connected. A value that the answer leaves
+    /// blank does not clear what the state has. Returns the number of
+    /// commands that were sent, `0` if nothing was sent.
+    async fn read_settings(&self, part: SettingsPart) -> Result<usize, Error> {
+        if self.telnet_connected() {
+            return Ok(0);
+        }
+        let Some(request) = settings_request(&self.info, part) else {
+            return Ok(0);
+        };
+        let count = request.1;
+        let result = read_settings_request(
+            &self.http,
+            &self.channels,
+            request,
+            self.info.brand,
+            self.telnet_groups(),
+            || self.telnet_connected(),
+            || self.forget_telnet_values(&Ok(PageStatus::Read)),
+        )
+        .await;
+        if let Err(error) = &result {
+            tracing::debug!(host = %self.info.host, ?part, %error, "settings not read");
+        }
+        result.map(|()| count)
+    }
+
+    /// The groups that telnet asks for after a connect. None without telnet.
+    #[cfg_attr(not(feature = "telnet"), allow(clippy::unused_self))]
+    const fn telnet_groups(&self) -> &'static [QueryGroup] {
+        #[cfg(feature = "telnet")]
+        return self.telnet.query_groups();
+        #[cfg(not(feature = "telnet"))]
+        &[]
+    }
+
+    /// Returns true if telnet is connected now.
+    #[cfg_attr(
+        not(feature = "telnet"),
+        allow(clippy::missing_const_for_fn, clippy::unused_self)
+    )]
+    fn telnet_connected(&self) -> bool {
+        #[cfg(feature = "telnet")]
+        return self.telnet.is_connected();
+        #[cfg(not(feature = "telnet"))]
+        false
     }
 
     /// Reads only what telnet does not report: the names of the zones, and the
@@ -1959,7 +2094,7 @@ impl AvrBuilder {
             &missing,
             &appcommand0300_commands,
             #[cfg(feature = "telnet")]
-            telnet.watch_status(),
+            &telnet,
         )?;
         #[cfg(feature = "heos")]
         let heos = HeosOwner::new(HeosLink::new(

@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply,
-    avr_x_receiver_with_pages, bodies_after, builder, config, friendly_name_answer,
+    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, Fake, Reply,
+    avr_x_receiver_with_pages, bodies_after, builder, config, contains, friendly_name_answer,
     is_friendly_name_request, output_settings_item, quick_follow_up, update_answer_for, wait_until,
 };
-use denon_marantz::proto::{HdmiOutput, TUNER_STATUS_PATH, TunerCommand};
+use denon_marantz::proto::{HdmiOutput, SoundSettingValue, TUNER_STATUS_PATH, TunerCommand};
 use denon_marantz::{
     Avr, Command, Error, FollowUpRead, HttpConfig, Pacing, ReceiverType, Volume, Zone,
 };
@@ -125,6 +125,111 @@ async fn a_refused_command_is_an_error() {
         .await
         .unwrap_err();
     assert!(error.is_status(), "{error}");
+}
+
+/// The answers to the settings commands of
+/// [`a_settings_command_reads_its_part_of_the_settings`] and
+/// [`settings_reads_after`].
+const SETTINGS_PAGES: &[(&str, &[u8])] = &[
+    ("/goform/formiPhoneAppDirect.xml?PSCINEMA%20EQ.OFF", b""),
+    ("/goform/formiPhoneAppDirect.xml?PSDELAY%20100", b""),
+    ("/goform/formiPhoneAppDirect.xml?MSMOVIE", b""),
+    ("/goform/formiPhoneAppDirect.xml?SIGAME", b""),
+    ("/goform/formiPhoneAppDirect.xml?Z2GAME", b""),
+];
+
+#[tokio::test]
+async fn a_settings_command_reads_its_part_of_the_settings() {
+    let fake = avr_x_receiver_with_pages(AVR_X_SETTINGS_INFO, SETTINGS_PAGES).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    let settings_after = |known| {
+        bodies_after(&fake, known, |seen| {
+            seen.path == "/goform/AppCommand0300.xml"
+                && (contains(&seen.body, "GetBTTX") || contains(&seen.body, "GetRestorerMode"))
+        })
+    };
+    let known = fake.requests().len();
+    avr.http_send(
+        Zone::Main,
+        Command::SetSoundSetting(SoundSettingValue::CinemaEq(false)),
+    )
+    .await
+    .unwrap();
+    wait_until("the fast settings", || !settings_after(known).is_empty()).await;
+    let bodies = settings_after(known);
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    assert!(bodies[0].contains("GetBTTX"), "{}", bodies[0]);
+    // The fake receiver still answers cinema EQ on.
+    wait_until("the value", || {
+        avr.snapshot().device().sound_settings.cinema_eq == Some(true)
+    })
+    .await;
+    let known = fake.requests().len();
+    avr.http_send(
+        Zone::Main,
+        Command::SetSoundSetting(SoundSettingValue::AudioDelay(100)),
+    )
+    .await
+    .unwrap();
+    wait_until("the slow settings", || !settings_after(known).is_empty()).await;
+    let bodies = settings_after(known);
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    assert!(bodies[0].contains("GetRestorerMode"), "{}", bodies[0]);
+}
+
+/// Sends `command` to `zone` and checks the number of fast and slow
+/// settings reads that follow. The fake receiver keeps its sound mode and
+/// source, so the value that `marker` reads is read again once.
+async fn settings_reads_after(
+    zone: Zone,
+    command: Command<'_>,
+    marker: &str,
+    (fast, slow): (usize, usize),
+) {
+    let fake = avr_x_receiver_with_pages(AVR_X_SETTINGS_INFO, SETTINGS_PAGES).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    avr.update().await.unwrap();
+    let known = fake.requests().len();
+    avr.http_send(zone, command).await.unwrap();
+    let count = |path: &str, text: &str| {
+        bodies_after(&fake, known, |seen| {
+            seen.path == path && contains(&seen.body, text)
+        })
+        .len()
+    };
+    let counts = || {
+        (
+            count("/goform/AppCommand.xml", marker),
+            count("/goform/AppCommand0300.xml", "GetBTTX"),
+            count("/goform/AppCommand0300.xml", "GetRestorerMode"),
+        )
+    };
+    wait_until("the reads", || {
+        let (reads, fast_now, slow_now) = counts();
+        reads >= 2 && fast_now >= fast && slow_now >= slow
+    })
+    .await;
+    // No more reads come.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert_eq!(counts(), (2, fast, slow));
+}
+
+#[tokio::test]
+async fn a_sound_mode_command_reads_the_fast_settings_again_with_the_sound_mode() {
+    let command = Command::SelectSoundMode("MOVIE");
+    settings_reads_after(Zone::Main, command, "GetSurroundModeStatus", (2, 0)).await;
+}
+
+#[tokio::test]
+async fn a_source_command_reads_all_settings_and_the_fast_ones_again_with_the_source() {
+    let command = Command::SelectSource("GAME");
+    settings_reads_after(Zone::Main, command, "GetAllZoneSource", (2, 1)).await;
+}
+
+#[tokio::test]
+async fn a_source_command_of_zone_2_does_not_read_the_settings() {
+    let command = Command::SelectSource("GAME");
+    settings_reads_after(Zone::Zone2, command, "GetAllZoneSource", (0, 0)).await;
 }
 
 #[tokio::test]
@@ -459,9 +564,7 @@ async fn a_failed_tone_read_of_an_older_receiver_is_not_sent_again() {
         ("POST", _) if is_friendly_name_request(&seen.body) => {
             Reply::Body(friendly_name_answer("X"))
         }
-        ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
-            Reply::Status(500)
-        }
+        ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
         _ => Reply::Status(404),
     })
     .await;

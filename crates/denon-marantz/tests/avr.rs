@@ -6,10 +6,10 @@ mod common;
 
 use common::{
     AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER,
-    appcommand0300_answer, appcommand0300_item, avr_x_receiver, avr_x_receiver_with_info, builder,
-    config, friendly_name_answer, is_friendly_name_request, output_settings_item,
-    receiver_with_audyssey, receiver_with_info_and_signal_answers, receiver_with_signal_answers,
-    web_interface_with_pages,
+    appcommand0300_answer, appcommand0300_item, appcommand0300_requests, avr_x_receiver,
+    avr_x_receiver_with_info, builder, config, contains, friendly_name_answer,
+    is_friendly_name_request, output_settings_item, receiver_with_audyssey,
+    receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, ListedQueries, PageStatus, TypeProof, UpdateMethod};
 use denon_marantz_proto::{
@@ -1147,15 +1147,6 @@ async fn an_error_item_keeps_the_channels_that_the_state_has() {
     assert_eq!(signal.channels.output.unwrap().to_string(), "2.1.1");
 }
 
-/// The bodies of the requests to `AppCommand0300.xml`.
-fn signal_requests(fake: &Fake) -> Vec<String> {
-    fake.requests()
-        .into_iter()
-        .filter(|seen| seen.path == "/goform/AppCommand0300.xml")
-        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
-        .collect()
-}
-
 #[tokio::test]
 async fn a_receiver_without_the_output_settings_is_not_asked_for_them() {
     let answer: &'static str = Box::leak(appcommand0300_answer("").into_boxed_str());
@@ -1167,7 +1158,7 @@ async fn a_receiver_without_the_output_settings_is_not_asked_for_them() {
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
-    let bodies = signal_requests(&fake);
+    let bodies = appcommand0300_requests(&fake);
     assert!(
         bodies
             .iter()
@@ -1331,9 +1322,7 @@ async fn receiver_with_info_that_refuses_tone_control(info: &'static [u8]) -> Fa
             ("POST", _) if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("X"))
             }
-            ("POST", _) if String::from_utf8_lossy(&seen.body).contains("GetToneControl") => {
-                Reply::Status(500)
-            }
+            ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
             ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
             _ => Reply::Status(404),
         },
@@ -1391,7 +1380,7 @@ async fn only_the_listed_signal_queries_are_sent() {
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::Read
     );
-    let bodies = signal_requests(&fake);
+    let bodies = appcommand0300_requests(&fake);
     assert_eq!(bodies.len(), 1);
     assert!(bodies[0].contains("GetAudioInfo"), "{}", bodies[0]);
     for query in [
@@ -1419,7 +1408,7 @@ async fn a_receiver_that_lists_no_signal_query_is_not_asked() {
         avr.update_signal_and_settings().await.unwrap(),
         PageStatus::NotFound
     );
-    assert_eq!(signal_requests(&fake).len(), 0);
+    assert_eq!(appcommand0300_requests(&fake).len(), 0);
 }
 
 #[tokio::test]

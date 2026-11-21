@@ -3,7 +3,9 @@
 use std::fmt::Write as _;
 
 use denon_marantz_proto::telnet::Command;
-use denon_marantz_proto::{Brand, DeviceRanges, Setting, TunerCommand, VideoSettingValue, Zone};
+use denon_marantz_proto::{
+    Brand, DeviceRanges, Setting, TunerCommand, VideoSettingValue, Zone, ZoneSettingValue,
+};
 
 use crate::error::Error;
 
@@ -72,6 +74,10 @@ pub(crate) enum Reads {
     Tuner,
     /// The HDMI output.
     HdmiOutput,
+    /// The fast part of the settings of `AppCommand0300.xml`.
+    Settings,
+    /// The slow part of the settings of `AppCommand0300.xml`.
+    SlowSettings,
 }
 
 impl Reads {
@@ -86,7 +92,9 @@ impl Reads {
             Command::VolumeUp | Command::VolumeDown | Command::SetVolume(_) | Command::Mute(_) => {
                 Some(Self::Volume)
             }
-            Command::SelectSource(_) => Some(Self::Source),
+            // A quick select changes the source.
+            Command::SelectSource(_)
+            | Command::SetZoneSetting(ZoneSettingValue::QuickSelect(_)) => Some(Self::Source),
             Command::SelectSoundMode(_) => Some(Self::SoundMode),
             Command::SetDeviceSetting(_) => Some(Self::Device),
             // The reads of tone control and Audyssey have the main zone only.
@@ -185,6 +193,16 @@ mod tests {
         assert_eq!(main(Command::Mute(true)), Some(Reads::Volume));
         assert_eq!(main(Command::SelectSource("GAME")), Some(Reads::Source));
         assert_eq!(
+            main(Command::SetZoneSetting(ZoneSettingValue::QuickSelect(1))),
+            Some(Reads::Source)
+        );
+        assert_eq!(
+            main(Command::SetZoneSetting(ZoneSettingValue::StoreQuickSelect(
+                1
+            ))),
+            None
+        );
+        assert_eq!(
             main(Command::SelectSoundMode("MOVIE")),
             Some(Reads::SoundMode)
         );
@@ -228,10 +246,12 @@ mod tests {
             Reads::Audyssey,
             Reads::Tuner,
             Reads::HdmiOutput,
+            Reads::Settings,
+            Reads::SlowSettings,
         ]
         .iter()
         .map(|reads| reads.bit())
         .collect();
-        assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256]);
+        assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]);
     }
 }

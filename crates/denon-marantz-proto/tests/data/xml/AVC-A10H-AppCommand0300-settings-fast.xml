@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rx>
+<cmd>
+<name>GetSurroundParameter</name>
+<list>
+<param name="auro3dmode" control="0"></param>
+<param name="auro3dpre" control="0"></param>
+<param name="auro3dstr" control="0"></param>
+<param name="centerimage" control="0"></param>
+<param name="centerwidth" control="0"></param>
+<param name="chexpander" control="0"></param>
+<param name="cinemaeq" control="2">1</param>
+<param name="cspread" control="0"></param>
+<param name="default" control="2">1</param>
+<param name="delaytime" control="0"></param>
+<param name="dialogcontrol" control="0"></param>
+<param name="dimension" control="0"></param>
+<param name="dtsneux" control="0"></param>
+<param name="dyncomp" control="1">0</param>
+<param name="effectlev" control="0"></param>
+<param name="imax" control="0"></param>
+</list>
+</cmd>
+<cmd>
+<name>GetSurroundParameter</name>
+<list>
+<param name="imaxaud" control="0"></param>
+<param name="imaxhpf" control="0"></param>
+<param name="imaxlpf" control="0"></param>
+<param name="imaxswm" control="0"></param>
+<param name="imaxswo" control="0"></param>
+<param name="lfe" control="2">0</param>
+<param name="loudness" control="2">0</param>
+<param name="panorama" control="0"></param>
+<param name="roomsize" control="0"></param>
+<param name="spsel" control="0"></param>
+<param name="spvirtual" control="0"></param>
+<param name="sw" control="0"></param>
+</list>
+</cmd>
+<cmd>
+<name>GetBTTX</name>
+<list>
+<param name="output" control="1">2</param>
+</list>
+</cmd>
+<cmd>
+<name>GetEQSetting</name>
+<list>
+<param name="eqenable" control="0"></param>
+<param name="speakerselection" control="0"></param>
+</list>
+</cmd>
+<cmd>
+<name>GetBassSync</name>
+<list>
+<param name="basssync" control="2">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetSoundMode</name>
+<list>
+<param name="movie" control="2">1</param>
+<param name="music" control="2">0</param>
+<param name="game" control="2">0</param>
+<param name="pure" control="2">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetHdmiSetup</name>
+<list>
+<param name="audioout" control="2">1</param>
+</list>
+</cmd>
+<cmd>
+<name>GetInputSelect</name>
+<list>
+<param name="inputmode" control="1">2</param>
+</list>
+</cmd>
+<cmd>
+<name>GetBassTreble</name>
+<list>
+<param name="z2bass" control="2">0</param>
+<param name="z2treble" control="2">0</param>
+<param name="z3bass" control="2">0</param>
+<param name="z3treble" control="2">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetLRchLevel</name>
+<list>
+<param name="z2lchlevel" control="2">0</param>
+<param name="z2rchlevel" control="2">0</param>
+<param name="z3lchlevel" control="2">0</param>
+<param name="z3rchlevel" control="2">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetMenuLock</name>
+<list>
+<param name="lock" control="2">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetHideSources</name>
+<list>
+<param name="CBL/SAT" control="2">0</param>
+<param name="Media Player" control="1">2</param>
+<param name="Blu-ray" control="2">1</param>
+<param name="GAME1" control="2">1</param>
+<param name="GAME2" control="2">1</param>
+<param name="AUX1" control="2">0</param>
+<param name="AUX2" control="2">1</param>
+<param name="TV AUDIO" control="2">0</param>
+<param name="CD" control="2">0</param>
+<param name="PHONO" control="2">0</param>
+<param name="TUNER" control="2">0</param>
+</list>
+</cmd>
+</rx>

@@ -2,26 +2,30 @@
 //! gets no answer, so the state does not change by itself.
 
 use std::sync::Arc;
+#[cfg(feature = "telnet")]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use bytes::Bytes;
-use denon_marantz_proto::appcommand::{self, Definition, Endpoint};
-use denon_marantz_proto::{PlayingKind, TUNER_STATUS_PATH, TunerPage, Zone};
+use denon_marantz_proto::appcommand::{self, Definition, Endpoint, SettingsPart};
+use denon_marantz_proto::telnet::QueryGroup;
+use denon_marantz_proto::{Brand, PlayingKind, TUNER_STATUS_PATH, TunerPage, Zone};
 #[cfg(feature = "telnet")]
 use tokio::sync::watch;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use super::{
-    Info, Missing, UpdateMethod, definitions_body, playing_kind, read_appcommand, read_status_pages,
+    Info, Missing, UpdateMethod, definitions_body, playing_kind, read_appcommand,
+    read_settings_request, read_status_pages, settings_request,
 };
 use crate::channels::Channels;
 use crate::command::{ReadBits, Reads};
 use crate::error::Error;
 use crate::http::HttpClient;
 #[cfg(feature = "telnet")]
-use crate::telnet::TelnetStatus;
+use crate::telnet::{Telnet, TelnetStatus};
 
 /// When the values that a command over HTTP changed are read.
 ///
@@ -96,9 +100,18 @@ struct Reader {
     audyssey: bool,
     /// The receiver gets `GetOutputSettings`, see `appcommand0300_commands`.
     hdmi_output: bool,
+    /// The settings requests, with their number of commands, for
+    /// [`Reads::Settings`] and [`Reads::SlowSettings`].
+    settings: [(Reads, Option<(Bytes, usize)>); 2],
     missing: Arc<Missing>,
     #[cfg(feature = "telnet")]
     telnet: watch::Receiver<TelnetStatus>,
+    brand: Brand,
+    /// The groups that telnet asks for after a connect. None without telnet.
+    telnet_groups: &'static [QueryGroup],
+    /// The flag of `Telnet::forget_values`.
+    #[cfg(feature = "telnet")]
+    forget: Arc<AtomicBool>,
 }
 
 impl Reader {
@@ -110,9 +123,20 @@ impl Reader {
     )]
     fn telnet_open(&self) -> bool {
         #[cfg(feature = "telnet")]
-        return *self.telnet.borrow() == TelnetStatus::Connected;
+        return self.telnet.borrow().is_connected();
         #[cfg(not(feature = "telnet"))]
         false
+    }
+
+    /// After a read set values while telnet was open, the next telnet event
+    /// with the old value is a real change.
+    #[cfg_attr(
+        not(feature = "telnet"),
+        allow(clippy::missing_const_for_fn, clippy::unused_self)
+    )]
+    fn forget_telnet_values(&self) {
+        #[cfg(feature = "telnet")]
+        self.forget.store(true, Ordering::Relaxed);
     }
 }
 
@@ -174,7 +198,7 @@ impl FollowUp {
         info: &Info,
         missing: &Arc<Missing>,
         appcommand0300: &[Definition],
-        #[cfg(feature = "telnet")] telnet: watch::Receiver<TelnetStatus>,
+        #[cfg(feature = "telnet")] telnet: &Telnet,
     ) -> Result<Option<Self>, Error> {
         let Some(config) = config else {
             return Ok(None);
@@ -188,9 +212,23 @@ impl FollowUp {
             method: info.update_method,
             audyssey: appcommand0300.contains(&appcommand::GET_AUDYSSEY),
             hdmi_output: appcommand0300.contains(&appcommand::GET_OUTPUT_SETTINGS),
+            settings: [
+                (Reads::Settings, settings_request(info, SettingsPart::Fast)),
+                (
+                    Reads::SlowSettings,
+                    settings_request(info, SettingsPart::Slow),
+                ),
+            ],
             missing: Arc::clone(missing),
             #[cfg(feature = "telnet")]
-            telnet,
+            telnet: telnet.watch_status(),
+            brand: info.brand,
+            #[cfg(feature = "telnet")]
+            telnet_groups: telnet.query_groups(),
+            #[cfg(not(feature = "telnet"))]
+            telnet_groups: &[],
+            #[cfg(feature = "telnet")]
+            forget: telnet.forget_flag(),
         };
         Self::spawn(config, reader).map(Some)
     }
@@ -242,6 +280,11 @@ impl FollowUp {
 struct Retry {
     at: Instant,
     wanted: ReadBits,
+    /// Read again with `wanted`, but not looked for: the fast settings, if a
+    /// sound mode or source command of the main zone asked for them. The
+    /// receiver shows the settings of a new sound mode late too, and it keeps
+    /// a sound mode for each source. A settings read never counts as seen.
+    also: ReadBits,
     left: u8,
 }
 
@@ -257,12 +300,13 @@ async fn run(
             if let Ok(bits) = timeout_at(next.at, queue.recv()).await {
                 bits
             } else {
-                let (wanted, left) = (next.wanted, next.left - 1);
+                let (wanted, also, left) = (next.wanted, next.also, next.left - 1);
                 tracing::debug!(wanted, "read again over HTTP");
-                let unseen = read_until_seen(&reader, &requests, wanted).await;
+                let unseen = read_until_seen(&reader, &requests, wanted | also).await & wanted;
                 retry = (unseen != 0 && left > 0).then(|| Retry {
                     at: Instant::now() + config.retry_every,
                     wanted: unseen,
+                    also,
                     left,
                 });
                 continue;
@@ -289,12 +333,26 @@ async fn run(
         }
         tracing::debug!(wanted, "read after commands over HTTP");
         let unseen = read_until_seen(&reader, &requests, wanted).await;
-        let pending = pending_after(retry.as_ref().map_or(0, |next| next.wanted), wanted, unseen);
+        let (old, old_also) = retry
+            .as_ref()
+            .map_or((0, 0), |next| (next.wanted, next.also));
+        let pending = pending_after(old, wanted, unseen);
         retry = (pending != 0 && config.retries > 0).then(|| Retry {
             at: Instant::now() + config.retry_every,
             wanted: pending,
+            also: old_also | late_settings(wanted),
             left: config.retries,
         });
+    }
+}
+
+/// The fast settings in `wanted`, if it also has the sound mode or the source.
+/// A settings command alone does not make them read again.
+const fn late_settings(wanted: ReadBits) -> ReadBits {
+    if wanted & (Reads::SoundMode.bit() | Reads::Source.bit()) == 0 {
+        0
+    } else {
+        wanted & Reads::Settings.bit()
     }
 }
 
@@ -331,7 +389,9 @@ async fn read(reader: &Reader, requests: &[Request], wanted: ReadBits) -> Result
         let not_on_pages = Reads::Tone.bit()
             | Reads::Audyssey.bit()
             | Reads::Tuner.bit()
-            | Reads::HdmiOutput.bit();
+            | Reads::HdmiOutput.bit()
+            | Reads::Settings.bit()
+            | Reads::SlowSettings.bit();
         if wanted & !not_on_pages != 0 {
             result = read_status_pages(&reader.http, &reader.channels, &reader.zones).await;
         }
@@ -353,6 +413,30 @@ async fn read(reader: &Reader, requests: &[Request], wanted: ReadBits) -> Result
                 note_missing(&reader.missing, request.reads, error);
             }
             result = result.and(read);
+        }
+        // Telnet reports these settings itself. A failed read of them is
+        // only logged, so that it does not make the other values count as
+        // not seen.
+        for (reads, request) in &reader.settings {
+            let Some((body, count)) = request else {
+                continue;
+            };
+            if wanted & reads.bit() == 0 || reader.telnet_open() {
+                continue;
+            }
+            let read = read_settings_request(
+                &reader.http,
+                &reader.channels,
+                (body.clone(), *count),
+                reader.brand,
+                reader.telnet_groups,
+                || reader.telnet_open(),
+                || reader.forget_telnet_values(),
+            )
+            .await;
+            if let Err(error) = read {
+                tracing::debug!(%error, "the settings after a command were not read");
+            }
         }
     }
     // A receiver without the page must not make the other values count as
@@ -416,5 +500,15 @@ mod tests {
         // A value that is not late is never looked for again.
         assert_eq!(pending_after(0, volume, volume), 0);
         assert_eq!(pending_after(0, volume | source, volume | source), source);
+    }
+
+    #[test]
+    fn settings_are_read_again_only_with_a_sound_mode_or_source() {
+        let settings = Reads::Settings.bit();
+        let sound_mode = Reads::SoundMode.bit();
+        assert_eq!(late_settings(sound_mode | settings), settings);
+        assert_eq!(late_settings(Reads::Source.bit() | settings), settings);
+        assert_eq!(late_settings(Reads::Power.bit() | settings), 0);
+        assert_eq!(late_settings(sound_mode), 0);
     }
 }

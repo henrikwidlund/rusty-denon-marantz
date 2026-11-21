@@ -10,7 +10,7 @@ use common::{read_bytes, read_data, unescape};
 use std::collections::BTreeMap;
 
 use denon_marantz_proto::appcommand::{self as ac, Definition, Response};
-use denon_marantz_proto::telnet::state_queries;
+use denon_marantz_proto::telnet::{Message, state_queries};
 use denon_marantz_proto::{
     Brand, DeviceDescription, DeviceFeature, DeviceInfo, Error, HdmiOutput, ListedQueries,
     NowPlaying, State, TunerBand, TunerInfo, TunerPage, ValueRange, Zone, is_old_model_page,
@@ -266,18 +266,58 @@ fn device_info_lists_the_queries() {
     all.input_signal = true;
     all.active_speaker = true;
     all.output_settings = true;
-    let mut without_output = all;
-    without_output.output_settings = false;
+    // Settings queries of 2016 and newer models.
+    let mut x4300h = all;
+    x4300h.restorer = true;
+    x4300h.hdmi_setup = true;
+    x4300h.graphic_eq = true;
+    x4300h.surround_parameter = true;
+    x4300h.audio_delay = true;
+    x4300h.input_select = true;
+    x4300h.zone_tone = true;
+    x4300h.zone_channel_levels = true;
+    x4300h.bass_sync = true;
+    x4300h.sound_mode_category = true;
+    let mut no_bass_sync = x4300h;
+    no_bass_sync.bass_sync = false;
+    let mut avc8500h = x4300h;
+    avc8500h.dialog_enhancer = true;
+    let mut x3700h = no_bass_sync;
+    x3700h.bluetooth_transmitter = true;
+    x3700h.speaker_preset = true;
+    // Zone 2 only, with channel levels but no tone.
+    let mut nr1609 = no_bass_sync;
+    nr1609.zone_tone = false;
+    let mut a10h = x4300h;
+    a10h.bluetooth_transmitter = true;
+    a10h.dialog_enhancer = true;
+    a10h.speaker_preset = true;
+    // Older models list version 1 of `GetSurroundParameter`, `GetHdmiSetup`
+    // and `GetAudioDelay`, whose parameters are not known.
+    let mut older = all;
+    older.output_settings = false;
+    older.restorer = true;
+    older.graphic_eq = true;
+    older.zone_tone = true;
+    older.zone_channel_levels = true;
+    older.sound_mode_category = true;
+    let mut no_zone_tone = older;
+    no_zone_tone.zone_tone = false;
     // A stereo receiver lists its tone control under the zone only.
     let mut stereo = ListedQueries::default();
     stereo.tone_control = true;
     stereo.audio_info = true;
     for (name, expected) in [
-        ("AVC-A10H-Deviceinfo-8080.xml", Some(all)),
-        ("AVR-X4300H-Deviceinfo-8080.xml", Some(all)),
-        ("SR6011-Deviceinfo.xml", Some(all)),
-        ("AVR-X4100W-Deviceinfo.xml", Some(without_output)),
-        ("AVR-X2100W-2-Deviceinfo.xml", Some(without_output)),
+        ("AVC-A10H-Deviceinfo-8080.xml", Some(a10h)),
+        ("AVR-X4300H-Deviceinfo-8080.xml", Some(x4300h)),
+        ("SR6011-Deviceinfo.xml", Some(no_bass_sync)),
+        ("SR6012-Deviceinfo-8080.xml", Some(no_bass_sync)),
+        ("AV7703-Deviceinfo-8080.xml", Some(no_bass_sync)),
+        ("AVC-8500H-Deviceinfo-8080.xml", Some(avc8500h)),
+        ("AVC-X3700H-Deviceinfo-8080.xml", Some(x3700h)),
+        ("NR1609-Deviceinfo-8080.xml", Some(nr1609)),
+        ("AVR-X4100W-Deviceinfo.xml", Some(older)),
+        ("AVR-X2100W-2-Deviceinfo.xml", Some(no_zone_tone)),
         ("DRA-N4-Deviceinfo.xml", Some(stereo)),
         // Has `DeviceCapabilities`, but no list of queries.
         ("AVR-X1100W-Deviceinfo.xml", None),
@@ -291,6 +331,7 @@ fn device_info_lists_the_queries() {
     assert!(all.lists("GetVideoInfo"));
     assert!(!stereo.lists("GetVideoInfo"));
     assert!(!all.lists("GetOther"));
+    assert!(a10h.lists("GetDialogEnhancer") && !older.lists("GetSurroundParameter"));
 }
 
 #[test]
@@ -409,6 +450,7 @@ fn device_info_lists_the_features() {
         F::HdmiAudioOut,
         F::DynamicEq,
         F::AutoLipSync,
+        F::SoundModeGenre,
     ] {
         assert!(a10h.has(feature), "{feature:?}");
     }
@@ -531,4 +573,58 @@ fn device_info_lists_the_ranges() {
     }
     // 10 sound ranges, 3 volumes and 4 levels of zone 2 and of zone 3.
     assert_eq!(a10h.all().count(), 21);
+}
+
+/// Our own settings requests for the AVC-A10H fit the answers that the
+/// receiver gave to them: a full one, and a short one from a busy receiver.
+/// Each answered parameter was asked for. The requests were made without
+/// the features, so the IMAX subwoofer mode is in them.
+#[test]
+fn own_settings_requests_fit_the_receiver_answers() {
+    let body = read_bytes("xml/AVC-A10H-Deviceinfo-8080.xml");
+    let listed = DeviceInfo::parse(&body).unwrap().queries.unwrap();
+    for (part, count, line_of_each, answers) in [
+        (
+            ac::SettingsPart::Fast,
+            10,
+            "Z2PSBAS 50",
+            &[
+                ("AVC-A10H-AppCommand0300-settings-own-fast.xml", 10),
+                ("AVC-A10H-AppCommand0300-settings-own-fast-short.xml", 6),
+            ][..],
+        ),
+        (
+            ac::SettingsPart::Slow,
+            4,
+            "PSDELAY 267",
+            &[("AVC-A10H-AppCommand0300-settings-own-slow.xml", 4)][..],
+        ),
+    ] {
+        let mut request = Vec::new();
+        assert_eq!(
+            ac::write_settings_request(&listed, 3, None, part, &mut request).unwrap(),
+            count
+        );
+        let request = String::from_utf8(request).unwrap();
+        for &(name, items) in answers {
+            let answer = read_bytes(&format!("xml/{name}"));
+            let response =
+                Response::parse_at_most(&answer, count).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(response.items().count(), items, "{name}");
+            for item in response.items() {
+                item.params(|param, _, _| {
+                    let asked = format!("<param name=\"{param}\" />");
+                    assert!(request.contains(&asked), "{name}: {param}");
+                });
+            }
+            let mut lines = Vec::new();
+            ac::settings_lines(&response, |line, _| lines.push(line.to_owned()));
+            let mut state = State::new(false);
+            for line in &lines {
+                let message = Message::parse(line).unwrap_or_else(|| panic!("{name}: {line}"));
+                assert!(state.apply_message(&message).is_some(), "{name}: {line}");
+            }
+            assert!(lines.iter().any(|line| line == line_of_each), "{name}");
+        }
+    }
 }

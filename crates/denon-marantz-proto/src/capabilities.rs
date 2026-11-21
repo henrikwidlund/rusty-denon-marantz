@@ -548,6 +548,9 @@ device_features! {
     Dimmer = In("FrontDisplay", "Dimmer"),
     /// `Zone3Setup`: the receiver has zone 3.
     Zone3Setup = Block("Zone3Setup"),
+    /// `SoundMode/Genre`: the sound mode categories movie, music, game and
+    /// pure.
+    SoundModeGenre = In("SoundMode", "Genre"),
 }
 
 impl DeviceFeature {
@@ -698,6 +701,7 @@ impl Query {
         use DeviceFeature as F;
         Some(match self {
             Self::ImaxSubwooferMode => F::SubwooferMode,
+            Self::SoundModeCategory => F::SoundModeGenre,
             Self::Imax => F::Imax,
             Self::ImaxAudio => F::ImaxAudioSettings,
             Self::ImaxHighPassFilter => F::HighPassFilter,

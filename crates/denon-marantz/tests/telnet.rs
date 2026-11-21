@@ -7,10 +7,10 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, FakeTelnet, LOOPBACK_V6, Reply,
-    appcommand0300_answer, avr_x_receiver, avr_x_receiver_on, avr_x_receiver_with_info,
-    avr_x_receiver_with_pages, builder, output_settings_item, quick_follow_up,
-    receiver_with_audyssey, receiver_with_info_and_signal_answers, wait_until,
+    AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, FakeTelnet,
+    LOOPBACK_V6, Reply, appcommand0300_answer, avr_x_receiver, avr_x_receiver_on,
+    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, contains, output_settings_item,
+    quick_follow_up, receiver_with_audyssey, receiver_with_info_and_signal_answers, wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
@@ -100,7 +100,7 @@ async fn an_audyssey_command_over_http_is_not_read_while_telnet_is_open() {
     let asked = |text: &str| {
         http.requests()
             .iter()
-            .filter(|seen| String::from_utf8_lossy(&seen.body).contains(text))
+            .filter(|seen| contains(&seen.body, text))
             .count()
     };
     avr.http_send(Zone::Main, Command::DynamicEq(true))
@@ -109,6 +109,39 @@ async fn an_audyssey_command_over_http_is_not_read_while_telnet_is_open() {
     avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
     wait_until("the tone read", || asked("GetToneControl") > 0).await;
     assert_eq!(asked("GetAudyssey"), 0);
+}
+
+#[tokio::test]
+async fn settings_commands_over_http_read_no_settings_while_telnet_is_open() {
+    const PAGES: &[(&str, &[u8])] = &[
+        ("/goform/formiPhoneAppDirect.xml?PSCINEMA%20EQ.OFF", b""),
+        ("/goform/formiPhoneAppDirect.xml?SIGAME", b""),
+    ];
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver_with_pages(AVR_X_SETTINGS_INFO, PAGES).await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .follow_up_read(Some(quick_follow_up()))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    status_is(&avr, TelnetStatus::Connected).await;
+    let asked = |text: &str| {
+        http.requests()
+            .iter()
+            .filter(|seen| contains(&seen.body, text))
+            .count()
+    };
+    avr.http_send(Zone::Main, Command::Raw("PSCINEMA EQ.OFF"))
+        .await
+        .unwrap();
+    avr.http_send(Zone::Main, Command::SelectSource("GAME"))
+        .await
+        .unwrap();
+    // Longer than the reads after the commands take.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(asked("GetSurroundParameter") + asked("GetRestorerMode"), 0);
 }
 
 #[tokio::test]

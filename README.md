@@ -120,6 +120,20 @@ first, the list has all queries that were still open then. Both are optional:
 values that arrive later come as events.
 Both keep the report, so `basic_synced()` and then `all_synced()` works, and a
 wait that was stopped by a timeout can be called again.
+When telnet is not connected, the start reads some settings over
+`AppCommand0300.xml` that otherwise only telnet gives, for example cinema EQ,
+DRC, the Bluetooth output and the zone 2 and 3 tone. Only the queries that
+`Deviceinfo.xml` lists are sent, only if it lists version 2 of
+`GetSurroundParameter` (the 2016 and newer models), and only for the features
+that it lists. The fast ones are read before `basic_synced()` returns, the
+slow ones (audio delay, auto lip sync, speaker preset, dialog enhancer,
+restorer) after it, and `all_synced()` waits for them. Nothing is read if
+the signal request got no answer, and the slow ones are not read if the fast
+ones failed. `refresh()` reads them again. A value that the receiver leaves
+blank, or marks as not used in the current sound mode, does not change the
+state. The receiver can also mark a setting as not used in a mode where it
+applies, for example cinema EQ in Dolby Atmos. Then the old value stays until
+telnet or a later read gives it.
 More groups in `TelnetConfig::query_groups` are asked after the first queries,
 and `all_synced()` then takes longer. Commands go before the queries, and the
 queries wait 250 ms after a command (`AvrBuilder::background_pause`).
@@ -130,8 +144,8 @@ it. To skip these requests, store `avr.info()` and pass it to
 go out at once, over HTTP until telnet is open. `start` checks the stored
 values first, in the background: `started.info_check()` gives the result
 before the pages are read. `Avr::verify` does the same without a start. If
-the receiver gives other values, connect again with the new `Info`. The
-`serde` feature makes `Info` serializable.
+the receiver gives other values, connect again with the new `Info` and store
+it. The `serde` feature makes `Info` serializable.
 
 If the network of the caller can be down for a moment, for example after the
 device wakes up, set `HttpConfig::connect_retry`: a request whose connection
@@ -258,12 +272,17 @@ A program that does not want telnet never opens it: use
 - After a command, the values that it changed are read, for example the volume
   and mute after a volume command, tone control after a bass command on the
   main zone, the Audyssey settings after an Audyssey command (not while telnet
-  is open, which reports them), and the band and frequency after an analog
-  tuner command while the tuner plays. The read waits until no command came for
-  500 ms, and not longer than 2 s, so a held key causes few reads. The
-  receiver shows a new power state, source or sound mode late, so these are
-  read again every 1.5 s until a read shows a change, at most 3 times. Change
-  this with `AvrBuilder::follow_up_read`, or turn it off with `None`.
+  is open, which reports them), the band and frequency after an analog tuner
+  command while the tuner plays, and the settings that the start reads over
+  `AppCommand0300.xml` (not while telnet is open): the part with the setting
+  after a command for one of them, the fast ones after a sound mode command,
+  and all after a source command or a quick select of the main zone. The read
+  waits until no command came for 500 ms, and not longer than 2 s, so a held
+  key causes few reads. The receiver shows a new power state, source or sound
+  mode late, so these are read again every 1.5 s until a read shows a change,
+  at most 3 times. A read again after a sound mode command or a source command
+  of the main zone also reads the fast ones of these settings. Change this with
+  `AvrBuilder::follow_up_read`, or turn it off with `None`.
 - Commands go before the reads that wait, also those of the web interface.
   A read waits while a command waits or runs, and for 250 ms after it, so
   the receiver does the command first. A read that has started is not
@@ -397,6 +416,22 @@ have not run on a receiver:
   them, so they are asked as on newer models. If a request with tone control
   fails on such a receiver and works without it, tone control is not asked
   again.
+- The settings over `AppCommand0300.xml` on receivers older than the 2016
+  models. These list version 1 of `GetSurroundParameter`, `GetHdmiSetup` and
+  `GetAudioDelay`. Their other settings queries may answer differently, so no
+  settings are read. A receiver counts as new enough when `Deviceinfo.xml`
+  lists version 2 of `GetSurroundParameter`.
+- Center image, center width, channel expander, dimension and the IMAX
+  filters are not read over `AppCommand0300.xml`: no tested receiver gave a
+  value for them, so the form of the value is not known. For most other
+  settings read over `AppCommand0300.xml`, the lists and ranges come from
+  `Deviceinfo.xml`, and no tested receiver gave a value other than 0 or none,
+  for example for dialog control, Auro-3D, IMAX, the effect level, the room
+  size and panorama. The LFE level is read only when the same answer gives an
+  input mode other than the 7.1CH input, which has its own LFE level.
+- The sound mode category query `SSSMG ?` on other receivers than the
+  AVC-A10H. It is not sent to receivers whose `Deviceinfo.xml` lists the LFE
+  level but not the sound mode genres.
 - The tuner status page while the tuner plays. All captured pages are from
   other sources and have no band or frequency.
 - Receivers that are older than the AVC-A10H. The effect speaker, center image

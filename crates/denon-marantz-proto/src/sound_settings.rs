@@ -31,15 +31,15 @@ pub const LFE_EXTERNAL_INPUT_QUERY: &str = "PSLFL ?";
 
 /// Highest value of each number, as the widest spec allows it. A receiver
 /// can list a smaller range in its device information.
-const MAX_AURO_STRENGTH: u16 = 16;
-const MAX_BASS_SYNC: u16 = 16;
-const MAX_LFE_LEVEL: u16 = 10;
-const MAX_DIALOG_CONTROL: u16 = 6;
-const MAX_DELAY_TIME: u16 = 300;
-const MAX_AUDIO_DELAY: u16 = 500;
+pub(crate) const MAX_AURO_STRENGTH: u16 = 16;
+pub(crate) const MAX_BASS_SYNC: u16 = 16;
+pub(crate) const MAX_LFE_LEVEL: u16 = 10;
+pub(crate) const MAX_DIALOG_CONTROL: u16 = 6;
+pub(crate) const MAX_DELAY_TIME: u16 = 300;
+pub(crate) const MAX_AUDIO_DELAY: u16 = 500;
 const MAX_DIMENSION: u16 = 6;
 const MAX_CENTER_WIDTH: u16 = 7;
-const MAX_EFFECT_LEVEL: u16 = 15;
+pub(crate) const MAX_EFFECT_LEVEL: u16 = 15;
 /// Highest balance step to the left and to the right.
 const MAX_BALANCE: i8 = 12;
 /// Values of the LFE level of a 7.1 channel input in dB.

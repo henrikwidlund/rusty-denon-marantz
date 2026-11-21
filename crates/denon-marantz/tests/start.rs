@@ -14,8 +14,11 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use common::{
-    AVR_X_INFO, Fake, FakeTelnet, Reply, avr_x_receiver, builder, config, friendly_name_answer,
-    is_friendly_name_request, wait_until,
+    AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_AND_SIGNAL_INFO, AVR_X_SETTINGS_INFO,
+    Fake, FakeTelnet, OLDER_SETTINGS_INFO, Reply, SettingsReplies, appcommand0300_requests,
+    avr_x_receiver, avr_x_receiver_with_held_settings, avr_x_receiver_with_info,
+    avr_x_receiver_with_settings, builder, config, friendly_name_answer, is_friendly_name_request,
+    wait_until,
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
@@ -757,6 +760,424 @@ async fn a_second_start_is_refused_while_the_first_runs() {
     hang.store(false, Ordering::SeqCst);
     avr.start().await.unwrap().basic_synced().await;
     avr.start().await.unwrap().basic_synced().await;
+}
+
+/// The settings requests: the fast one asks for `GetBTTX`, the slow one for
+/// `GetRestorerMode`.
+fn settings_requests(http: &Fake) -> Vec<String> {
+    appcommand0300_requests(http)
+        .into_iter()
+        .filter(|body| body.contains("GetBTTX") || body.contains("GetRestorerMode"))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_start_without_telnet_reads_the_settings_over_http() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    started.basic_synced().await;
+    // The fast settings are read before the report.
+    let settings = avr.snapshot().device().sound_settings.clone();
+    assert_eq!(settings.cinema_eq, Some(true));
+    assert_eq!(settings.drc, Some(denon_marantz::proto::Drc::Off));
+    assert_eq!(
+        avr.snapshot().device().bluetooth_output,
+        Some(denon_marantz::proto::BluetoothOutputMode::BluetoothAndSpeakers)
+    );
+    assert_eq!(
+        avr.snapshot()
+            .zone(Zone::Zone2)
+            .bass
+            .map(denon_marantz::ToneLevel::db),
+        Some(-2)
+    );
+    // `all_synced` waits for the slow settings.
+    started.all_synced().await;
+    let state = avr.snapshot();
+    assert_eq!(state.device().auto_lip_sync, Some(true));
+    assert_eq!(state.device().sound_settings.audio_delay, Some(139));
+    let requests = settings_requests(&http);
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert!(requests[0].contains("z2bass"));
+    // The receiver has two zones.
+    assert!(!requests[0].contains("z3bass"));
+}
+
+#[tokio::test]
+async fn a_start_with_telnet_does_not_read_the_settings_over_http() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet_wait(Duration::from_millis(300)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        started.all_synced().await.telnet,
+        TelnetStart::Open
+    ));
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+/// Telnet opens while the slow settings are on their way. Telnet asks for
+/// its groups itself, so their values are skipped. Auto lip sync is in a
+/// group that telnet asks for, the audio delay is not.
+#[tokio::test]
+async fn settings_of_the_groups_of_telnet_are_skipped_when_it_opens_meanwhile() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let release = Arc::new(AtomicBool::new(false));
+    let http = avr_x_receiver_with_held_settings(Arc::clone(&release)).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    // `basic_synced` must not wait for the held answer.
+    timeout(Duration::from_secs(5), started.basic_synced())
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    release.store(true, Ordering::SeqCst);
+    timeout(Duration::from_secs(5), started.all_synced())
+        .await
+        .unwrap();
+    let state = avr.snapshot();
+    assert_eq!(state.device().auto_lip_sync, None);
+    assert_eq!(state.device().sound_settings.audio_delay, Some(139));
+}
+
+/// Starts without telnet and waits for the end of the start.
+async fn start_without_telnet(avr: &Arc<Avr>) {
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(10), started.all_synced())
+        .await
+        .unwrap();
+}
+
+/// Connects to the fake receiver, with the web interface.
+async fn connect_avr_x(http: &Fake, web: &Fake) -> Arc<Avr> {
+    Arc::new(
+        builder(http, ReceiverType::AvrX)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .connect()
+            .await
+            .unwrap(),
+    )
+}
+
+#[tokio::test]
+async fn a_receiver_that_has_no_query_list_is_not_asked_for_the_settings() {
+    let web = web_interface().await;
+    let http = avr_x_receiver().await;
+    let avr = connect_avr_x(&http, &web).await;
+    start_without_telnet(&avr).await;
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_receiver_that_lists_only_signal_queries_is_not_asked_for_the_settings() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_OUTPUT_SETTINGS_INFO).await;
+    let avr = connect_avr_x(&http, &web).await;
+    start_without_telnet(&avr).await;
+    assert!(avr.info().queries.is_some());
+    let asked: Vec<_> = appcommand0300_requests(&http)
+        .into_iter()
+        .filter(|body| !body.contains("GetVideoInfo") && !body.contains("GetAudioInfo"))
+        .collect();
+    assert_eq!(asked, Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn an_older_receiver_is_not_asked_for_the_settings() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(OLDER_SETTINGS_INFO).await;
+    let avr = connect_avr_x(&http, &web).await;
+    assert!(avr.info().queries.is_some_and(|queries| queries.zone_tone));
+    start_without_telnet(&avr).await;
+    avr.refresh().await.unwrap();
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn refresh_without_telnet_passes_when_the_settings_are_refused() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::FastFails).await;
+    let avr = connect_avr_x(&http, &web).await;
+    avr.refresh().await.unwrap();
+    assert_eq!(settings_requests(&http).len(), 1);
+}
+
+#[tokio::test]
+async fn refresh_without_telnet_fails_when_the_settings_get_no_answer() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::FastHangs).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let error = timeout(Duration::from_secs(5), avr.refresh())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.is_unreachable(), "{error}");
+    assert_eq!(settings_requests(&http).len(), 1);
+}
+
+#[tokio::test]
+async fn a_start_with_the_settings_turned_off_does_not_read_them() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false).settings(false))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(10), started.all_synced())
+        .await
+        .unwrap();
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_fast_settings_read_without_answer_skips_the_slow_one() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::FastHangs).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    let report = timeout(Duration::from_secs(10), started.all_synced())
+        .await
+        .unwrap();
+    assert!(report.web_interface.is_ok());
+    let requests = settings_requests(&http);
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(requests[0].contains("GetBTTX"));
+}
+
+#[tokio::test]
+async fn all_synced_can_wait_again_for_the_slow_settings_after_a_timeout() {
+    let web = web_interface().await;
+    let release = Arc::new(AtomicBool::new(false));
+    let http = avr_x_receiver_with_held_settings(Arc::clone(&release)).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    // The timeout must stop the wait for the slow settings, not the start.
+    timeout(Duration::from_secs(5), started.basic_synced())
+        .await
+        .unwrap();
+    assert!(
+        timeout(Duration::from_millis(100), started.all_synced())
+            .await
+            .is_err()
+    );
+    assert_eq!(avr.snapshot().device().sound_settings.audio_delay, None);
+    release.store(true, Ordering::SeqCst);
+    timeout(Duration::from_secs(5), started.all_synced())
+        .await
+        .unwrap();
+    assert_eq!(
+        avr.snapshot().device().sound_settings.audio_delay,
+        Some(139)
+    );
+}
+
+#[tokio::test]
+async fn refresh_with_telnet_does_not_read_the_settings() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    avr.telnet_connect().await.unwrap();
+    let _ = timeout(Duration::from_secs(5), avr.refresh())
+        .await
+        .unwrap();
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn refresh_without_telnet_reads_the_settings_again() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connect_avr_x(&http, &web).await;
+    avr.refresh().await.unwrap();
+    assert_eq!(settings_requests(&http).len(), 2);
+    assert_eq!(
+        avr.snapshot().device().sound_settings.audio_delay,
+        Some(139)
+    );
+}
+
+#[tokio::test]
+async fn a_failed_fast_settings_read_skips_the_slow_one() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::FastFails).await;
+    let avr = connect_avr_x(&http, &web).await;
+    start_without_telnet(&avr).await;
+    let requests = settings_requests(&http);
+    assert_eq!(requests.len(), 1, "{requests:?}");
+    assert!(requests[0].contains("GetBTTX"));
+}
+
+/// The settings are on the same port as the signal, so they would only wait
+/// for the timeout too.
+#[tokio::test]
+async fn a_signal_read_without_answer_skips_the_settings() {
+    let web = web_interface().await;
+    let http =
+        avr_x_receiver_with_settings(AVR_X_SETTINGS_AND_SIGNAL_INFO, SettingsReplies::SignalHangs)
+            .await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    let report = timeout(Duration::from_secs(10), started.all_synced())
+        .await
+        .unwrap();
+    assert_eq!(report.signal, PageStatus::NoAnswer);
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_start_that_leaves_open_telnet_alone_does_not_read_the_settings() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    avr.telnet_connect().await.unwrap();
+    start_without_telnet(&avr).await;
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_receiver_from_stored_values_reads_the_settings() {
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let info = connect_avr_x(&http, &web).await.info().clone();
+    let avr = Arc::new(
+        Avr::builder("127.0.0.1")
+            .http_config(config())
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(info)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    start_without_telnet(&avr).await;
+    assert_eq!(settings_requests(&http).len(), 2);
+    assert_eq!(
+        avr.snapshot().device().sound_settings.audio_delay,
+        Some(139)
+    );
+}
+
+#[tokio::test]
+async fn stored_values_without_the_settings_queries_read_no_settings_and_are_changed() {
+    // Values stored by an older version have no version 2 of
+    // `GetSurroundParameter`.
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let info = connect_avr_x(&http, &web).await.info().clone();
+    let mut old = info.clone();
+    old.queries.as_mut().unwrap().surround_parameter = false;
+    let avr = Arc::new(
+        Avr::builder("127.0.0.1")
+            .http_config(config())
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(old)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let before = settings_requests(&http).len();
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    match started.info_check().await {
+        InfoCheck::Changed(new) => assert_eq!(**new, info),
+        other => panic!("{other:?}"),
+    }
+    timeout(Duration::from_secs(10), started.all_synced())
+        .await
+        .unwrap();
+    assert_eq!(settings_requests(&http).len(), before);
+}
+
+#[tokio::test]
+async fn a_start_with_telnet_running_does_not_read_the_settings_over_http() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    avr.telnet_connect().await.unwrap();
+    let mut started = avr
+        .start_with(StartOptions::new().telnet_wait(Duration::from_millis(300)))
+        .await
+        .unwrap();
+    assert!(matches!(
+        started.all_synced().await.telnet,
+        TelnetStart::AlreadyRunning
+    ));
+    assert_eq!(settings_requests(&http), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_start_with_a_closed_telnet_port_reads_the_settings_over_http() {
+    let web = web_interface().await;
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(port)).await;
+    let mut started = avr.start().await.unwrap();
+    assert!(matches!(
+        started.all_synced().await.telnet,
+        TelnetStart::Failed(_)
+    ));
+    assert_eq!(settings_requests(&http).len(), 2);
+}
+
+#[tokio::test]
+async fn a_start_while_telnet_connects_again_reads_the_settings_over_http() {
+    let web = web_interface().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(port)).await;
+    // One connection, then the port is closed, so the task keeps trying.
+    let accept = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        drop(listener);
+        drop(stream);
+    });
+    avr.telnet_connect().await.unwrap();
+    accept.await.unwrap();
+    let mut status = avr.telnet_status();
+    timeout(
+        Duration::from_secs(2),
+        status.wait_for(|status| *status != TelnetStatus::Connected),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let mut started = avr.start().await.unwrap();
+    assert!(matches!(
+        started.basic_synced().await.telnet,
+        TelnetStart::AlreadyRunning
+    ));
+    wait_until("the slow settings", || settings_requests(&http).len() == 2).await;
 }
 
 #[tokio::test]

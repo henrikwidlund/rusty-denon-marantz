@@ -45,6 +45,8 @@ pub(crate) enum Reply {
     Close,
     /// Send these bytes, then close the connection.
     Raw(Vec<u8>),
+    /// HTTP 200 with this body, once the flag is true.
+    Held(Arc<AtomicBool>, Vec<u8>),
 }
 
 pub(crate) struct Fake {
@@ -96,6 +98,15 @@ impl Fake {
     }
 }
 
+/// Writes an answer with status 200. Returns false if the write failed.
+async fn write_body(socket: &mut TcpStream, body: &[u8]) -> bool {
+    let head = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    socket.write_all(head.as_bytes()).await.is_ok() && socket.write_all(body).await.is_ok()
+}
+
 async fn serve(
     mut socket: TcpStream,
     handler: Arc<dyn Fn(&Seen) -> Reply + Send + Sync>,
@@ -109,13 +120,15 @@ async fn serve(
         seen.lock().unwrap().push(request.clone());
         match handler(&request) {
             Reply::Body(body) => {
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\n\r\n",
-                    body.len()
-                );
-                if socket.write_all(head.as_bytes()).await.is_err()
-                    || socket.write_all(&body).await.is_err()
-                {
+                if !write_body(&mut socket, &body).await {
+                    return;
+                }
+            }
+            Reply::Held(release, body) => {
+                while !release.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                if !write_body(&mut socket, &body).await {
                     return;
                 }
             }
@@ -183,6 +196,61 @@ pub(crate) const DESCRIPTION: &[u8] =
 pub(crate) const AVR_X_INFO: &[u8] =
     b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-X3700H</ModelName>\
     <DeviceZones>2</DeviceZones><MacAddress>0123456789AB</MacAddress></Device_Info>";
+/// The device information of a receiver that lists the settings queries
+/// of `AppCommand0300.xml` and no signal queries.
+pub(crate) const AVR_X_SETTINGS_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <StatusInfo><Commands></Commands></StatusInfo>\
+    <SurroundParameter><Commands><GetSurroundParameter ver=\"2\">1</GetSurroundParameter>\
+    </Commands></SurroundParameter>\
+    <BTTX><Commands><GetBTTX ver=\"1\">1</GetBTTX></Commands></BTTX>\
+    <Zone2Setup><Commands><GetBassTreble ver=\"1\">1</GetBassTreble></Commands></Zone2Setup>\
+    <AudioDelay><Commands><GetAudioDelay ver=\"2\">1</GetAudioDelay></Commands></AudioDelay>\
+    <Restorer><Commands><GetRestorerMode ver=\"1\">1</GetRestorerMode></Commands></Restorer>\
+    </Setup></DeviceCapabilities></Device_Info>";
+/// Like [`AVR_X_SETTINGS_INFO`], with version 1 of `GetSurroundParameter`
+/// and `GetAudioDelay`, as receivers older than the 2016 models list them.
+pub(crate) const OLDER_SETTINGS_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0300</CommApiVers><ModelName>AVR-X4100W</ModelName>\
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <StatusInfo><Commands></Commands></StatusInfo>\
+    <SurroundParameter><Commands><GetSurroundParameter ver=\"1\">1</GetSurroundParameter>\
+    </Commands></SurroundParameter>\
+    <BTTX><Commands><GetBTTX ver=\"1\">1</GetBTTX></Commands></BTTX>\
+    <Zone2Setup><Commands><GetBassTreble ver=\"1\">1</GetBassTreble></Commands></Zone2Setup>\
+    <AudioDelay><Commands><GetAudioDelay ver=\"1\">1</GetAudioDelay></Commands></AudioDelay>\
+    <Restorer><Commands><GetRestorerMode ver=\"1\">1</GetRestorerMode></Commands></Restorer>\
+    </Setup></DeviceCapabilities></Device_Info>";
+/// Like [`AVR_X_SETTINGS_INFO`], and it also lists the video signal query.
+pub(crate) const AVR_X_SETTINGS_AND_SIGNAL_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVC-A10H</ModelName>\
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <StatusInfo><Commands><GetVideoInfo ver=\"1\">1</GetVideoInfo></Commands></StatusInfo>\
+    <SurroundParameter><Commands><GetSurroundParameter ver=\"2\">1</GetSurroundParameter>\
+    </Commands></SurroundParameter>\
+    <BTTX><Commands><GetBTTX ver=\"1\">1</GetBTTX></Commands></BTTX>\
+    <Restorer><Commands><GetRestorerMode ver=\"1\">1</GetRestorerMode></Commands></Restorer>\
+    </Setup></DeviceCapabilities></Device_Info>";
+/// Answers to the settings requests of `AppCommand0300.xml` for
+/// [`AVR_X_SETTINGS_INFO`].
+const SETTINGS_FAST: &[u8] = b"<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx>\
+    <cmd><name>GetSurroundParameter</name><list>\
+    <param name=\"cinemaeq\" control=\"2\">1</param>\
+    <param name=\"dyncomp\" control=\"1\">0</param>\
+    <param name=\"imax\" control=\"0\"></param></list></cmd>\
+    <cmd><name>GetSurroundParameter</name><list>\
+    <param name=\"sw\" control=\"0\"></param></list></cmd>\
+    <cmd><name>GetBTTX</name><list><param name=\"output\" control=\"1\">2</param></list></cmd>\
+    <cmd><name>GetBassTreble</name><list>\
+    <param name=\"z2bass\" control=\"2\">-2</param>\
+    <param name=\"z2treble\" control=\"2\">0</param></list></cmd></rx>";
+const SETTINGS_SLOW: &[u8] = b"<?xml version=\"1.0\" encoding=\"utf-8\" ?><rx>\
+    <cmd><name>GetAudioDelay</name><list>\
+    <param name=\"audiodelay\" control=\"2\">139</param>\
+    <param name=\"autolipsync\" control=\"2\">1</param></list></cmd>\
+    <cmd><name>GetRestorerMode</name><list>\
+    <param name=\"mode\" control=\"1\">0</param></list></cmd></rx>";
 /// The device information of a receiver that lists all queries, also
 /// `GetOutputSettings`.
 pub(crate) const AVR_X_OUTPUT_SETTINGS_INFO: &[u8] =
@@ -347,18 +415,68 @@ pub(crate) async fn avr_x_receiver_with_pages(
     info: &'static [u8],
     pages: &'static [(&'static str, &'static [u8])],
 ) -> Fake {
-    avr_x_receiver_with(LOOPBACK, info, pages, Arc::new(AtomicBool::new(false))).await
+    avr_x_receiver_with(
+        LOOPBACK,
+        info,
+        pages,
+        Arc::new(AtomicBool::new(false)),
+        SettingsReplies::Answer,
+    )
+    .await
 }
 
 /// Like [`avr_x_receiver`], on the address `bind`.
 pub(crate) async fn avr_x_receiver_on(bind: &str) -> Fake {
-    avr_x_receiver_with(bind, AVR_X_INFO, &[], Arc::new(AtomicBool::new(false))).await
+    avr_x_receiver_with(
+        bind,
+        AVR_X_INFO,
+        &[],
+        Arc::new(AtomicBool::new(false)),
+        SettingsReplies::Answer,
+    )
+    .await
 }
 
 /// Like [`avr_x_receiver`]. It does not answer `AppCommand` requests while
 /// `hang` is true.
 pub(crate) async fn avr_x_receiver_that_can_hang(hang: Arc<AtomicBool>) -> Fake {
-    avr_x_receiver_with(LOOPBACK, AVR_X_INFO, &[], hang).await
+    avr_x_receiver_with(LOOPBACK, AVR_X_INFO, &[], hang, SettingsReplies::Answer).await
+}
+
+/// Like [`avr_x_receiver_with_info`] with [`AVR_X_SETTINGS_INFO`]. It answers
+/// the slow settings once `release` is true.
+pub(crate) async fn avr_x_receiver_with_held_settings(release: Arc<AtomicBool>) -> Fake {
+    avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::HeldSlow(release)).await
+}
+
+/// How the fake receiver answers the requests to `AppCommand0300.xml`.
+pub(crate) enum SettingsReplies {
+    /// Both parts of the settings at once.
+    Answer,
+    /// The slow part of the settings once the flag is true.
+    HeldSlow(Arc<AtomicBool>),
+    /// The fast part of the settings with HTTP 500.
+    FastFails,
+    /// Never the fast part of the settings.
+    FastHangs,
+    /// Both parts of the settings at once, and never the signal.
+    SignalHangs,
+}
+
+/// Like [`avr_x_receiver_with_info`], with these answers to
+/// `AppCommand0300.xml`.
+pub(crate) async fn avr_x_receiver_with_settings(
+    info: &'static [u8],
+    settings: SettingsReplies,
+) -> Fake {
+    avr_x_receiver_with(
+        LOOPBACK,
+        info,
+        &[],
+        Arc::new(AtomicBool::new(false)),
+        settings,
+    )
+    .await
 }
 
 async fn avr_x_receiver_with(
@@ -366,6 +484,7 @@ async fn avr_x_receiver_with(
     info: &'static [u8],
     pages: &'static [(&'static str, &'static [u8])],
     hang: Arc<AtomicBool>,
+    settings: SettingsReplies,
 ) -> Fake {
     Fake::start_on(bind, move |seen| {
         match (seen.method.as_str(), seen.path.as_str()) {
@@ -385,16 +504,48 @@ async fn avr_x_receiver_with(
             ("POST", "/goform/AppCommand.xml") if is_friendly_name_request(&seen.body) => {
                 Reply::Body(friendly_name_answer("Living room"))
             }
-            ("POST", "/goform/AppCommand.xml")
-                if String::from_utf8_lossy(&seen.body).contains("GetToneControl") =>
-            {
+            ("POST", "/goform/AppCommand.xml") if contains(&seen.body, "GetToneControl") => {
                 Reply::Body(update_answer_with_tone())
             }
             ("POST", "/goform/AppCommand.xml") => Reply::Body(update_answer_for(&seen.body)),
+            ("POST", "/goform/AppCommand0300.xml") if contains(&seen.body, "GetBTTX") => {
+                match settings {
+                    SettingsReplies::FastFails => Reply::Status(500),
+                    SettingsReplies::FastHangs => Reply::Hang,
+                    _ => Reply::Body(SETTINGS_FAST.to_vec()),
+                }
+            }
+            ("POST", "/goform/AppCommand0300.xml") if contains(&seen.body, "GetRestorerMode") => {
+                match &settings {
+                    SettingsReplies::HeldSlow(release) => {
+                        Reply::Held(Arc::clone(release), SETTINGS_SLOW.to_vec())
+                    }
+                    _ => Reply::Body(SETTINGS_SLOW.to_vec()),
+                }
+            }
+            ("POST", "/goform/AppCommand0300.xml")
+                if matches!(settings, SettingsReplies::SignalHangs) =>
+            {
+                Reply::Hang
+            }
             _ => Reply::Status(404),
         }
     })
     .await
+}
+
+/// Returns true if the request body has `text`.
+pub(crate) fn contains(body: &[u8], text: &str) -> bool {
+    String::from_utf8_lossy(body).contains(text)
+}
+
+/// The bodies of the requests to `AppCommand0300.xml`.
+pub(crate) fn appcommand0300_requests(fake: &Fake) -> Vec<String> {
+    fake.requests()
+        .into_iter()
+        .filter(|seen| seen.path == "/goform/AppCommand0300.xml")
+        .map(|seen| String::from_utf8_lossy(&seen.body).into_owned())
+        .collect()
 }
 
 /// The answer of `AppCommand0300.xml` to the five queries of the update, in

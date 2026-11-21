@@ -162,6 +162,13 @@ pub enum TelnetStatus {
     Connected,
 }
 
+impl TelnetStatus {
+    /// The connection is open.
+    pub(crate) fn is_connected(self) -> bool {
+        self == Self::Connected
+    }
+}
+
 /// An event from the receiver, as it was sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TelnetEvent {
@@ -337,7 +344,18 @@ impl Telnet {
 
     /// The connection asks for this group after a connect.
     pub(crate) fn fetches(&self, group: QueryGroup) -> bool {
-        self.config.query_groups.contains(&group)
+        self.query_groups().contains(&group)
+    }
+
+    /// The groups that the connection asks for after a connect.
+    pub(crate) const fn query_groups(&self) -> &'static [QueryGroup] {
+        self.config.query_groups
+    }
+
+    /// The flag of [`Telnet::forget_values`], for a task that has no
+    /// [`Telnet`].
+    pub(crate) fn forget_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.forget)
     }
 
     pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<TelnetEvent> {
@@ -346,6 +364,11 @@ impl Telnet {
 
     pub(crate) fn watch_status(&self) -> watch::Receiver<TelnetStatus> {
         self.status.subscribe()
+    }
+
+    /// Returns true if the connection is open now.
+    pub(crate) fn is_connected(&self) -> bool {
+        self.status.borrow().is_connected()
     }
 
     /// Opens the connection and starts the task. Does nothing if the task
@@ -506,7 +529,7 @@ impl Telnet {
     /// Passes a request to the task. A request is refused while there is no
     /// connection: it would be sent late, after a connect.
     async fn request(&self, request: Request) -> Result<(), Error> {
-        if *self.status.borrow() != TelnetStatus::Connected {
+        if !self.is_connected() {
             return Err(Error::NotConnected);
         }
         let requests = {

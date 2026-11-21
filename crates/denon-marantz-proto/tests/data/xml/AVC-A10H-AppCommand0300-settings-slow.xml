@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<rx>
+<cmd>
+<name>GetAudioDelay</name>
+<list>
+<param name="audiodelay" control="2">139</param>
+<param name="autolipsync" control="2">1</param>
+</list>
+</cmd>
+<cmd>
+<name>GetSpeakerPreset</name>
+<list>
+<param name="preset" control="2">1</param>
+</list>
+</cmd>
+<cmd>
+<name>GetDialogEnhancer</name>
+<list>
+<param name="mode" control="0">0</param>
+</list>
+</cmd>
+<cmd>
+<name>GetRestorerMode</name>
+<list>
+<param name="mode" control="1">0</param>
+</list>
+</cmd>
+</rx>

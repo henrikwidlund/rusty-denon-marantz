@@ -27,6 +27,8 @@ impl ToneLevel {
     /// Highest level of the main zone, +6 dB.
     pub const MAIN_MAX: Self = Self(20);
 
+    /// Lowest and highest level in dB.
+    pub(crate) const MAX_DB: i8 = 14;
     /// Telnet code of the lowest level.
     const TELNET_MIN: u8 = 36;
     /// Steps of the lowest `AppCommand` level above the lowest level.
@@ -35,14 +37,14 @@ impl ToneLevel {
     /// Creates a level from dB, from -14 to +14.
     #[must_use]
     pub fn from_db(db: i8) -> Option<Self> {
-        let steps = u8::try_from(i16::from(db) + 14).ok()?;
+        let steps = u8::try_from(i16::from(db) + i16::from(Self::MAX_DB)).ok()?;
         (steps <= Self::MAX.0).then_some(Self(steps))
     }
 
     /// Level in dB.
     #[must_use]
     pub fn db(self) -> i8 {
-        i8::try_from(self.0).unwrap_or(i8::MAX) - 14
+        i8::try_from(self.0).unwrap_or(i8::MAX) - Self::MAX_DB
     }
 
     /// Returns true if the main zone accepts the level: from -6 dB to +6 dB.

@@ -25,7 +25,7 @@ use crate::settings_availability::{GroupAvailability, SettingsAvailability};
 use crate::signal::ChannelLayout;
 use crate::signal::SignalState;
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
-use crate::sound_mode_list::SoundModeList;
+use crate::sound_mode_list::{SoundModeCategory, SoundModeList};
 use crate::sound_settings::SoundSettings;
 use crate::source::{telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
@@ -104,6 +104,8 @@ pub enum Setting {
     Source,
     /// Raw sound mode of a zone.
     SoundMode,
+    /// Category of the sound mode of a zone.
+    SoundModeCategory,
     /// Auto standby time of a zone.
     AutoStandby,
     /// Sleep timer of a zone.
@@ -236,20 +238,27 @@ pub struct ZoneState {
     /// The quick select of the zone, from 1 to 5, or 0 for none. A Marantz
     /// receiver calls it smart select. Telnet reports it.
     pub quick_select: Option<u8>,
-    /// Bass level. Telnet reports it for zone 2 and 3 when it changes.
+    /// Bass level. Telnet reports it for zone 2 and 3 when it changes, and
+    /// `AppCommand0300.xml` gives it.
     pub bass: Option<ToneLevel>,
-    /// Treble level. Telnet reports it for zone 2 and 3 when it changes.
+    /// Treble level. Telnet reports it for zone 2 and 3 when it changes, and
+    /// `AppCommand0300.xml` gives it.
     pub treble: Option<ToneLevel>,
     /// Level of the left channel of zone 2 or 3. Telnet reports it when it
-    /// changes.
+    /// changes, and `AppCommand0300.xml` gives it.
     pub left_level: Option<ChannelLevel>,
     /// Level of the right channel of zone 2 or 3. Telnet reports it when it
-    /// changes.
+    /// changes, and `AppCommand0300.xml` gives it.
     pub right_level: Option<ChannelLevel>,
     /// Selected source, as the receiver reports it.
     pub source: Option<String>,
     /// Sound mode in upper case, with single spaces. Only the main zone has one.
     pub sound_mode: Option<String>,
+    /// Category of the sound mode, as the movie, music, game and pure buttons
+    /// select it. Only the main zone has one. Telnet reports it when it
+    /// changes, and `AppCommand0300.xml` when it is asked. An answer of
+    /// `AppCommand0300.xml` with no category set keeps the value.
+    pub sound_mode_category: Option<SoundModeCategory>,
     /// Auto standby time.
     pub auto_standby: Option<AutoStandby>,
     /// Sleep timer.
@@ -310,7 +319,8 @@ pub struct DeviceState {
     /// Name that the user gave the receiver. A receiver that has no name
     /// reports an empty one on telnet, which does not change this value.
     pub friendly_name: Option<String>,
-    /// Auto lip sync is on. Telnet reports it on a Denon receiver.
+    /// Auto lip sync is on. Telnet reports it, and `AppCommand0300.xml` gives
+    /// it.
     pub auto_lip_sync: Option<bool>,
     /// The remote control is locked. Telnet reports it, also when it changes.
     pub remote_lock: Option<bool>,
@@ -1429,7 +1439,8 @@ impl State {
     }
 
     /// Applies an `SS` event that is about the receiver, not a zone: sources,
-    /// quick select names, auto lip sync, speaker levels and the signal.
+    /// the category of the sound mode, quick select names, auto lip sync, speaker
+    /// levels and the signal.
     fn apply_device_ss(&mut self, parameter: &str) -> Option<Change> {
         if let Some((zone, kind, value)) = zone_volume_event(parameter) {
             return self.apply_zone_volume(zone, kind, value);
@@ -1438,6 +1449,12 @@ impl State {
             return changed.then_some(Change {
                 zone: None,
                 setting: Setting::Sources,
+            });
+        }
+        if let Some(code) = parameter.strip_prefix("SMG ") {
+            let category = SoundModeCategory::from_code(code.trim_end())?;
+            return self.zone_change(Zone::Main, Setting::SoundModeCategory, |z| {
+                set(&mut z.sound_mode_category, Some(category))
             });
         }
         if let Some(changed) = self.apply_quick_select_name(parameter) {
@@ -2539,6 +2556,20 @@ mod tests {
         assert_eq!(
             apply(&mut state, "SSINFSIGRES I4K50"),
             change(None, Setting::Signal)
+        );
+    }
+
+    #[test]
+    fn sound_mode_category_follows_events() {
+        let mut state = State::new(false);
+        let category = || change(Some(Zone::Main), Setting::SoundModeCategory);
+        assert_eq!(apply(&mut state, "SSSMG MUS"), category());
+        assert_eq!(apply(&mut state, "SSSMG MUS"), None);
+        assert_eq!(apply(&mut state, "SSSMG GAM"), category());
+        assert_eq!(apply(&mut state, "SSSMG XYZ"), None);
+        assert_eq!(
+            state.zone(Zone::Main).sound_mode_category,
+            Some(SoundModeCategory::Game)
         );
     }
 

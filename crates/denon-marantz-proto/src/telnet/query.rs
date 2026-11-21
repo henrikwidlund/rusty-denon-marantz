@@ -155,6 +155,8 @@ query_values! {
         SourcesInUse,
         /// Sound modes that the receiver offers.
         SoundModeList,
+        /// Category of the sound mode: movie, music, game or pure.
+        SoundModeCategory,
         /// Friendly name.
         FriendlyName,
         /// Quick select names.
@@ -336,10 +338,21 @@ impl Query {
     /// the value.
     #[must_use]
     pub fn text(self, brand: Brand) -> Option<&'static str> {
+        self.entry(brand).map(|entry| entry.text)
+    }
+
+    /// The group of the query for this brand. `None` if the brand has no
+    /// query for the value.
+    #[must_use]
+    pub fn group(self, brand: Brand) -> Option<QueryGroup> {
+        self.entry(brand).map(|entry| entry.group)
+    }
+
+    /// The entry of [`QUERIES`] for this brand.
+    fn entry(self, brand: Brand) -> Option<&'static Entry> {
         QUERIES
             .iter()
             .find(|entry| entry.query == self && entry.is_for(brand))
-            .map(|entry| entry.text)
     }
 }
 
@@ -602,7 +615,7 @@ pub(super) fn known_answer_prefixes(brand: Brand) -> impl Iterator<Item = &'stat
         .map(|query| super::answers::answer_prefix(query.text))
 }
 
-static QUERIES: [Entry; 152] = [
+static QUERIES: [Entry; 153] = [
     both(Core, Query::Source, "SI?"),      // Select INPUT source
     both(Core, Query::Volume, "MV?"),      // MASTER VOLUME
     both(Core, Query::Mute, "MU?"),        // Mute
@@ -710,6 +723,7 @@ static QUERIES: [Entry; 152] = [
     both(Sound, Query::FrontHeight, "PSFH: ?"), // Front height output
     both(Sound, Query::Drc, "PSDRC ?"),    // DRC
     both(Sound, Query::DelayTime, "PSDEL ?"), // DELAY TIME
+    both(Sound, Query::SoundModeCategory, "SSSMG ?"), // Sound mode category
     both(Sound, Query::AudioRestorer, "PSRSTR ?"), // AUDIO RESTORER
     both(Sound, Query::CenterLevel, "PSCLV ?"), // Center level
     both(Sound, Query::Panorama, "PSPAN ?"), // Panorama
@@ -869,8 +883,8 @@ mod tests {
         for query in ["OPALS ?", "SSQS ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }
-        assert_eq!(denon.len(), 143);
-        assert_eq!(marantz.len(), 140);
+        assert_eq!(denon.len(), 144);
+        assert_eq!(marantz.len(), 141);
         for query in ["PSSB: ?", "PSAFD ?", "PSDIL ?"] {
             assert!(denon.contains(&query) && !marantz.contains(&query));
         }

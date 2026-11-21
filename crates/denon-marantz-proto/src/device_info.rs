@@ -45,38 +45,110 @@ pub struct DeviceInfo<'a> {
     pub ranges: DeviceRanges,
 }
 
-/// The `AppCommand` queries that `Deviceinfo.xml` lists as supported. Each
-/// field is true if the file lists the query with the value 1.
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-#[expect(clippy::struct_excessive_bools, reason = "each field is one query")]
-pub struct ListedQueries {
-    /// `GetToneControl`.
-    pub tone_control: bool,
-    /// `GetAudyssey` in `AppCommand0300.xml`.
-    pub audyssey: bool,
-    /// `GetVideoInfo` in `AppCommand0300.xml`.
-    pub video_info: bool,
-    /// `GetAudioInfo` in `AppCommand0300.xml`.
-    pub audio_info: bool,
-    /// `GetInputSignal` in `AppCommand0300.xml`.
-    pub input_signal: bool,
-    /// `GetActiveSpeaker` in `AppCommand0300.xml`.
-    pub active_speaker: bool,
-    /// `GetOutputSettings` in `AppCommand0300.xml`.
-    pub output_settings: bool,
+/// Defines [`ListedQueries`], the names of its queries with the version that
+/// the file must list, and the field of each name.
+macro_rules! listed_queries {
+    ($($(#[$doc:meta])* $field:ident = ($name:literal, $version:expr),)*) => {
+        /// The `AppCommand` queries that `Deviceinfo.xml` lists as supported.
+        ///
+        /// Each field is true if the file lists the query with the value 1.
+        /// The settings queries count only with the version whose parameters
+        /// are known: version 2 for `GetSurroundParameter`, `GetHdmiSetup` and
+        /// `GetAudioDelay`, version 1 for the others.
+        #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+        #[cfg_attr(feature = "serde", serde(default))]
+        #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+        #[non_exhaustive]
+        pub struct ListedQueries {
+            $($(#[$doc])* pub $field: bool,)*
+        }
+
+        /// Names of the queries of [`ListedQueries`], with the version that
+        /// the file must list. `None` accepts any version. For the settings
+        /// queries, the parameters of the other versions are not known.
+        const QUERY_NAMES: &[(&str, Option<&str>)] = &[$(($name, $version),)*];
+
+        impl ListedQueries {
+            /// All queries listed.
+            #[cfg(test)]
+            pub(crate) const fn all() -> Self {
+                Self { $($field: true,)* }
+            }
+
+            fn field_mut(&mut self, name: &str) -> Option<&mut bool> {
+                Some(match name {
+                    $($name => &mut self.$field,)*
+                    _ => return None,
+                })
+            }
+        }
+    };
 }
 
-/// Names of the queries of [`ListedQueries`].
-const QUERY_NAMES: [&str; 7] = [
-    "GetToneControl",
-    "GetAudyssey",
-    "GetVideoInfo",
-    "GetAudioInfo",
-    "GetInputSignal",
-    "GetActiveSpeaker",
-    "GetOutputSettings",
+listed_queries! {
+    /// `GetToneControl`.
+    tone_control = ("GetToneControl", None),
+    /// `GetAudyssey` in `AppCommand0300.xml`.
+    audyssey = ("GetAudyssey", None),
+    /// `GetVideoInfo` in `AppCommand0300.xml`.
+    video_info = ("GetVideoInfo", None),
+    /// `GetAudioInfo` in `AppCommand0300.xml`.
+    audio_info = ("GetAudioInfo", None),
+    /// `GetInputSignal` in `AppCommand0300.xml`.
+    input_signal = ("GetInputSignal", None),
+    /// `GetActiveSpeaker` in `AppCommand0300.xml`.
+    active_speaker = ("GetActiveSpeaker", None),
+    /// `GetOutputSettings` in `AppCommand0300.xml`.
+    output_settings = ("GetOutputSettings", None),
+    /// `GetSurroundParameter` version 2 in `AppCommand0300.xml`.
+    surround_parameter = ("GetSurroundParameter", Some("2")),
+    /// `GetBTTX` in `AppCommand0300.xml`.
+    bluetooth_transmitter = ("GetBTTX", Some("1")),
+    /// `GetEQSetting` in `AppCommand0300.xml`.
+    graphic_eq = ("GetEQSetting", Some("1")),
+    /// `GetBassSync` in `AppCommand0300.xml`.
+    bass_sync = ("GetBassSync", Some("1")),
+    /// `GetSoundMode` in `AppCommand0300.xml`: the category of the sound mode.
+    sound_mode_category = ("GetSoundMode", Some("1")),
+    /// `GetHdmiSetup` version 2 in `AppCommand0300.xml`.
+    hdmi_setup = ("GetHdmiSetup", Some("2")),
+    /// `GetInputSelect` in `AppCommand0300.xml`.
+    input_select = ("GetInputSelect", Some("1")),
+    /// `GetBassTreble` in `AppCommand0300.xml`: bass and treble of zones 2
+    /// and 3.
+    zone_tone = ("GetBassTreble", Some("1")),
+    /// `GetLRchLevel` in `AppCommand0300.xml`: channel levels of zones 2
+    /// and 3.
+    zone_channel_levels = ("GetLRchLevel", Some("1")),
+    /// `GetAudioDelay` version 2 in `AppCommand0300.xml`.
+    audio_delay = ("GetAudioDelay", Some("2")),
+    /// `GetSpeakerPreset` in `AppCommand0300.xml`.
+    speaker_preset = ("GetSpeakerPreset", Some("1")),
+    /// `GetDialogEnhancer` in `AppCommand0300.xml`.
+    dialog_enhancer = ("GetDialogEnhancer", Some("1")),
+    /// `GetRestorerMode` in `AppCommand0300.xml`.
+    restorer = ("GetRestorerMode", Some("1")),
+}
+
+/// Blocks under `DeviceCapabilities/Setup` that list the queries of
+/// [`QUERY_NAMES`]. Only these are read, to keep the parse cheap.
+const QUERY_BLOCKS: [&str; 16] = [
+    "StatusInfo",
+    "Audyssey",
+    "OutputSettings",
+    "SurroundParameter",
+    "BTTX",
+    "GraphicEQ",
+    "BassSync",
+    "SoundMode",
+    "HdmiSetup",
+    "InputSelect",
+    "Zone2Setup",
+    "Zone3Setup",
+    "AudioDelay",
+    "SpeakerPreset",
+    "DialogEnhancer",
+    "Restorer",
 ];
 
 impl ListedQueries {
@@ -88,45 +160,37 @@ impl ListedQueries {
         copy.field_mut(name).is_some_and(|listed| *listed)
     }
 
-    fn field_mut(&mut self, name: &str) -> Option<&mut bool> {
-        Some(match name {
-            "GetToneControl" => &mut self.tone_control,
-            "GetAudyssey" => &mut self.audyssey,
-            "GetVideoInfo" => &mut self.video_info,
-            "GetAudioInfo" => &mut self.audio_info,
-            "GetInputSignal" => &mut self.input_signal,
-            "GetActiveSpeaker" => &mut self.active_speaker,
-            "GetOutputSettings" => &mut self.output_settings,
-            _ => return None,
-        })
-    }
-
     /// Reads the `Commands` of the blocks under `DeviceCapabilities/Setup`.
     /// The list counts only if it has `StatusInfo`: older files have some of
     /// the blocks, but do not list the queries. Tone control is listed for the
     /// receiver or, on some models, only for a zone, so the whole file is
-    /// searched for it.
+    /// searched for it. A query that is in more than one block, as
+    /// `GetBassTreble` for zone 2 and zone 3, is listed if one block lists it.
     fn parse(root: Node<'_>) -> Option<Self> {
         let setup = root.child("DeviceCapabilities")?.node().child("Setup")?;
         let mut queries = Self::default();
         let mut has_status_info = false;
         for block in setup.node().children() {
             has_status_info |= block.is("StatusInfo");
-            if !["StatusInfo", "Audyssey", "OutputSettings"]
-                .iter()
-                .any(|name| block.is(name))
-            {
+            if !QUERY_BLOCKS.iter().any(|name| block.is(name)) {
                 continue;
             }
             let Some(list) = block.node().child("Commands") else {
                 continue;
             };
             for query in list.node().children() {
-                let Some(name) = QUERY_NAMES.iter().find(|name| query.is(name)) else {
+                let Some((name, version)) = QUERY_NAMES.iter().find(|(name, _)| query.is(name))
+                else {
                     continue;
                 };
-                if let Some(listed) = queries.field_mut(name) {
-                    *listed = query.node().text().is_some_and(|text| text.trim() == "1");
+                let listed = query.node().text().is_some_and(|text| text.trim() == "1")
+                    && version.is_none_or(|version| {
+                        query
+                            .attribute("ver")
+                            .is_some_and(|listed| listed.trim() == version)
+                    });
+                if let Some(field) = queries.field_mut(name) {
+                    *field |= listed;
                 }
             }
         }

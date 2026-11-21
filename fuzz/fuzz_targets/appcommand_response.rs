@@ -5,8 +5,9 @@ use denon_marantz_proto::appcommand::{
     GET_ACTIVE_SPEAKER, GET_ALL_ZONE_MUTE_STATUS, GET_ALL_ZONE_POWER_STATUS, GET_ALL_ZONE_SOURCE,
     GET_ALL_ZONE_VOLUME, GET_AUDIO_INFO, GET_AUDYSSEY, GET_AUTO_STANDBY, GET_DIMMER, GET_ECO,
     GET_FRIENDLY_NAME, GET_INPUT_SIGNAL, GET_OUTPUT_SETTINGS, GET_SURROUND_MODE_STATUS,
-    GET_TONE_CONTROL, GET_VIDEO_INFO, GET_ZONE_NAME, Response,
+    GET_TONE_CONTROL, GET_VIDEO_INFO, GET_ZONE_NAME, Response, settings_lines,
 };
+use denon_marantz_proto::telnet::Message;
 use denon_marantz_proto::{ChannelLayout, State, Zone};
 use libfuzzer_sys::fuzz_target;
 
@@ -40,6 +41,13 @@ fuzz_target!(|data: &[u8]| {
             assert!(index < expected);
             let _ = item.name();
         }
+        // Each settings line must parse as a telnet event. Applying it must
+        // not panic.
+        let mut state = State::new(false);
+        settings_lines(&response, |line, _| {
+            let message = Message::parse(line).expect("settings line is an event");
+            let _ = state.apply_message(&message);
+        });
     }
     let Ok(response) = Response::parse(body, expected) else {
         return;
