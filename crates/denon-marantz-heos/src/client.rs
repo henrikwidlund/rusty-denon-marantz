@@ -251,7 +251,7 @@ impl Heos {
     ///
     /// After the device wakes up, it can take some time to find its players.
     /// A player that is not known yet comes later with
-    /// [`Change::Players`](crate::Change::Players).
+    /// [`Change::Players`].
     #[must_use]
     pub fn player_by_ip(&self, ip: IpAddr) -> Option<PlayerId> {
         self.shared.read(|states| {

@@ -520,7 +520,7 @@ pub fn group_queries(
         .map(|query| query.text)
 }
 
-/// Which read answers a query of the [`Signal`](QueryGroup::Signal) group.
+/// Which read answers a query of the [`QueryGroup::Signal`] group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum SignalPart {
