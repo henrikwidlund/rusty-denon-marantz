@@ -1,4 +1,4 @@
-//! Receiver zones and receiver generations.
+//! Receiver zones and kinds of HTTP interface.
 
 /// Zone of a receiver.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -43,7 +43,8 @@ impl Zone {
     }
 }
 
-/// Receiver generation. It decides the HTTP ports and the description URL.
+/// Kind of HTTP interface of a receiver. It decides the HTTP ports and the
+/// description URL.
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]

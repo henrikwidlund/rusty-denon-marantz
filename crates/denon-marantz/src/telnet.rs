@@ -21,7 +21,9 @@ use denon_marantz_proto::telnet::{
     MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
     signal_queries,
 };
-use denon_marantz_proto::{Brand, DAB_QUERIES, DeviceFeatures, HD_RADIO_QUERIES, TUNER_QUERIES};
+use denon_marantz_proto::{
+    Brand, DAB_QUERIES, DeviceFeatures, HD_RADIO_QUERIES, SpecGeneration, TUNER_QUERIES,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -292,15 +294,18 @@ struct Queries {
     /// The features from the device information. Queries of a feature that
     /// it does not list are left out of the lists. `None` asks all.
     features: Option<DeviceFeatures>,
+    /// Queries of a [`SpecFeature`](denon_marantz_proto::SpecFeature) that
+    /// the specs of this generation do not have are left out too.
+    generation: SpecGeneration,
     /// The tuner has DAB: the DAB queries go with the tuner queries.
     dab: bool,
 }
 
 impl Queries {
     /// Returns false for a query of a feature that the receiver does not
-    /// list.
+    /// list or that its spec generation does not have.
     fn wanted(self, query: &str) -> bool {
-        self.features.is_none_or(|features| features.allows(query))
+        self.features.is_none_or(|features| features.allows(query)) && self.generation.allows(query)
     }
 
     fn all(self) -> VecDeque<Cow<'static, str>> {
@@ -323,6 +328,7 @@ impl Telnet {
         brand: Brand,
         single_zone: bool,
         features: Option<DeviceFeatures>,
+        generation: SpecGeneration,
         dab: bool,
     ) -> Self {
         Self {
@@ -333,6 +339,7 @@ impl Telnet {
                 single_zone,
                 groups: config.query_groups,
                 features,
+                generation,
                 dab,
             },
             events: broadcast::Sender::new(EVENT_CAPACITY),
@@ -476,7 +483,8 @@ impl Telnet {
     }
 
     /// Returns false for a query of a feature that the receiver does not
-    /// list in its device information.
+    /// list in its device information, or that its spec generation does not
+    /// have.
     pub(crate) fn wanted(&self, query: &str) -> bool {
         self.queries.wanted(query)
     }
@@ -1491,25 +1499,39 @@ mod tests {
         assert_eq!(random_wait(min, min), min);
     }
 
+    fn test_queries(brand: Brand, single_zone: bool, generation: SpecGeneration) -> Queries {
+        Queries {
+            brand,
+            single_zone,
+            groups: QueryGroup::DEFAULT_ORDER,
+            features: None,
+            generation,
+            dab: false,
+        }
+    }
+
+    #[test]
+    fn queries_follow_the_spec_generation() {
+        let all = |generation| test_queries(Brand::Denon, false, generation).all();
+        let has = |queries: &VecDeque<Cow<'static, str>>, text: &str| {
+            queries.iter().any(|query| query == text)
+        };
+        let current = all(SpecGeneration::Current);
+        for text in ["PSMODE: ?", "PSFH: ?", "MNPRV?", "PSDIL ?"] {
+            assert!(!has(&current, text), "{text}");
+        }
+        assert!(has(&current, "MV?"));
+        let denon2015 = all(SpecGeneration::Denon2015);
+        assert!(has(&denon2015, "PSMODE: ?") && has(&denon2015, "PSDIL ?"));
+        assert!(!has(&denon2015, "PSFH: ?") && !has(&denon2015, "MNPRV?"));
+        assert!(has(&all(SpecGeneration::Unknown), "PSAFD ?"));
+    }
+
     #[test]
     fn power_query_depends_on_the_zones() {
-        let multi = Queries {
-            brand: Brand::Denon,
-            single_zone: false,
-            groups: QueryGroup::DEFAULT_ORDER,
-            features: None,
-            dab: false,
-        }
-        .all();
+        let multi = test_queries(Brand::Denon, false, SpecGeneration::Unknown).all();
         assert_eq!(multi.front().map(Cow::as_ref), Some("ZM?"));
-        let single = Queries {
-            brand: Brand::Marantz,
-            single_zone: true,
-            groups: QueryGroup::DEFAULT_ORDER,
-            features: None,
-            dab: false,
-        }
-        .all();
+        let single = test_queries(Brand::Marantz, true, SpecGeneration::Unknown).all();
         assert_eq!(single.front().map(Cow::as_ref), Some("PW?"));
         assert_eq!(
             multi.len(),

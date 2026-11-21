@@ -6,10 +6,13 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use denon_marantz_proto::appcommand::{
-    self, Cmd, Definition, Endpoint, Field, Response, SettingsPart, write_body,
+    self, Cmd, Definition, Endpoint, Field, Response, SettingsPart, settings_request_asks,
+    write_body,
 };
 use denon_marantz_proto::status_page::{self, Page};
-use denon_marantz_proto::telnet::{Command, Message, QueryGroup};
+use denon_marantz_proto::telnet::{
+    Command, Message, Query, QueryGroup, SignalPart, query_for_command,
+};
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
     DeviceDescription, DeviceFeatures, DeviceRanges, GeneralPage, GroupAvailability,
@@ -18,6 +21,9 @@ use denon_marantz_proto::{
     SOURCE_NAMES_PATH, SYSTEM_SETTINGS_PATH, SettingsGroup, SourceLevels, SourceNames,
     SpeakerTable, State, SystemSettings, TUNER_STATUS_PATH, TunerInfo, TunerPage, VideoMenuPage,
     WEB_INTERFACE_PORT, XLR_ASSIGN_PATH, XlrAssign, Zone,
+};
+use denon_marantz_proto::{
+    MAX_QUICK_SELECT, NetworkAudioCommand, SpecFeature, SpecGeneration, ZoneSettingValue,
 };
 use tokio::sync::{broadcast, watch};
 
@@ -106,9 +112,14 @@ fn settings_request(info: &Info, part: SettingsPart) -> Option<(Bytes, usize)> {
     if info.update_method != UpdateMethod::AppCommand {
         return None;
     }
-    let zones = u8::try_from(info.zones.len()).unwrap_or(u8::MAX);
     let mut body = Vec::new();
-    match appcommand::write_settings_request(&listed, zones, info.features, part, &mut body) {
+    match appcommand::write_settings_request(
+        &listed,
+        info.read_zone_count(),
+        info.features,
+        part,
+        &mut body,
+    ) {
         Ok(count @ 1..) => Some((body.into(), count)),
         _ => None,
     }
@@ -162,13 +173,17 @@ async fn read_settings_request(
 fn appcommand0300_commands(queries: Option<&ListedQueries>) -> Box<[Definition]> {
     APPCOMMAND0300_COMMANDS
         .into_iter()
-        .filter(|definition| {
-            queries.map_or_else(
-                || *definition != appcommand::GET_OUTPUT_SETTINGS,
-                |queries| queries.lists(definition.cmd.name.unwrap_or_default()),
-            )
-        })
+        .filter(|definition| asks_appcommand0300(queries, definition))
         .collect()
+}
+
+/// Returns true if the receiver is asked `definition`, one of
+/// [`APPCOMMAND0300_COMMANDS`].
+fn asks_appcommand0300(queries: Option<&ListedQueries>, definition: &Definition) -> bool {
+    queries.map_or_else(
+        || *definition != appcommand::GET_OUTPUT_SETTINGS,
+        |queries| queries.lists(definition.cmd.name.unwrap_or_default()),
+    )
 }
 
 /// The queries of the first of the two `AppCommand0300.xml` requests of the
@@ -233,7 +248,7 @@ pub struct Info {
     /// Host that was given. An IPv6 address is without brackets.
     /// Link-local IPv6 addresses with a zone are not supported.
     pub host: String,
-    /// Generation of the receiver.
+    /// Kind of HTTP interface of the receiver.
     pub receiver_type: ReceiverType,
     /// HTTP port that is used for AppCommand and the status pages.
     pub port: u16,
@@ -286,7 +301,8 @@ pub struct Info {
     /// The features that the device information lists. The state queries of
     /// a feature that it does not list are not sent at the start, with
     /// [`Avr::refresh`] and with `Avr::telnet_refresh_group`. `None` for
-    /// receivers older than about 2016: then all are sent.
+    /// receivers older than about 2016: then all are sent. Queries that the
+    /// [`Info::spec_generation`] does not have are left out too.
     pub features: Option<DeviceFeatures>,
     /// The value ranges that the device information lists. Setters refuse a
     /// value outside a listed range or between its steps. A volume is checked
@@ -305,10 +321,188 @@ impl Info {
     /// 0301 or higher.
     #[must_use]
     pub fn has_heos(&self) -> bool {
-        self.comm_api_version
-            .as_deref()
-            .and_then(|version| version.parse::<u16>().ok())
-            .is_some_and(|version| version >= 301)
+        self.spec_generation() == SpecGeneration::Current
+    }
+
+    /// The protocol specs that the receiver follows, from
+    /// [`Info::comm_api_version`] and [`Info::brand`]. A Marantz 0210
+    /// receiver counts as Denon if nothing tells its brand, see
+    /// [`Info::brand`].
+    #[must_use]
+    pub fn spec_generation(&self) -> SpecGeneration {
+        SpecGeneration::of(self.comm_api_version.as_deref(), self.brand)
+    }
+
+    /// Returns true if a spec of the generation of the receiver has the
+    /// feature, or if no spec is known.
+    #[must_use]
+    pub fn supports(&self, feature: SpecFeature) -> bool {
+        self.spec_generation().supports(feature)
+    }
+
+    /// Returns true if the receiver may have the value: the spec generation
+    /// has it, the device information lists its feature and the receiver has
+    /// its zone. What the device information does not say counts as present.
+    #[must_use]
+    pub fn offers(&self, query: Query) -> bool {
+        query
+            .spec_feature()
+            .is_none_or(|feature| self.supports(feature))
+            && self.lists(query)
+    }
+
+    /// Returns true if the receiver may accept the command: as
+    /// [`Info::offers_line`] for its line, the receiver has the zone, and the
+    /// value is inside [`Info::ranges`]. A network audio command also needs
+    /// [`SpecFeature::NetworkAudio`], and a preset number at most
+    /// [`SpecGeneration::network_presets`]. A quick select needs
+    /// [`Info::has_quick_select`]. False for a command whose text is not
+    /// valid.
+    #[must_use]
+    pub fn offers_command(&self, zone: Zone, command: &Command<'_>) -> bool {
+        use NetworkAudioCommand as N;
+        use ZoneSettingValue as Z;
+        let allowed = match *command {
+            Command::NetworkAudio(N::Preset(number) | N::StorePreset(number)) => self
+                .spec_generation()
+                .network_presets()
+                .is_some_and(|presets| number <= presets),
+            Command::NetworkAudio(_) => self.supports(SpecFeature::NetworkAudio),
+            Command::SetZoneSetting(Z::QuickSelect(slot) | Z::StoreQuickSelect(slot)) => {
+                self.has_quick_select(slot)
+            }
+            _ => true,
+        };
+        if !allowed || !self.has_zone(zone) {
+            return false;
+        }
+        let mut line = String::with_capacity(32);
+        command.write_line(self.brand, zone, &mut line).is_ok()
+            && self.offers_line(&line)
+            && self.ranges.check(zone, command).is_ok()
+    }
+
+    /// Returns true if the receiver may accept the command line, for example
+    /// `Z2PSBAS 50`: the spec generation has what it needs, and the device
+    /// information lists the feature and the zone of the value that it sets.
+    /// Values are not checked against [`Info::ranges`].
+    #[must_use]
+    pub fn offers_line(&self, line: &str) -> bool {
+        self.spec_generation().allows_line(line)
+            && query_for_command(line).is_none_or(|query| self.lists(query))
+    }
+
+    /// Returns true if the device information lists the feature and the zone
+    /// of the value, or does not say.
+    fn lists(&self, query: Query) -> bool {
+        self.has_zone(query.zone()) && query.listed_in(self.features)
+    }
+
+    /// Returns true if the device information lists the zone, or does not
+    /// say how many zones there are.
+    fn has_zone(&self, zone: Zone) -> bool {
+        zone == Zone::Main || self.zone_count.is_none() || self.zones.contains(&zone)
+    }
+
+    /// The number of zones that [`Avr::update`] reads.
+    fn read_zone_count(&self) -> u8 {
+        u8::try_from(self.zones.len()).unwrap_or(u8::MAX)
+    }
+
+    /// Returns true if the device information lists the quick select (or
+    /// SMART select) with this number, counted from 1. The number is at most
+    /// [`MAX_QUICK_SELECT`], and at most [`Info::quick_select_count`] if that
+    /// is known. It follows the list, also when a receiver accepts more.
+    #[must_use]
+    pub const fn has_quick_select(&self, slot: u8) -> bool {
+        let listed = match self.quick_select_count {
+            Some(count) => slot <= count,
+            None => true,
+        };
+        slot >= 1 && slot <= MAX_QUICK_SELECT && listed
+    }
+
+    /// Returns true if an HTTP read gives the value, so that it is known
+    /// without telnet. Only zones in [`Info::zones`] are read.
+    ///
+    /// The settings of `AppCommand0300.xml` come with the start (if
+    /// [`StartOptions::settings`](crate::StartOptions::settings) is on), with
+    /// [`Avr::refresh`] and with the reads after commands. The LFE level comes
+    /// only when the input mode is not 7.1CH IN.
+    ///
+    /// Where the signal values come from:
+    ///
+    /// - The resolution, the audio signal and the channels:
+    ///   `AppCommand0300.xml`, if the receiver answers it.
+    /// - HDR, the color space, the pixel depth, the FRL rate and BT.2020: the
+    ///   video page of the web interface. The resolution is on it too.
+    /// - The channels, if `AppCommand0300.xml` gives no answer: the channels
+    ///   page of the web interface.
+    ///
+    /// The start reads the two pages only if
+    /// [`StartOptions::signal_pages`](crate::StartOptions::signal_pages) is
+    /// on. [`Avr::refresh_signal_pages`] always reads the video page, and the
+    /// channels page when `AppCommand0300.xml` gives no answer. A value stays
+    /// unknown if the receiver has no such page: the start then gives
+    /// [`PageStatus::NotFound`] for it. The video page has BT.2020 only for
+    /// some signals.
+    ///
+    /// Status pages of some receivers do not tell which sources are in use.
+    /// On receivers without `AppCommand`, the friendly name is only in
+    /// [`Info::friendly_name`].
+    #[must_use]
+    pub fn readable_over_http(&self, query: Query) -> bool {
+        use Query as Q;
+        if !self.offers(query) || !self.zones.contains(&query.zone()) {
+            return false;
+        }
+        let appcommand = self.update_method == UpdateMethod::AppCommand;
+        let queries = self.queries.as_ref();
+        let asks = |definition| appcommand && asks_appcommand0300(queries, &definition);
+        match query {
+            Q::Source
+            | Q::Volume
+            | Q::Mute
+            | Q::Zone2Power
+            | Q::Zone2Mute
+            | Q::Zone3Power
+            | Q::Zone3Mute
+            | Q::SoundMode
+            | Q::SourceNames
+            | Q::SourcesInUse
+            | Q::Eco => true,
+            Q::FriendlyName
+            | Q::Dimmer
+            | Q::AutoStandby
+            | Q::Zone2AutoStandby
+            | Q::Zone3AutoStandby => appcommand,
+            Q::ToneControl | Q::Bass | Q::Treble => {
+                appcommand && queries.is_none_or(|queries| queries.tone_control)
+            }
+            Q::MultEq | Q::DynamicEq | Q::ReferenceLevel | Q::DynamicVolume => {
+                asks(appcommand::GET_AUDYSSEY)
+            }
+            Q::HdmiOutput => appcommand && self.hdmi_output_over_http,
+            // The settings rows use the other query of the same value.
+            Q::AutoLipSyncAls => self.readable_over_http(Q::AutoLipSync),
+            _ => match query.signal_part() {
+                Some(SignalPart::AudioInfo) => asks(appcommand::GET_AUDIO_INFO),
+                // The pages are read with any update method.
+                Some(SignalPart::Video | SignalPart::Channels | SignalPart::Colorimetry) => true,
+                Some(_) => false,
+                None => {
+                    appcommand
+                        && queries.is_some_and(|queries| {
+                            settings_request_asks(
+                                query,
+                                queries,
+                                self.read_zone_count(),
+                                self.features,
+                            )
+                        })
+                }
+            },
+        }
     }
 }
 
@@ -1454,7 +1648,8 @@ impl Avr {
     /// signal information. The answers are events, and events that repeat the
     /// last value are shown again. A group that the connection does not fetch
     /// at connect (see [`TelnetConfig::query_groups`]) stays empty until this
-    /// is called.
+    /// is called. Queries of features that [`Info::features`] does not list,
+    /// or that [`Info::spec_generation`] does not have, are not sent.
     ///
     /// The receiver does not send the values that depend on a changed value,
     /// for example the Dirac Live filters of another speaker preset. A caller
@@ -1933,7 +2128,7 @@ impl AvrBuilder {
     }
 
     /// Sets the types and ports to try when identifying the receiver, see
-    /// [`identify_on`]. The default is the usual ports of each generation.
+    /// [`identify_on`]. The default is the usual ports of each receiver type.
     /// Use this if the AppCommand port is not a usual one, for example behind
     /// a proxy.
     ///
@@ -2084,6 +2279,7 @@ impl AvrBuilder {
             info.brand,
             single_zone,
             info.features,
+            info.spec_generation(),
             info.has_dab(),
         );
         let follow_up = FollowUp::start(
@@ -2263,8 +2459,10 @@ fn info_from(
         dirac_live: device_info.dirac_live,
         tuner: device_info.tuner,
         quick_select_count: device_info.quick_select_count,
-        hdmi_output_over_http: appcommand0300_commands(device_info.queries.as_ref())
-            .contains(&appcommand::GET_OUTPUT_SETTINGS),
+        hdmi_output_over_http: asks_appcommand0300(
+            device_info.queries.as_ref(),
+            &appcommand::GET_OUTPUT_SETTINGS,
+        ),
         queries: device_info.queries,
         zones: Zone::ALL[..zone_count].to_vec(),
         zone_count: device_info.device_zones,
@@ -2346,4 +2544,198 @@ fn parse_page(body: Option<&Bytes>) -> Option<Page<'_>> {
     Page::parse(body?)
         .inspect_err(|error| tracing::debug!(%error, "status page is not usable"))
         .ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use denon_marantz_proto::{DeviceFeature, RemoteKey, SoundSettingValue, ValueRange};
+
+    use super::*;
+
+    fn info(version: &str, brand: Brand, zones: Option<u8>) -> Info {
+        let count = usize::from(zones.unwrap_or(1));
+        Info {
+            host: "receiver".into(),
+            receiver_type: ReceiverType::AvrX2016,
+            port: 8080,
+            type_proof: TypeProof::Read,
+            update_method: UpdateMethod::AppCommand,
+            brand,
+            manufacturer: None,
+            model_name: None,
+            serial_number: None,
+            friendly_name: String::new(),
+            comm_api_version: Some(version.into()),
+            mac_address: None,
+            dirac_live: false,
+            tuner: TunerInfo::Unknown,
+            quick_select_count: None,
+            hdmi_output_over_http: false,
+            queries: None,
+            zones: Zone::ALL[..count].to_vec(),
+            zone_count: zones,
+            features: None,
+            ranges: DeviceRanges::default(),
+        }
+    }
+
+    #[test]
+    fn generation_hides_older_commands() {
+        let current = info("0301", Brand::Denon, Some(2));
+        assert_eq!(current.spec_generation(), SpecGeneration::Current);
+        assert!(current.has_heos());
+        assert!(!current.supports(SpecFeature::ProLogicMode));
+        assert!(!current.offers(Query::ProLogicMode));
+        assert!(!current.offers_line("PSMODE:MUSIC"));
+        assert!(current.offers_line("PSLFL 05"));
+        let old = info("0210", Brand::Marantz, Some(2));
+        assert!(old.offers(Query::DynamicCompression));
+        assert!(!old.offers(Query::SurroundBackMode));
+        assert!(!old.offers_line("PSDIL ON"));
+        let unknown = info("", Brand::Denon, None);
+        assert!(unknown.offers(Query::AutoFlagDetect));
+    }
+
+    #[test]
+    fn zone_lines_need_the_zone() {
+        let one = info("0301", Brand::Denon, Some(1));
+        let two = info("0301", Brand::Denon, Some(2));
+        let unknown = info("0301", Brand::Denon, None);
+        for line in ["Z2PSBAS 50", "Z2MU ON", "Z250", "Z2ON"] {
+            assert!(!one.offers_line(line), "{line}");
+            assert!(two.offers_line(line), "{line}");
+            assert!(unknown.offers_line(line), "{line}");
+        }
+        for line in ["Z3MU ON", "Z3PSTRE 50"] {
+            assert!(!two.offers_line(line), "{line}");
+            assert!(unknown.offers_line(line), "{line}");
+        }
+        assert!(one.offers_line("MUON"));
+        let key = Command::RemoteKey(RemoteKey::PageUp);
+        assert!(!one.offers_command(Zone::Zone3, &key));
+        assert!(unknown.offers_command(Zone::Zone3, &key));
+        assert!(!one.offers(Query::Zone2Bass));
+        assert!(!one.offers_command(Zone::Zone2, &Command::Mute(true)));
+        assert!(two.offers_command(Zone::Zone2, &Command::Mute(true)));
+    }
+
+    #[test]
+    fn listed_features_decide() {
+        let mut info = info("0301", Brand::Denon, Some(3));
+        info.features = Some(DeviceFeatures::default().with(DeviceFeature::Lfe));
+        assert!(!info.offers_line("BTLEV UP"));
+        assert!(!info.offers(Query::BluetoothLevel));
+        assert!(!info.offers_line("Z3MU ON"));
+        assert!(info.offers_line("PSLFE 05"));
+        info.features = Some(DeviceFeatures::default().with(DeviceFeature::Bttx));
+        assert!(info.offers_line("BTLEV UP"));
+    }
+
+    #[test]
+    fn commands_check_ranges_and_network_audio() {
+        let mut info = info("0300", Brand::Denon, Some(1));
+        let lfe = |value| Command::SetSoundSetting(SoundSettingValue::LfeExternalInput(value));
+        assert!(info.offers_command(Zone::Main, &lfe(15)));
+        info.ranges.lfe_external_input = Some(ValueRange {
+            min_tenths: 0,
+            max_tenths: 100,
+            step_tenths: Some(50),
+        });
+        assert!(info.offers_command(Zone::Main, &lfe(10)));
+        assert!(!info.offers_command(Zone::Main, &lfe(15)));
+        let next = Command::NetworkAudio(NetworkAudioCommand::Next);
+        let preset = |number| Command::NetworkAudio(NetworkAudioCommand::Preset(number));
+        let store = |number| Command::NetworkAudio(NetworkAudioCommand::StorePreset(number));
+        assert!(info.offers_command(Zone::Main, &next));
+        for generation in [SpecGeneration::Denon2015, SpecGeneration::Unknown] {
+            info.comm_api_version = Some(if generation == SpecGeneration::Unknown {
+                "0220".into()
+            } else {
+                "0300".into()
+            });
+            let presets = generation.network_presets().unwrap();
+            assert!(info.offers_command(Zone::Main, &preset(presets)));
+            assert!(!info.offers_command(Zone::Main, &preset(presets + 1)));
+            assert!(!info.offers_command(Zone::Main, &store(presets + 1)));
+        }
+        info.comm_api_version = Some("0301".into());
+        assert!(!info.offers_command(Zone::Main, &next));
+        assert!(!info.offers_command(Zone::Main, &preset(1)));
+        assert!(!info.offers_command(Zone::Main, &Command::Raw("")));
+    }
+
+    #[test]
+    fn quick_select_slots_follow_the_count() {
+        let mut info = info("0301", Brand::Denon, Some(1));
+        assert!(!info.has_quick_select(0));
+        assert!(info.has_quick_select(MAX_QUICK_SELECT));
+        assert!(!info.has_quick_select(MAX_QUICK_SELECT + 1));
+        info.quick_select_count = Some(4);
+        assert!(info.has_quick_select(4));
+        assert!(!info.has_quick_select(5));
+        let select = |slot| Command::SetZoneSetting(ZoneSettingValue::QuickSelect(slot));
+        let store = |slot| Command::SetZoneSetting(ZoneSettingValue::StoreQuickSelect(slot));
+        assert!(info.offers_command(Zone::Main, &select(4)));
+        assert!(!info.offers_command(Zone::Main, &select(5)));
+        assert!(!info.offers_command(Zone::Main, &store(5)));
+        info.quick_select_count = Some(0);
+        assert!(!info.has_quick_select(1));
+    }
+
+    #[test]
+    fn http_reads_follow_the_lists() {
+        let mut info = info("0301", Brand::Denon, Some(2));
+        let mut listed = ListedQueries::default();
+        listed.surround_parameter = true;
+        listed.zone_tone = true;
+        info.queries = Some(listed);
+        for query in [
+            Query::Volume,
+            Query::Zone2Power,
+            Query::Dimmer,
+            Query::CinemaEq,
+            Query::Zone2Bass,
+            Query::HdrFormat,
+            Query::VideoResolution,
+        ] {
+            assert!(info.readable_over_http(query), "{query:?}");
+        }
+        for query in [
+            Query::Zone3Power,
+            Query::Zone3Bass,
+            Query::MultEq,
+            Query::SamplingRate,
+            Query::HdmiOutput,
+            Query::HdmiMaxResolution,
+            Query::DialogEnhancer,
+            Query::ToneControl,
+            Query::ProLogicMode,
+            Query::Menu,
+        ] {
+            assert!(!info.readable_over_http(query), "{query:?}");
+        }
+        assert!(info.readable_over_http(Query::ExtendedColorimetry));
+        assert!(!info.readable_over_http(Query::AutoLipSyncAls));
+        let mut delay = info.clone();
+        if let Some(listed) = delay.queries.as_mut() {
+            listed.audio_delay = true;
+        }
+        assert!(delay.readable_over_http(Query::AutoLipSyncAls));
+        let mut three = info.clone();
+        three.zones = Zone::ALL.to_vec();
+        three.zone_count = Some(3);
+        assert!(three.readable_over_http(Query::Zone3Bass));
+        let mut no_count = info.clone();
+        no_count.zones = vec![Zone::Main];
+        no_count.zone_count = None;
+        assert!(no_count.offers(Query::Zone2Power));
+        assert!(!no_count.readable_over_http(Query::Zone2Power));
+        info.update_method = UpdateMethod::StatusPages;
+        assert!(info.readable_over_http(Query::SourceNames));
+        assert!(info.readable_over_http(Query::Volume));
+        assert!(info.readable_over_http(Query::HdrFormat));
+        assert!(!info.readable_over_http(Query::Dimmer));
+        assert!(!info.readable_over_http(Query::CinemaEq));
+        assert!(!info.readable_over_http(Query::SamplingRate));
+    }
 }

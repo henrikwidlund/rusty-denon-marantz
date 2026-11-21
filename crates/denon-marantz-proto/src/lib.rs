@@ -28,6 +28,7 @@ mod sound_settings;
 mod speaker_extras;
 mod speaker_setup;
 mod speaker_tables;
+mod spec;
 mod state;
 mod system_settings;
 mod text;
@@ -103,6 +104,7 @@ pub use speaker_tables::{
     BASS_PATH, BassSettings, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, DISTANCES_PATH, DistanceUnit,
     LFE_DISTRIBUTION_OFF, SpeakerTable, SubwooferOutputMode, TableEntry, WEB_INTERFACE_PORT,
 };
+pub use spec::{SpecFeature, SpecGeneration, spec_feature_of_line};
 pub use state::{Change, DeviceState, DiracSlot, Setting, State, ZoneState};
 pub use system_settings::{NetworkControl, SYSTEM_SETTINGS_PATH, SystemSettings};
 pub use tone::ToneLevel;

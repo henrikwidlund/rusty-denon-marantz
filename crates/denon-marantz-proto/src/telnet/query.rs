@@ -4,6 +4,8 @@ use QueryGroup::{Core, Device, Names, Older, Picture, Signal, Sound, Speakers, T
 
 use crate::brand::Brand;
 use crate::sorted::{self, Keyed};
+use crate::values::PictureMode;
+use crate::zone::Zone;
 
 /// Asks for the power state of the main zone.
 pub const MAIN_ZONE_POWER_QUERY: &str = "ZM?";
@@ -334,6 +336,48 @@ query_values! {
 }
 
 impl Query {
+    /// The zone that the value belongs to. [`Zone::Main`] for values of the
+    /// main zone and of the whole receiver.
+    #[must_use]
+    pub const fn zone(self) -> Zone {
+        match self {
+            Self::Zone2Power
+            | Self::Zone2Mute
+            | Self::Zone2Sleep
+            | Self::Zone2QuickSelect
+            | Self::Zone2AutoStandby
+            | Self::Zone2VolumeSettings
+            | Self::Zone2ChannelLevels
+            | Self::Zone2Bass
+            | Self::Zone2Treble
+            | Self::Zone2HighPassFilter
+            | Self::Zone2ChannelMode
+            | Self::Zone2HdmiAudio => Zone::Zone2,
+            Self::Zone3Power
+            | Self::Zone3Mute
+            | Self::Zone3Sleep
+            | Self::Zone3QuickSelect
+            | Self::Zone3AutoStandby
+            | Self::Zone3VolumeSettings
+            | Self::Zone3ChannelLevels
+            | Self::Zone3Bass
+            | Self::Zone3Treble
+            | Self::Zone3HighPassFilter
+            | Self::Zone3ChannelMode => Zone::Zone3,
+            _ => Zone::Main,
+        }
+    }
+
+    /// The part of the signal that a query of the [`QueryGroup::Signal`]
+    /// group belongs to. `None` for other queries.
+    #[must_use]
+    pub fn signal_part(self) -> Option<SignalPart> {
+        QUERIES
+            .iter()
+            .find(|entry| entry.query == self && entry.group == Signal)
+            .map(|entry| SignalPart::of(entry.text))
+    }
+
     /// The query text for this brand. `None` if the brand has no query for
     /// the value.
     #[must_use]
@@ -362,6 +406,30 @@ pub(crate) fn query_for_text(text: &str) -> Option<Query> {
     sorted::find(&BY_TEXT, (text, ""))
 }
 
+/// The query whose answer tells the value that a command line sets. `None`
+/// if no query fits.
+///
+/// The query text without the `?` and the space before it must be the
+/// longest start of the line. For example `Z2PSBAS 50` gives
+/// [`Query::Zone2Bass`], `Z250` (zone 2 volume) gives [`Query::Zone2Power`]
+/// and `PSDELAY 100` gives [`Query::AudioDelay`]. A `PV` line with a picture
+/// mode code, such as `PVSTD`, gives [`Query::PictureMode`].
+#[must_use]
+pub fn query_for_command(line: &str) -> Option<Query> {
+    // Some picture mode codes start like the text of another picture query,
+    // for example `PVSTD` (Standard) like `PVST` (saturation).
+    if line
+        .strip_prefix("PV")
+        .is_some_and(|code| PictureMode::from_telnet(code.trim_end()).is_some())
+    {
+        return Some(Query::PictureMode);
+    }
+    (1..=line.len().min(LONGEST_PREFIX))
+        .rev()
+        .filter_map(|len| line.get(..len))
+        .find_map(|start| sorted::find(&BY_PREFIX, (start, "")))
+}
+
 /// The values of [`QUERIES`], sorted by text.
 static BY_TEXT: [Keyed<Query>; QUERIES.len()] = sorted::sort(by_text());
 
@@ -379,6 +447,46 @@ const fn by_text() -> [Keyed<Query>; QUERIES.len()] {
         i += 1;
     }
     list
+}
+
+/// The values of [`QUERIES`], sorted by [`command_start`].
+static BY_PREFIX: [Keyed<Query>; QUERIES.len()] = sorted::sort(by_prefix());
+
+/// The length of the longest key of [`BY_PREFIX`].
+const LONGEST_PREFIX: usize = {
+    let mut longest = 0;
+    let mut i = 0;
+    while i < QUERIES.len() {
+        let len = command_start(QUERIES[i].text).len();
+        if len > longest {
+            longest = len;
+        }
+        i += 1;
+    }
+    longest
+};
+
+const fn by_prefix() -> [Keyed<Query>; QUERIES.len()] {
+    let mut list = by_text();
+    let mut i = 0;
+    while i < list.len() {
+        list[i].key.0 = command_start(list[i].key.0);
+        i += 1;
+    }
+    list
+}
+
+/// The query text without the `?` at the end and the spaces before it: the
+/// start of the commands that set the value.
+const fn command_start(text: &'static str) -> &'static str {
+    let bytes = match text.as_bytes().split_last() {
+        Some((b'?', rest)) => rest.trim_ascii_end(),
+        _ => text.as_bytes(),
+    };
+    match core::str::from_utf8(bytes) {
+        Ok(start) => start,
+        Err(_) => panic!("query text is not ASCII"),
+    }
 }
 
 /// Brands that a query is for.
@@ -476,6 +584,12 @@ impl QueryGroup {
     ///    crossovers and the graphic EQ. Only Denon receivers answer these.
     /// 10. [`Older`](Self::Older): settings of receivers from about 2011 to
     ///     2015. The command lists of receivers with HEOS do not have these.
+    ///
+    /// These lists are not filtered. The connection of the `denon-marantz`
+    /// crate leaves out queries that the
+    /// [`SpecGeneration`](crate::SpecGeneration) of the receiver does not
+    /// have, in any group. Filter with
+    /// [`SpecGeneration::allows`](crate::SpecGeneration::allows).
     pub const DEFAULT_ORDER: &[Self] = &[
         Self::Core,
         Self::Names,
@@ -535,8 +649,9 @@ pub enum SignalPart {
     AudioInfo,
     /// The HDMI limit. Only telnet answers it.
     TelnetOnly,
-    /// The extended colorimetry (BT.2020). Only telnet answers it. Ask it
-    /// after the video queries, so that its answer comes after theirs.
+    /// The extended colorimetry (BT.2020). Telnet answers it. The video page
+    /// of the web interface has it only for some signals. Ask it after the
+    /// video queries, so that its answer comes after theirs.
     Colorimetry,
 }
 
@@ -775,8 +890,261 @@ static QUERIES: [Entry; 153] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telnet::Command;
 
     const BRANDS: [Brand; 2] = [Brand::Denon, Brand::Marantz];
+
+    #[test]
+    fn commands_find_the_query_with_the_longest_start() {
+        assert!(sorted::is_strictly_sorted(&BY_PREFIX));
+        for (line, query) in [
+            ("Z2PSBAS 50", Some(Query::Zone2Bass)),
+            ("Z2MU ON", Some(Query::Zone2Mute)),
+            ("Z250", Some(Query::Zone2Power)),
+            ("Z3MU ON", Some(Query::Zone3Mute)),
+            ("Z3PSTRE 50", Some(Query::Zone3Treble)),
+            ("Z3ON", Some(Query::Zone3Power)),
+            ("PSDELAY 100", Some(Query::AudioDelay)),
+            ("PSDEL 100", Some(Query::DelayTime)),
+            ("BTLEV UP", Some(Query::BluetoothLevel)),
+            ("BTTX ON", Some(Query::BluetoothTransmitter)),
+            ("PSSPV ON", Some(Query::SpeakerVirtualizer)),
+            ("PSSP:FH", Some(Query::EffectSpeakers)),
+            ("PSTONE CTRL ON", Some(Query::ToneControl)),
+            ("PSCINEMA EQ.ON", Some(Query::CinemaEq)),
+            ("MSQUICK1", Some(Query::QuickSelect)),
+            ("MSDOLBY DIGITAL", Some(Query::SoundMode)),
+            ("MSSMART1", Some(Query::QuickSelect)),
+            ("Z2SMART1", Some(Query::Zone2QuickSelect)),
+            // A `PV` setter without its own query needs the picture feature.
+            ("PVHUE 50", Some(Query::PictureMode)),
+            ("PVSTD", Some(Query::PictureMode)),
+            ("PVSTM\r", Some(Query::PictureMode)),
+            ("PVBRL", Some(Query::PictureMode)),
+            ("PVCSTM", Some(Query::PictureMode)),
+            ("PVMOV", Some(Query::PictureMode)),
+            ("PVST 50", Some(Query::Saturation)),
+            ("PVBR 50", Some(Query::Brightness)),
+            ("PVSTX", Some(Query::Saturation)),
+            ("CVTTR UP", Some(Query::TactileChannel)),
+            ("VSSCHAUTO", Some(Query::HdmiUpscaler)),
+            ("VSSC48P", Some(Query::AnalogToHdmiResolution)),
+            ("PSIMAXAUD AUTO", Some(Query::ImaxAudio)),
+            ("SYHDMIDIAGMAXRES X", Some(Query::HdmiMaxResolution)),
+            ("PSLFL 05", None),
+            ("NS9A", None),
+            ("", None),
+            ("Zé", None),
+        ] {
+            assert_eq!(query_for_command(line), query, "{line}");
+        }
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one table of cases")]
+    fn typed_commands_find_their_query() {
+        use crate::{DeviceSettingValue, SoundSettingValue as S, ToneLevel, ZoneSettingValue as Z};
+        let tone = ToneLevel::from_db(0).unwrap();
+        let cases = [
+            (Command::Mute(true), Zone::Zone2, Query::Zone2Mute),
+            (Command::Mute(true), Zone::Zone3, Query::Zone3Mute),
+            (Command::Mute(true), Zone::Main, Query::Mute),
+            (
+                Command::SetZoneSetting(Z::Bass(tone)),
+                Zone::Zone2,
+                Query::Zone2Bass,
+            ),
+            (
+                Command::SetZoneSetting(Z::Treble(tone)),
+                Zone::Zone3,
+                Query::Zone3Treble,
+            ),
+            (
+                Command::SetZoneSetting(Z::HighPassFilter(true)),
+                Zone::Zone3,
+                Query::Zone3HighPassFilter,
+            ),
+            (
+                Command::SetZoneSetting(Z::QuickSelect(1)),
+                Zone::Main,
+                Query::QuickSelect,
+            ),
+            (
+                Command::SetZoneSetting(Z::QuickSelect(1)),
+                Zone::Zone2,
+                Query::Zone2QuickSelect,
+            ),
+            (Command::SetBass(tone), Zone::Main, Query::Bass),
+            (Command::ToneControl(true), Zone::Main, Query::ToneControl),
+            (Command::DynamicEq(true), Zone::Main, Query::DynamicEq),
+            (Command::Lfc(true), Zone::Main, Query::Lfc),
+            (Command::InstaPrevue(true), Zone::Main, Query::InstaPrevue),
+            (
+                Command::AllZoneStereo(true),
+                Zone::Main,
+                Query::AllZoneStereo,
+            ),
+            (
+                Command::SetSoundSetting(S::LfeLevel(5)),
+                Zone::Main,
+                Query::LfeLevel,
+            ),
+            (
+                Command::SetSoundSetting(S::ImaxSubwooferMode(true)),
+                Zone::Main,
+                Query::ImaxSubwooferMode,
+            ),
+            (
+                Command::SetSoundSetting(S::ImaxHighPass(40)),
+                Zone::Main,
+                Query::ImaxHighPassFilter,
+            ),
+            (
+                Command::SetSoundSetting(S::CenterSpread(true)),
+                Zone::Main,
+                Query::CenterSpread,
+            ),
+            (
+                Command::SetSoundSetting(S::Subwoofer(true)),
+                Zone::Main,
+                Query::Subwoofer,
+            ),
+            (
+                Command::SetSoundSetting(S::SpeakerVirtualizer(true)),
+                Zone::Main,
+                Query::SpeakerVirtualizer,
+            ),
+            (
+                Command::SetSoundSetting(S::GraphicEq(true)),
+                Zone::Main,
+                Query::GraphicEq,
+            ),
+            (
+                Command::SetSoundSetting(S::HeadphoneEq(true)),
+                Zone::Main,
+                Query::HeadphoneEq,
+            ),
+            (
+                Command::SetSoundSetting(S::LoudnessManagement(true)),
+                Zone::Main,
+                Query::LoudnessManagement,
+            ),
+            (
+                Command::SetSoundSetting(S::Effect(true)),
+                Zone::Main,
+                Query::Effect,
+            ),
+            (
+                Command::SetSoundSetting(S::CenterImage(3)),
+                Zone::Main,
+                Query::CenterImage,
+            ),
+            (
+                Command::SetSoundSetting(S::AuroMaticStrength(5)),
+                Zone::Main,
+                Query::AuroStrength,
+            ),
+            (
+                Command::SetDeviceSetting(DeviceSettingValue::BluetoothLevel(50)),
+                Zone::Main,
+                Query::BluetoothLevel,
+            ),
+            (
+                Command::SetDeviceSetting(DeviceSettingValue::BluetoothTransmitter(true)),
+                Zone::Main,
+                Query::BluetoothTransmitter,
+            ),
+            (
+                Command::SetDeviceSetting(DeviceSettingValue::RemoteLock(true)),
+                Zone::Main,
+                Query::RemoteLock,
+            ),
+        ];
+        for brand in BRANDS {
+            for (command, zone, query) in &cases {
+                let mut line = String::new();
+                command.write_line(brand, *zone, &mut line).unwrap();
+                assert_eq!(query_for_command(&line), Some(*query), "{brand:?} {line:?}");
+            }
+        }
+        for mode in [
+            PictureMode::Standard,
+            PictureMode::Stream,
+            PictureMode::Brilliant,
+        ] {
+            let command = Command::SetPictureSetting(crate::PictureSettingValue::Mode(mode));
+            let mut line = String::new();
+            command
+                .write_line(Brand::Denon, Zone::Main, &mut line)
+                .unwrap();
+            assert_eq!(
+                query_for_command(&line),
+                Some(Query::PictureMode),
+                "{line:?}"
+            );
+        }
+        let lfe_input = Command::SetSoundSetting(S::LfeExternalInput(5));
+        let mut line = String::new();
+        lfe_input
+            .write_line(Brand::Denon, Zone::Main, &mut line)
+            .unwrap();
+        assert_eq!(query_for_command(&line), None, "{line:?}");
+    }
+
+    #[test]
+    fn spec_queries_are_in_groups_that_are_not_sent_at_the_start() {
+        for entry in &QUERIES {
+            if entry.query.spec_feature().is_some() {
+                assert!(
+                    !QueryGroup::START_ORDER.contains(&entry.group),
+                    "{}",
+                    entry.text
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn current_receivers_get_no_older_query() {
+        for brand in BRANDS {
+            for query in group_queries(brand, Older) {
+                assert!(!crate::SpecGeneration::Current.allows(query), "{query}");
+            }
+        }
+    }
+
+    #[test]
+    fn signal_part_follows_the_group() {
+        assert_eq!(Query::HdrFormat.signal_part(), Some(SignalPart::Video));
+        assert_eq!(
+            Query::InputChannels.signal_part(),
+            Some(SignalPart::Channels)
+        );
+        assert_eq!(
+            Query::SamplingRate.signal_part(),
+            Some(SignalPart::AudioInfo)
+        );
+        assert_eq!(
+            Query::ExtendedColorimetry.signal_part(),
+            Some(SignalPart::Colorimetry)
+        );
+        assert_eq!(Query::Volume.signal_part(), None);
+    }
+
+    #[test]
+    fn zone_follows_the_name() {
+        for query in Query::ALL {
+            let name = format!("{query:?}");
+            let zone = if name.starts_with("Zone2") {
+                Zone::Zone2
+            } else if name.starts_with("Zone3") {
+                Zone::Zone3
+            } else {
+                Zone::Main
+            };
+            assert_eq!(query.zone(), zone, "{name}");
+        }
+    }
 
     #[test]
     fn every_list_query_is_a_known_query() {

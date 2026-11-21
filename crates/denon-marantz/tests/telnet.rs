@@ -24,8 +24,8 @@ use denon_marantz_proto::{
     HdmiAudioDecode, HdmiOutput, HdmiUpscaler, Illumination, InputMode, MultiEq, MuteLevel,
     NoiseReduction, PanelLock, PictureMode, PliizHeightGain, Power, PowerOnVolume, ProLogicMode,
     ReceiverType, ReferenceLevelOffset, RemoteKey, RoomSize, Setting, Sleep, SpeakerPreset,
-    SurroundBackMode, ToneLevel, Trigger, TunerBand, TunerBands, TunerFrequency, TunerInfo,
-    TunerMode, ValueRange, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
+    SpecGeneration, SurroundBackMode, ToneLevel, Trigger, TunerBand, TunerBands, TunerFrequency,
+    TunerInfo, TunerMode, ValueRange, VideoProcessingMode, Volume, VolumeDisplay, VolumeMode, Zone,
     ZoneChannelMode, ZoneHdmiAudio,
 };
 use tokio::time::timeout;
@@ -539,6 +539,22 @@ async fn invalid_settings_are_refused() {
     assert!(matches!(error, Error::InvalidConfig(_)), "{error:?}");
 }
 
+/// The queries of the default order that a 0301 receiver gets: the queries
+/// that only older specs have are left out.
+fn current_state_queries() -> impl Iterator<Item = &'static str> {
+    state_queries(Brand::Denon).filter(|query| SpecGeneration::Current.allows(query))
+}
+
+/// The last query of [`current_state_queries`] that a receiver with these
+/// features gets, with the line end.
+fn last_current_query(features: DeviceFeatures) -> String {
+    let last = current_state_queries()
+        .filter(|query| features.allows(query))
+        .last()
+        .unwrap();
+    format!("{last}\r")
+}
+
 /// The lines that the client sent.
 fn sent(telnet: &FakeTelnet) -> Vec<String> {
     telnet
@@ -554,7 +570,7 @@ async fn the_queries_that_fill_the_state_are_sent_after_a_connect() {
     let telnet = FakeTelnet::start().await;
     let (_avr, _http) = connected(telnet_config(telnet.port)).await;
     let expected: Vec<String> = std::iter::once("ZM?")
-        .chain(state_queries(Brand::Denon))
+        .chain(current_state_queries())
         .map(str::to_owned)
         .collect();
     wait_until("all queries", || sent(&telnet).len() >= expected.len()).await;
@@ -717,7 +733,7 @@ async fn ask_needs_an_open_connection() {
 async fn the_tuner_state_is_asked_for_when_the_source_changes_to_the_tuner() {
     let telnet = FakeTelnet::start().await;
     let (_avr, _http) = connected(telnet_config(telnet.port)).await;
-    let count = 1 + state_queries(Brand::Denon).count();
+    let count = 1 + current_state_queries().count();
     wait_until("all queries", || sent(&telnet).len() >= count).await;
     telnet.send(b"SITUNER\r");
     wait_until("the tuner queries", || {
@@ -730,7 +746,7 @@ async fn the_tuner_state_is_asked_for_when_the_source_changes_to_the_tuner() {
 async fn the_hd_radio_state_is_asked_for_when_the_source_changes_to_hd_radio() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
-    let count = 1 + state_queries(Brand::Denon).count();
+    let count = 1 + current_state_queries().count();
     wait_until("all queries", || sent(&telnet).len() >= count).await;
     telnet.send(b"SIHDRADIO\r");
     let hd = ["HD?", "TFHD?", "TPHD?", "TMHD?"].map(str::to_owned);
@@ -746,7 +762,7 @@ async fn the_hd_radio_state_is_asked_for_when_the_source_changes_to_hd_radio() {
 async fn the_queries_are_sent_again_after_a_reconnect() {
     let telnet = FakeTelnet::start().await;
     let (_avr, _http) = connected(telnet_config(telnet.port)).await;
-    let count = 1 + state_queries(Brand::Denon).count();
+    let count = 1 + current_state_queries().count();
     wait_until("all queries", || sent(&telnet).len() >= count).await;
     telnet.close();
     wait_until("all queries again", || sent(&telnet).len() >= 2 * count).await;
@@ -757,7 +773,7 @@ async fn the_queries_are_sent_again_after_a_reconnect() {
 async fn refresh_sends_the_queries_again() {
     let telnet = FakeTelnet::start().await;
     let (avr, _http) = connected(telnet_config(telnet.port)).await;
-    let count = 1 + state_queries(Brand::Denon).count();
+    let count = 1 + current_state_queries().count();
     wait_until("all queries", || sent(&telnet).len() >= count).await;
     avr.telnet_refresh().await.unwrap();
     wait_until("all queries again", || sent(&telnet).len() >= 2 * count).await;
@@ -842,7 +858,7 @@ async fn commands_go_before_the_remaining_queries() {
         "command at {position}, only {} queries are due",
         lines.len()
     );
-    let total = 1 + state_queries(Brand::Denon).count();
+    let total = 1 + current_state_queries().count();
     assert!(
         lines.len() < total,
         "the command did not wait for all {total} queries"
@@ -3045,8 +3061,8 @@ async fn queries_of_features_that_the_receiver_does_not_list_are_not_sent() {
         info.features = Some(DeviceFeatures::default().with(DeviceFeature::Imax));
     })
     .await;
-    // The last query of the default order.
-    wait_until("the queries", || telnet.received().contains("MNPRV?\r")).await;
+    let last = last_current_query(DeviceFeatures::default().with(DeviceFeature::Imax));
+    wait_until("the queries", || telnet.received().contains(&last)).await;
     let received = telnet.received();
     for asked in ["MV?\r", "PSIMAX ?\r", "CV?\r", "SSQS ?\r"] {
         assert!(received.contains(asked), "{asked:?} in {received:?}");
@@ -3146,10 +3162,8 @@ async fn a_group_refresh_skips_the_queries_of_features_that_are_not_listed() {
         info.features = Some(DeviceFeatures::default().with(DeviceFeature::Imax));
     })
     .await;
-    wait_until("the start queries", || {
-        telnet.received().contains("MNPRV?\r")
-    })
-    .await;
+    let last = last_current_query(DeviceFeatures::default().with(DeviceFeature::Imax));
+    wait_until("the start queries", || telnet.received().contains(&last)).await;
     avr.telnet_refresh_group(QueryGroup::Sound).await.unwrap();
     wait_until("the group", || {
         telnet.received().matches("PSIMAX ?\r").count() == 2

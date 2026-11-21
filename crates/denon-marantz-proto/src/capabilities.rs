@@ -649,7 +649,7 @@ impl DeviceFeatures {
     /// this library does not know.
     #[must_use]
     pub fn allows(self, query: &str) -> bool {
-        feature_of_query(query).is_none_or(|feature| self.has(feature))
+        query_for_text(query).is_none_or(|query| query.listed_in(Some(self)))
     }
 
     /// Adds the feature of a block of `DeviceCapabilities/Setup`. Returns
@@ -699,6 +699,9 @@ impl Query {
     #[must_use]
     pub const fn device_feature(self) -> Option<DeviceFeature> {
         use DeviceFeature as F;
+        if matches!(self.zone(), Zone::Zone3) {
+            return Some(F::Zone3Setup);
+        }
         Some(match self {
             Self::ImaxSubwooferMode => F::SubwooferMode,
             Self::SoundModeCategory => F::SoundModeGenre,
@@ -758,27 +761,21 @@ impl Query {
             Self::AudioRestorer => F::Restorer,
             Self::DialogLevel => F::DialogLevel,
             Self::Dimmer => F::Dimmer,
-            Self::Zone3Power
-            | Self::Zone3Mute
-            | Self::Zone3Sleep
-            | Self::Zone3QuickSelect
-            | Self::Zone3AutoStandby
-            | Self::Zone3ChannelLevels
-            | Self::Zone3VolumeSettings
-            | Self::Zone3Bass
-            | Self::Zone3Treble
-            | Self::Zone3HighPassFilter
-            | Self::Zone3ChannelMode => F::Zone3Setup,
             _ => return None,
         })
     }
-}
 
-/// The feature that a query text needs, see [`Query::device_feature`].
-/// The tuner queries need none: newer receivers with a tuner do not list
-/// `TunerOperation`.
-fn feature_of_query(text: &str) -> Option<DeviceFeature> {
-    query_for_text(text)?.device_feature()
+    /// Returns true if `features` has the [`Query::device_feature`] of the
+    /// value. True if the value needs none, or if `features` is `None`. The
+    /// tuner queries need none: newer receivers with a tuner do not list
+    /// `TunerOperation`.
+    #[must_use]
+    pub const fn listed_in(self, features: Option<DeviceFeatures>) -> bool {
+        match (self.device_feature(), features) {
+            (Some(feature), Some(features)) => features.has(feature),
+            _ => true,
+        }
+    }
 }
 
 #[cfg(test)]

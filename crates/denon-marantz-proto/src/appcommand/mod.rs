@@ -17,5 +17,6 @@ pub use pattern::{Definition, Field, Leaf, Pattern, Step};
 pub use request::{Cmd, Endpoint, Param, write_body};
 pub use response::{Item, Response};
 pub use settings::{
-    SettingsPart, settings_lines, settings_parts_of_command, write_settings_request,
+    SettingsPart, settings_lines, settings_parts_of_command, settings_request_asks,
+    write_settings_request,
 };

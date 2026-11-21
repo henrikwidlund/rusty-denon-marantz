@@ -119,9 +119,9 @@ pub use denon_marantz_heos as heos;
 pub use denon_marantz_proto as proto;
 pub use denon_marantz_proto::{
     Brand, Change, Channel, ChannelLayout, ChannelLevel, DeviceFeature, DeviceFeatures,
-    DeviceRanges, DeviceState, InOut, ListedQueries, NowPlaying, PlayingKind, ReceiverType,
-    Setting, SignalState, SoundModeEntry, State, ToneLevel, TunerBands, TunerInfo, ValueRange,
-    VideoColor, Volume, Zone, ZoneRanges, ZoneState,
+    DeviceRanges, DeviceState, InOut, ListedQueries, MAX_QUICK_SELECT, NowPlaying, PlayingKind,
+    ReceiverType, Setting, SignalState, SoundModeEntry, SpecFeature, SpecGeneration, State,
+    ToneLevel, TunerBands, TunerInfo, ValueRange, VideoColor, Volume, Zone, ZoneRanges, ZoneState,
 };
 pub use error::{Error, ToneBlocker};
 #[cfg(feature = "heos")]
@@ -139,8 +139,10 @@ pub use avr::{
 pub use denon_marantz_proto::RemoteKey;
 #[cfg(feature = "http")]
 pub use denon_marantz_proto::telnet::Command;
+#[cfg(feature = "http")]
+pub use denon_marantz_proto::telnet::Query;
 #[cfg(feature = "telnet")]
-pub use denon_marantz_proto::telnet::{Query, QueryGroup};
+pub use denon_marantz_proto::telnet::QueryGroup;
 #[cfg(feature = "http")]
 pub use details::{
     GeneralDetails, PageResults, PageStatus, SettingsAvailabilityDetails, SkipReason,

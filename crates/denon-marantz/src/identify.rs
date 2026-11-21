@@ -12,7 +12,7 @@ use crate::http::{HttpClient, HttpConfig};
 /// What `Deviceinfo.xml` tells about a receiver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identified {
-    /// Generation of the receiver.
+    /// Kind of HTTP interface of the receiver.
     pub receiver_type: ReceiverType,
     /// HTTP port that is used for AppCommand and the status pages.
     pub port: u16,

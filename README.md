@@ -173,7 +173,8 @@ The query groups, in the order of `QueryGroup::DEFAULT_ORDER`. Ask for one group
 again with `telnet_refresh_group`. The counts are the queries for a Denon and for
 a Marantz receiver. A receiver from about 2016 lists its features in
 `Deviceinfo.xml` (`Info::features`). The queries of a feature that it does not
-list are not sent.
+list are not sent. Queries that the protocol specs of the receiver generation
+do not have (`Info::spec_generation`) are not sent either.
 
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|
@@ -182,11 +183,21 @@ list are not sent.
 | `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 23 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
 | `Device` | no | Dimmer, eco, sleep, standby, video and picture settings, Bluetooth level | 22 | 22 |
-| `Sound` | no | Sound settings and levels | 39 | 38 |
+| `Sound` | no | Sound settings and levels | 40 | 39 |
 | `Zones` | no | Volume settings, levels, tone, high pass filter, channel mode of the zones, HDMI audio of zone 2 | 14 | 14 |
 | `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
 | `Speakers` | no | Speaker configuration, crossovers and graphic EQ, Denon only | 3 | 0 |
-| `Older` | no | Settings of receivers from about 2011 to 2015, for example Pro Logic mode, Audyssey DSX and InstaPrevue. Not in the command lists of receivers with HEOS | 10 | 7 |
+| `Older` | no | Settings of receivers from about 2011 to 2015, for example Pro Logic mode, Audyssey DSX and InstaPrevue. Not in the command lists of receivers with HEOS, so not sent to them | 10 | 7 |
+
+To decide what to show, ask `Info`:
+
+- `offers(query)`, `offers_command(zone, &command)` and `offers_line(line)`:
+  the receiver may have the value or accept the command. What the receiver
+  does not tell counts as present.
+- `supports(feature)`: a spec of the receiver generation has the feature.
+- `readable_over_http(query)`: an HTTP read gives the value, so it is known
+  without telnet.
+- `has_quick_select(slot)`: the quick select may exist.
 
 The web interface (port 11080) is read on request, because it does not
 send changes:

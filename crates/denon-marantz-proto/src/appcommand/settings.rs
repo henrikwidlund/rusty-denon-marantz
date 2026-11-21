@@ -127,6 +127,12 @@ impl ParamRule {
     const fn set_by(self, commands: &'static [&'static str]) -> Self {
         Self { commands, ..self }
     }
+
+    /// Returns true if a receiver with this many zones and these features is
+    /// asked for the parameter.
+    const fn is_asked(&self, zones: u8, features: Option<DeviceFeatures>) -> bool {
+        self.zones <= zones && self.query.listed_in(features)
+    }
 }
 
 /// Highest zone tone level in dB.
@@ -576,25 +582,13 @@ pub fn write_settings_request(
     part: SettingsPart,
     out: &mut Vec<u8>,
 ) -> Result<usize, Error> {
-    if !listed.surround_parameter {
-        return Ok(0);
-    }
-    let queries = || {
-        QUERIES
-            .iter()
-            .filter(move |query| query.part == part && listed.lists(query.name))
-    };
+    let queries = || asked_queries(listed).filter(move |query| query.part == part);
     let params: Vec<Vec<Param<'static>>> = queries()
         .map(|query| {
             query
                 .settings
                 .iter()
-                .filter(|setting| {
-                    setting.zones <= zones
-                        && setting.query.device_feature().is_none_or(|feature| {
-                            features.is_none_or(|features| features.has(feature))
-                        })
-                })
+                .filter(|setting| setting.is_asked(zones, features))
                 .map(|setting| Param {
                     name: setting.name,
                     text: "",
@@ -619,6 +613,29 @@ pub fn write_settings_request(
     }
     write_body(&cmds, out)?;
     Ok(cmds.len())
+}
+
+/// The queries that a receiver with this list is asked. None without
+/// version 2 of `GetSurroundParameter`, see [`write_settings_request`].
+fn asked_queries(listed: &ListedQueries) -> impl Iterator<Item = &'static Query> + Clone {
+    QUERIES
+        .iter()
+        .filter(move |query| listed.surround_parameter && listed.lists(query.name))
+}
+
+/// Returns true if [`write_settings_request`] asks for the value of `query`
+/// with these arguments in one of the parts. The LFE level is only read
+/// when the input mode is not 7.1CH IN, see [`settings_lines`].
+#[must_use]
+pub fn settings_request_asks(
+    query: TelnetQuery,
+    listed: &ListedQueries,
+    zones: u8,
+    features: Option<DeviceFeatures>,
+) -> bool {
+    asked_queries(listed)
+        .flat_map(|entry| entry.settings)
+        .any(|setting| setting.query == query && setting.is_asked(zones, features))
 }
 
 /// The parts of the settings with the values that a telnet command changes.
@@ -850,6 +867,32 @@ mod tests {
         );
         assert!(!body.contains("<list />"), "{body}");
         assert_eq!(count, body.matches("<cmd ").count());
+    }
+
+    #[test]
+    fn request_asks_follows_the_request() {
+        use crate::capabilities::DeviceFeature;
+        let listed = ListedQueries {
+            zone_tone: true,
+            surround_parameter: true,
+            ..ListedQueries::default()
+        };
+        let asked = |query, zones, features| settings_request_asks(query, &listed, zones, features);
+        assert!(asked(TelnetQuery::CinemaEq, 1, None));
+        assert!(asked(TelnetQuery::Zone2Bass, 2, None));
+        assert!(!asked(TelnetQuery::Zone2Bass, 1, None));
+        assert!(!asked(TelnetQuery::Zone3Bass, 2, None));
+        assert!(!asked(TelnetQuery::DialogEnhancer, 1, None));
+        assert!(!asked(TelnetQuery::Volume, 1, None));
+        let cinema = DeviceFeatures::default().with(DeviceFeature::CinemaEq);
+        assert!(asked(TelnetQuery::CinemaEq, 1, Some(cinema)));
+        assert!(!asked(TelnetQuery::Imax, 1, Some(cinema)));
+        assert!(asked(TelnetQuery::Panorama, 1, Some(cinema)));
+        let old = ListedQueries {
+            surround_parameter: false,
+            ..all_listed()
+        };
+        assert!(!settings_request_asks(TelnetQuery::CinemaEq, &old, 3, None));
     }
 
     #[test]
