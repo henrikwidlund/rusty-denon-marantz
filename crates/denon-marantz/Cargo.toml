@@ -25,7 +25,7 @@ mdns = ["discovery", "tokio/macros", "dep:mdns-sd"]
 heos = ["http", "dep:denon-marantz-heos"]
 # Full message dumps in trace logs. Can contain personal data.
 sensitive-logs = ["denon-marantz-heos?/sensitive-logs"]
-# Serialize and Deserialize for `Info`, to store it for `AvrBuilder::known`.
+# Serialize and Deserialize for `Info` and `MissingSources`, to store them.
 serde = ["dep:serde", "denon-marantz-proto/serde"]
 
 [dependencies]

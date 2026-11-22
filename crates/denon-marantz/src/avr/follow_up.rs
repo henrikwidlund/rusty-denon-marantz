@@ -400,17 +400,9 @@ async fn read(reader: &Reader, requests: &[Request], wanted: ReadBits) -> Result
             .iter()
             .filter(|r| wanted & r.reads.bit() != 0 && r.useful(reader))
         {
-            let read = read_appcommand(
-                &reader.http,
-                &reader.channels,
-                &reader.zones,
-                request.endpoint,
-                request.commands,
-                request.body.clone(),
-            )
-            .await;
+            let read = read_request(reader, request).await;
             if let Err(error) = &read {
-                note_missing(&reader.missing, request.reads, error);
+                note_missing(reader, requests, request.reads, error).await;
             }
             result = result.and(read);
         }
@@ -449,9 +441,22 @@ async fn read(reader: &Reader, requests: &[Request], wanted: ReadBits) -> Result
     result
 }
 
+async fn read_request(reader: &Reader, request: &Request) -> Result<(), Error> {
+    read_appcommand(
+        &reader.http,
+        &reader.channels,
+        &reader.zones,
+        request.endpoint,
+        request.commands,
+        request.body.clone(),
+    )
+    .await
+}
+
 /// Notes a read that the receiver does not answer, so that it is not sent
-/// again.
-fn note_missing(missing: &Missing, reads: Reads, error: &Error) {
+/// again. `requests` are all requests of the reader.
+async fn note_missing(reader: &Reader, requests: &[Request], reads: Reads, error: &Error) {
+    let missing = &reader.missing;
     match reads {
         // Only a missing file means that the receiver does not have it.
         Reads::Audyssey | Reads::HdmiOutput
@@ -459,8 +464,17 @@ fn note_missing(missing: &Missing, reads: Reads, error: &Error) {
         {
             missing.appcommand0300.store(true, Ordering::Relaxed);
         }
+        // As in the update: tone control counts as missing only if the
+        // receiver answers a request without it. The power request is the
+        // smallest one to the same file.
         Reads::Tone if missing.may_lack_tone_control(error) => {
-            missing.tone_control.store(true, Ordering::Relaxed);
+            let Some(power) = requests.iter().find(|r| r.reads == Reads::Power) else {
+                return;
+            };
+            if read_request(reader, power).await.is_ok() {
+                tracing::debug!("tone control is left out of the reads after commands");
+                missing.tone_control.store(true, Ordering::Relaxed);
+            }
         }
         _ => {}
     }

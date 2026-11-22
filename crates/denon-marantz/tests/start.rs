@@ -22,8 +22,9 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Ask, Avr, Error, HttpReads, InfoCheck, PageStatus, Query, QueryGroup, ReceiverType, SkipReason,
-    StartOptions, TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
+    Ask, Avr, Error, HttpReads, InfoCheck, MissingSources, PageStatus, Query, QueryGroup,
+    ReceiverType, SkipReason, StartOptions, TelnetConfig, TelnetStart, TelnetSync, UpdateMethod,
+    Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -1435,6 +1436,63 @@ async fn a_channels_page_that_answers_404_is_not_asked_again_and_leaves_http_rea
         avr.http_reads(Query::SamplingRate),
         HttpReads::SIGNAL_AND_SETTINGS | HttpReads::SIGNAL_PAGES
     );
+}
+
+#[tokio::test]
+async fn stored_missing_sources_are_not_asked_again_with_known_values() {
+    let (web, avr) = avr_without_signal_pages(common::AUDIO_INFO_ONLY_INFO).await;
+    // `Deviceinfo.xml` does not list tone control.
+    let at_connect = MissingSources {
+        tone_control: true,
+        ..MissingSources::default()
+    };
+    assert_eq!(avr.missing_sources(), at_connect);
+    avr.refresh_signal_pages().await.unwrap();
+    let missing = avr.missing_sources();
+    let expected = MissingSources {
+        video_page: true,
+        channels_page: true,
+        ..at_connect
+    };
+    assert_eq!(missing, expected);
+    for &query in Query::ALL {
+        assert_eq!(
+            avr.info().http_reads_without(query, missing),
+            avr.http_reads(query),
+            "{query:?}"
+        );
+    }
+    let info = avr.info().clone();
+    drop(avr);
+    // The probes of `builder` are not used with known values.
+    let known = |missing| {
+        builder(&web, info.receiver_type)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(info.clone())
+            .missing(missing)
+    };
+    let before = web.requests().len();
+    let avr = known(missing).connect().await.unwrap();
+    assert_eq!(avr.missing_sources(), missing);
+    assert_eq!(avr.http_reads(Query::InputChannels), HttpReads::EMPTY);
+    avr.refresh_signal_pages().await.unwrap();
+    assert_eq!(web.requests().len(), before);
+    // Without stored sources, the pages are asked again.
+    let avr = known(MissingSources::default()).connect().await.unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    assert_eq!(web.requests().len(), before + 2);
+    // A connect without known values starts with no missing source.
+    let avr = builder(&web, info.receiver_type)
+        .probes(&[(info.receiver_type, info.port)])
+        .description_port(info.port)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .missing(missing)
+        .connect()
+        .await
+        .unwrap();
+    assert_eq!(avr.missing_sources(), at_connect);
 }
 
 #[tokio::test]

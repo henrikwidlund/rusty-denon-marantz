@@ -504,7 +504,7 @@ impl Info {
     /// read gives it, so that only telnet can tell it. Only zones in
     /// [`Info::zones`] are read. The set tells what the receiver can give
     /// from its device information. [`Avr::http_reads`] also leaves out what
-    /// the receiver showed it does not have while connected.
+    /// the receiver does not have, see [`Avr::missing_sources`].
     ///
     /// [`HttpReads::REFRESH`] is [`Avr::refresh`] without telnet: it does what
     /// [`Avr::update`] does and reads the settings of `AppCommand0300.xml`.
@@ -541,8 +541,10 @@ impl Info {
         self.http_reads_without(query, MissingSources::default())
     }
 
-    /// [`Info::http_reads`] without the sources in `missing`.
-    fn http_reads_without(&self, query: Query, missing: MissingSources) -> HttpReads {
+    /// [`Info::http_reads`] without the sources in `missing`. With
+    /// [`Avr::missing_sources`], this gives the same as [`Avr::http_reads`].
+    #[must_use]
+    pub fn http_reads_without(&self, query: Query, missing: MissingSources) -> HttpReads {
         use Query as Q;
         if !self.offers(query) || !self.zones.contains(&query.zone()) {
             return HttpReads::EMPTY;
@@ -608,17 +610,34 @@ impl Info {
     }
 }
 
-/// Sources of values that the receiver does not have, see
-/// [`Avr::http_reads`]. The settings request also goes to
-/// `AppCommand0300.xml`, but it is kept: [`Missing::appcommand0300`] is
-/// also set when none of [`APPCOMMAND0300_COMMANDS`] is listed.
-#[derive(Debug, Clone, Copy, Default)]
+/// HTTP sources that the receiver does not have, see
+/// [`Avr::missing_sources`].
+///
+/// Store it with [`Info`] and give it to [`AvrBuilder::missing`], so that a
+/// new [`Avr`] does not ask these sources again. The `serde` feature adds
+/// `Serialize` and `Deserialize`. The field names are the stored names. A
+/// field that is not in the stored value is false, and an unknown field is
+/// ignored.
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Serialize, serde::Deserialize),
+    serde(default)
+)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[expect(clippy::struct_excessive_bools, reason = "one flag for each source")]
-struct MissingSources {
-    appcommand0300: bool,
-    tone_control: bool,
-    video_page: bool,
-    channels_page: bool,
+pub struct MissingSources {
+    /// `AppCommand0300.xml` answered 404, or `Deviceinfo.xml` lists none of
+    /// its queries. The values that only this file gives are left out. The
+    /// settings request also goes to this file, but it is still sent.
+    pub appcommand0300: bool,
+    /// Tone control is left out of the reads: `Deviceinfo.xml` does not list
+    /// it, or a request with it failed and a request without it was
+    /// answered.
+    pub tone_control: bool,
+    /// The video signal page of the web interface answered 404.
+    pub video_page: bool,
+    /// The channels page of the web interface answered 404.
+    pub channels_page: bool,
 }
 
 /// A set of [`Avr`] methods that read values over HTTP, see
@@ -732,6 +751,7 @@ pub struct AvrBuilder {
     description_port: Option<u16>,
     brand: Option<Brand>,
     known: Option<Info>,
+    missing: MissingSources,
     follow_up_read: Option<FollowUpRead>,
     background_pause: Duration,
     #[cfg(feature = "telnet")]
@@ -796,10 +816,11 @@ pub struct Avr {
 /// Reads that the receiver does not answer, so they are not asked again.
 #[derive(Debug)]
 struct Missing {
-    /// `AppCommand0300.xml` answered 404, or none of
-    /// [`APPCOMMAND0300_COMMANDS`] is listed.
+    /// `AppCommand0300.xml` answered 404, none of
+    /// [`APPCOMMAND0300_COMMANDS`] is listed, or the stored value says so.
     appcommand0300: AtomicBool,
-    /// A request with tone control failed, and the receiver may not have it.
+    /// `Deviceinfo.xml` does not list tone control, a request with it failed
+    /// and a request without it was answered, or the stored value says so.
     tone_control: AtomicBool,
     /// The receiver is older than the 2016 models, which all have tone
     /// control, and `Deviceinfo.xml` does not say if it has it.
@@ -812,19 +833,24 @@ struct Missing {
 
 impl Missing {
     /// `queries` is what `Deviceinfo.xml` lists. If it lists nothing, tone
-    /// control is asked, and on `AvrX` receivers a failure can drop it.
+    /// control is asked, and on `AvrX` receivers a failure can drop it, if a
+    /// request without tone control is answered.
     /// `no_appcommand0300` is true if no query of that file is left to send.
+    /// `stored` is what an earlier connection found missing.
     fn new(
         receiver_type: ReceiverType,
         queries: Option<&ListedQueries>,
         no_appcommand0300: bool,
+        stored: MissingSources,
     ) -> Self {
         Self {
-            appcommand0300: AtomicBool::new(no_appcommand0300),
-            tone_control: AtomicBool::new(queries.is_some_and(|queries| !queries.tone_control)),
+            appcommand0300: AtomicBool::new(no_appcommand0300 || stored.appcommand0300),
+            tone_control: AtomicBool::new(
+                queries.is_some_and(|queries| !queries.tone_control) || stored.tone_control,
+            ),
             tone_control_optional: queries.is_none() && receiver_type == ReceiverType::AvrX,
-            video_page: AtomicBool::new(false),
-            channels_page: AtomicBool::new(false),
+            video_page: AtomicBool::new(stored.video_page),
+            channels_page: AtomicBool::new(stored.channels_page),
         }
     }
 
@@ -861,6 +887,7 @@ impl Avr {
             description_port: None,
             brand: None,
             known: None,
+            missing: MissingSources::default(),
             follow_up_read: Some(FollowUpRead::default()),
             background_pause: Duration::from_millis(250),
             #[cfg(feature = "telnet")]
@@ -877,14 +904,26 @@ impl Avr {
     }
 
     /// Like [`Info::http_reads`], without the sources that the receiver
-    /// does not have: `AppCommand0300.xml` or one of the two signal pages
-    /// after it answered 404, and tone control after a read dropped it.
-    /// Before a read tried a source, it counts as there. The start tries
-    /// most of them, so call this again after it, for example after
-    /// [`Started::basic_synced`](crate::Started::basic_synced).
+    /// does not have, see [`Avr::missing_sources`].
     #[must_use]
     pub fn http_reads(&self, query: Query) -> HttpReads {
         self.info.http_reads_without(query, self.missing.sources())
+    }
+
+    /// The HTTP sources that the receiver does not have:
+    /// `AppCommand0300.xml` or one of the two signal pages after it answered
+    /// 404, and tone control after a read dropped it. These sources are not
+    /// asked again while this [`Avr`] lives.
+    ///
+    /// Before a read tried a source, it counts as there, unless
+    /// `Deviceinfo.xml` or [`AvrBuilder::missing`] gave it. The start tries
+    /// most of them, so call this after it, for example after
+    /// [`Started::basic_synced`](crate::Started::basic_synced). Later reads
+    /// can add more: [`Avr::update`], the reads after commands and
+    /// [`Avr::refresh_signal_pages`]. A source is never removed.
+    #[must_use]
+    pub fn missing_sources(&self) -> MissingSources {
+        self.missing.sources()
     }
 
     /// Reads the device information and the update method again, and
@@ -2426,9 +2465,24 @@ impl AvrBuilder {
     ///
     /// A firmware update can change [`Info::features`] and [`Info::ranges`].
     /// The check finds such a change too.
+    ///
+    /// [`AvrBuilder::missing`] also skips the sources that the receiver does
+    /// not have.
     #[must_use]
     pub fn known(mut self, info: Info) -> Self {
         self.known = Some(info);
+        self
+    }
+
+    /// Uses the [`Avr::missing_sources`] of an earlier connection with the
+    /// same [`Info`], so that these sources are not asked again. Used only
+    /// with [`AvrBuilder::known`]: a connect without it starts with no
+    /// missing source. When [`Started::info_check`] or [`Avr::verify`]
+    /// gives changed values, drop the stored value and connect without
+    /// this.
+    #[must_use]
+    pub const fn missing(mut self, missing: MissingSources) -> Self {
+        self.missing = missing;
         self
     }
 
@@ -2465,6 +2519,9 @@ impl AvrBuilder {
         #[cfg(feature = "telnet")]
         self.telnet.check()?;
         let priority = Arc::new(Priority::new(self.background_pause));
+        if self.known.is_none() && self.missing != MissingSources::default() {
+            tracing::debug!(host = %self.host, "missing sources are not used without known values");
+        }
         if let Some(mut info) = self.known.take() {
             info.host.clone_from(&self.host);
             let http =
@@ -2511,6 +2568,11 @@ impl AvrBuilder {
             info.receiver_type,
             info.queries.as_ref(),
             appcommand0300_commands.is_empty(),
+            if known {
+                self.missing
+            } else {
+                MissingSources::default()
+            },
         ));
         let update_cmds = UPDATE_COMMANDS.map(|definition| definition.cmd);
         let appcommand0300_body = definitions_body(&appcommand0300_commands)?;

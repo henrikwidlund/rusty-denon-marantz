@@ -147,6 +147,15 @@ before the pages are read. `Avr::verify` does the same without a start. If
 the receiver gives other values, connect again with the new `Info` and store
 it. The `serde` feature makes `Info` serializable.
 
+`avr.missing_sources()` tells which HTTP sources the receiver does not have,
+for example a page that answered 404. Store it with `Info` and pass it to
+`AvrBuilder::missing`, so that a new `Avr` does not ask them again and
+`http_reads` gives the same result from the start. It is used only with
+`AvrBuilder::known`. Read it again after HTTP reads, because they can find
+more missing sources. Drop it when the stored `Info` changes. The library
+never removes a missing source, so connect without it to find the sources
+again.
+
 If the network of the caller can be down for a moment, for example after the
 device wakes up, set `HttpConfig::connect_retry`: a request whose connection
 cannot be built is tried again within that time. It was not sent, so this is
@@ -204,6 +213,8 @@ To decide what to show, ask `Info`:
   A caller that polls checks `intersects` with the methods it calls.
   `Avr::http_reads(query)` also leaves out what the receiver does not have,
   for example a page that answered 404. Ask it after the start.
+  `http_reads_without(query, missing)` does the same with stored
+  `MissingSources`.
 - `has_quick_select(slot)`: the quick select may exist.
 
 The web interface (port 11080) is read on request, because it does not
@@ -410,7 +421,7 @@ Notes about HEOS:
 | `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
 | `heos` | no | The HEOS player of the receiver for playback (`Avr::heos`). Needs `http`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
-| `serde` | no | `Serialize` and `Deserialize` for `Info`, to store it for `AvrBuilder::known`. |
+| `serde` | no | `Serialize` and `Deserialize` for `Info` and `MissingSources`, to store them for `AvrBuilder::known` and `AvrBuilder::missing`. |
 
 The `denon-marantz-heos` crate has one feature, `sensitive-logs` (off by
 default): full lines in trace logs. They can have personal data.

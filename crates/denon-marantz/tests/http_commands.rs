@@ -556,31 +556,64 @@ async fn a_missing_audyssey_file_is_not_asked_again() {
     assert_eq!(bodies_to(&fake, known, path).len(), 1);
 }
 
-#[tokio::test]
-async fn a_failed_tone_read_of_an_older_receiver_is_not_sent_again() {
-    let fake = Fake::start(|seen| match (seen.method.as_str(), seen.path.as_str()) {
-        ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
-        ("GET", path) if path.starts_with(COMMAND) => Reply::Body(Vec::new()),
-        ("POST", _) if is_friendly_name_request(&seen.body) => {
-            Reply::Body(friendly_name_answer("X"))
-        }
-        ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
-        _ => Reply::Status(404),
-    })
-    .await;
-    let avr = connect(&fake, Some(quick_follow_up())).await;
+/// An older receiver that refuses `GetToneControl`. It answers other
+/// `AppCommand.xml` requests only if `answers_others` is true.
+async fn receiver_that_refuses_tone_control(answers_others: bool) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(AVR_X_INFO.to_vec()),
+            ("GET", path) if path.starts_with(COMMAND) => Reply::Body(Vec::new()),
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
+                Reply::Body(friendly_name_answer("X"))
+            }
+            ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
+            ("POST", "/goform/AppCommand.xml") if answers_others => {
+                Reply::Body(update_answer_for(&seen.body))
+            }
+            _ => Reply::Status(404),
+        },
+    )
+    .await
+}
+
+/// Sends two bass commands, and gives the number of tone reads after them.
+/// The second command goes after the power request that follows the failed
+/// tone read.
+async fn tone_reads_after_two_bass_commands(fake: &Fake, avr: &Avr) -> usize {
     let known = fake.requests().len();
-    let tone_reads = || {
-        bodies_after(&fake, known, |seen| seen.method == "POST")
+    let reads_of = |query: &str| {
+        bodies_after(fake, known, |seen| seen.method == "POST")
             .iter()
-            .filter(|body| body.contains("GetToneControl"))
+            .filter(|body| body.contains(query))
             .count()
     };
     avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
-    wait_until("the read", || tone_reads() > 0).await;
+    wait_until("the power request", || {
+        reads_of("GetAllZonePowerStatus") > 0
+    })
+    .await;
+    assert_eq!(reads_of("GetToneControl"), 1);
     avr.http_send(Zone::Main, Command::BassUp).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(tone_reads(), 1);
+    reads_of("GetToneControl")
+}
+
+#[tokio::test]
+async fn a_failed_tone_read_of_an_older_receiver_is_not_sent_again() {
+    let fake = receiver_that_refuses_tone_control(true).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    assert_eq!(tone_reads_after_two_bass_commands(&fake, &avr).await, 1);
+    assert!(avr.missing_sources().tone_control);
+}
+
+#[tokio::test]
+async fn a_failed_tone_read_needs_an_answered_request_to_drop_tone_control() {
+    // The receiver also refuses the power request, so the failure does not
+    // show that tone control is missing.
+    let fake = receiver_that_refuses_tone_control(false).await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    assert_eq!(tone_reads_after_two_bass_commands(&fake, &avr).await, 2);
+    assert!(!avr.missing_sources().tone_control);
 }
 
 /// A receiver that answers the HDMI output in `AppCommand0300.xml` if `info`

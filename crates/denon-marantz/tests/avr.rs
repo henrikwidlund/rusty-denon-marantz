@@ -1334,9 +1334,21 @@ async fn receiver_with_info_that_refuses_tone_control(info: &'static [u8]) -> Fa
 async fn an_update_that_is_refused_with_tone_control_drops_it() {
     let fake = receiver_that_refuses_tone_control().await;
     let avr = connect(&fake, ReceiverType::AvrX).await.unwrap();
+    assert!(!avr.missing_sources().tone_control);
     avr.update().await.unwrap();
     avr.update().await.unwrap();
     assert_eq!(update_sizes(&fake), [13, 12, 12]);
+    assert!(avr.missing_sources().tone_control);
+    // A new connection with the stored sources does not ask it.
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(avr.info().clone())
+        .missing(avr.missing_sources())
+        .connect()
+        .await
+        .unwrap();
+    avr.update().await.unwrap();
+    assert_eq!(update_sizes(&fake), [13, 12, 12, 12]);
 }
 
 #[tokio::test]
@@ -1533,4 +1545,36 @@ async fn info_survives_serde() {
     let back: denon_marantz::Info = serde_json::from_str(&old).unwrap();
     assert_eq!(back, info);
     assert!(back.hdmi_output_over_http());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn missing_sources_survive_serde() {
+    use denon_marantz::MissingSources;
+    let missing = MissingSources {
+        appcommand0300: true,
+        video_page: true,
+        ..MissingSources::default()
+    };
+    let text = serde_json::to_string(&missing).unwrap();
+    assert_eq!(
+        text,
+        r#"{"appcommand0300":true,"tone_control":false,"video_page":true,"channels_page":false}"#
+    );
+    let back: MissingSources = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, missing);
+    // A stored value without some fields loads, with false for them.
+    let back: MissingSources = serde_json::from_str(r#"{"video_page":true}"#).unwrap();
+    assert_eq!(
+        back,
+        MissingSources {
+            video_page: true,
+            ..MissingSources::default()
+        }
+    );
+    let back: MissingSources = serde_json::from_str("{}").unwrap();
+    assert_eq!(back, MissingSources::default());
+    // A field from a newer version is ignored.
+    let back: MissingSources = serde_json::from_str(r#"{"x":1}"#).unwrap();
+    assert_eq!(back, MissingSources::default());
 }
