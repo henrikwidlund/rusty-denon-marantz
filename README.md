@@ -121,6 +121,9 @@ library asks by itself, for example for a signal check, are not listed. Both
 are optional: values that arrive later come as events.
 Both keep the report, so `basic_synced()` and then `all_synced()` works, and a
 wait that was stopped by a timeout can be called again.
+Dropping the `Started` value does not stop the start. `Started::stop()` stops
+it, also while a page or the slow settings below wait for an answer.
+`Started::stopper()` gives a handle that stops it from another task.
 When telnet is not connected, the start reads some settings over
 `AppCommand0300.xml` that otherwise only telnet gives, for example cinema EQ,
 DRC, the Bluetooth output and the zone 2 and 3 tone. Only the queries that

@@ -125,12 +125,14 @@ pub enum Error {
     /// `ZoneControl::select_sound_mode`.
     #[error("the library has no code for the sound mode {0}")]
     UnknownSoundMode(String),
-    /// The runtime stopped the task of a start before it was finished. It
-    /// is only in the report of that start.
+    /// The task of a start was stopped before it was finished, by
+    /// `Started::stop` or by the runtime. It is only in the report or the
+    /// check of the known values of that start.
     #[error("the start was stopped before it finished")]
     Stopped,
     /// Another start of this receiver is still running, so nothing was read.
-    /// A start is running until the task of the start has ended.
+    /// A start is running until its report is there, or until its task has
+    /// ended after a stop.
     #[error("another start of this receiver is still running")]
     StartRunning,
     /// The command asks for a value, and the receiver answers that on telnet

@@ -134,7 +134,8 @@ pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{
     Avr, AvrBuilder, FollowUpRead, HeosStart, HttpReads, Info, InfoCheck, MissingSources,
-    StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync, UpdateMethod,
+    StartOptions, StartPages, StartReport, StartStopper, Started, TelnetStart, TelnetSync,
+    UpdateMethod,
 };
 #[cfg(feature = "http")]
 pub use denon_marantz_proto::RemoteKey;

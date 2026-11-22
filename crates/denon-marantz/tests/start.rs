@@ -23,8 +23,8 @@ use common::{
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
     Ask, Avr, Error, HttpReads, InfoCheck, MissingSources, PageStatus, Query, QueryGroup,
-    ReceiverType, SkipReason, StartOptions, TelnetConfig, TelnetStart, TelnetSync, UpdateMethod,
-    Zone,
+    ReceiverType, SkipReason, StartOptions, Started, TelnetConfig, TelnetStart, TelnetSync,
+    UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -1015,6 +1015,114 @@ async fn all_synced_can_wait_again_for_the_slow_settings_after_a_timeout() {
         avr.snapshot().device().sound_settings.audio_delay,
         Some(139)
     );
+}
+
+/// Waits at most 100 ms until `avr` has no other owner.
+async fn assert_only_owner(avr: &Arc<Avr>) {
+    timeout(Duration::from_millis(100), async {
+        while Arc::strong_count(avr) > 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the start still holds the receiver");
+}
+
+#[tokio::test]
+async fn a_stopped_start_ends_at_once_while_a_page_hangs() {
+    let web = Fake::start(|_| Reply::Hang).await;
+    let telnet = FakeTelnet::start().await;
+    let avr = started(&web, &telnet).await;
+    let mut started = avr.start().await.unwrap();
+    wait_until("the video page request", || !web.requests().is_empty()).await;
+    // The stopper works while another task waits.
+    let stopper = started.stopper();
+    let wait = tokio::spawn(async move {
+        started.basic_synced().await;
+        started
+    });
+    tokio::task::yield_now().await;
+    stopper.stop();
+    let mut started = timeout(Duration::from_millis(100), wait)
+        .await
+        .unwrap()
+        .unwrap();
+    let report = started.basic_synced().await;
+    assert!(
+        matches!(report.web_interface, Err(Error::Stopped)),
+        "{:?}",
+        report.web_interface
+    );
+    drop(started);
+    assert_only_owner(&avr).await;
+    // The stop ended the start, so another one runs.
+    avr.start().await.unwrap();
+}
+
+/// A start without telnet whose slow settings request waits for `release`.
+struct SlowReadWaits {
+    _web: Fake,
+    _http: Fake,
+    release: Arc<AtomicBool>,
+    avr: Arc<Avr>,
+    started: Started,
+}
+
+/// Starts it and returns after the fake got that request.
+async fn slow_read_waits() -> SlowReadWaits {
+    let web = web_interface().await;
+    let release = Arc::new(AtomicBool::new(false));
+    let http = avr_x_receiver_with_held_settings(Arc::clone(&release)).await;
+    let avr = connect_avr_x(&http, &web).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    timeout(Duration::from_secs(5), started.basic_synced())
+        .await
+        .unwrap();
+    wait_until("the slow settings request", || {
+        settings_requests(&http)
+            .iter()
+            .any(|body| body.contains("GetRestorerMode"))
+    })
+    .await;
+    SlowReadWaits {
+        _web: web,
+        _http: http,
+        release,
+        avr,
+        started,
+    }
+}
+
+#[tokio::test]
+async fn stop_ends_the_slow_settings_read_and_keeps_the_report() {
+    let SlowReadWaits {
+        release,
+        avr,
+        mut started,
+        ..
+    } = slow_read_waits().await;
+    started.stop();
+    let report = timeout(Duration::from_millis(100), started.all_synced())
+        .await
+        .unwrap();
+    assert!(report.web_interface.is_ok(), "{:?}", report.web_interface);
+    drop(started);
+    assert_only_owner(&avr).await;
+    release.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(avr.snapshot().device().sound_settings.audio_delay, None);
+}
+
+#[tokio::test]
+async fn a_stopper_works_after_started_is_dropped() {
+    let SlowReadWaits { avr, started, .. } = slow_read_waits().await;
+    let stopper = started.stopper();
+    drop(started);
+    stopper.stop();
+    assert_only_owner(&avr).await;
 }
 
 #[tokio::test]
@@ -2187,6 +2295,43 @@ async fn the_start_checks_the_known_values() {
         InfoCheck::Changed(new) => assert_eq!(**new, info),
         other => panic!("{other:?}"),
     }
+}
+
+// The task must not run before the stop. This needs a runtime with one thread.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_before_the_check_of_known_values_fails_the_check() {
+    let (http, web) = (avr_x_receiver().await, web_interface().await);
+    let info = builder(&http, ReceiverType::AvrX)
+        .connect()
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let avr = Arc::new(
+        Avr::builder("127.0.0.1")
+            .http_config(config())
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(info)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    // The task has not run yet on this runtime, so the check never starts.
+    started.stop();
+    assert!(matches!(
+        started.info_check().await,
+        InfoCheck::Failed(Error::Stopped)
+    ));
+    // The wait ends after the task: a new start runs.
+    started.basic_synced().await;
+    avr.start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]

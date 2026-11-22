@@ -17,7 +17,7 @@ use denon_marantz_proto::{
     VIDEO_SIGNAL_PATH, VideoSignalPage,
 };
 use tokio::sync::oneshot;
-use tokio::task::JoinHandle;
+use tokio::task::{AbortHandle, JoinHandle};
 
 #[cfg(feature = "telnet")]
 use super::UpdateMethod;
@@ -139,7 +139,8 @@ pub enum TelnetStart {
     /// The first connection failed. Nothing keeps trying.
     Failed(Error),
     /// The start was stopped before it finished, so this is not known. It
-    /// happens only when the runtime shuts down.
+    /// happens after [`Started::stop`] before the report, or when the
+    /// runtime shuts down.
     Unknown,
 }
 
@@ -168,7 +169,8 @@ pub enum HeosStart {
     /// runs: the start does not open HEOS then.
     AlreadyRunning,
     /// The start was stopped before it finished, so this is not known. It
-    /// happens only when the runtime shuts down.
+    /// happens after [`Started::stop`] before the report, or when the
+    /// runtime shuts down.
     Unknown,
 }
 
@@ -194,7 +196,9 @@ pub enum TelnetSync {
     /// [`TelnetConfig::answer_quiet`](crate::TelnetConfig::answer_quiet), see
     /// [`StartReport::telnet_not_answered`].
     Done,
-    /// Telnet is not open, so no queries were sent.
+    /// Telnet is not open, so no queries were sent. It is also set after a
+    /// stop before the report, see [`TelnetStart::Unknown`]. Telnet can be
+    /// open then.
     NotOpen,
     /// The connection ended before the receiver answered.
     Lost,
@@ -256,7 +260,8 @@ pub struct StartReport {
     pub web_interface: Result<StartPages, Error>,
 }
 
-/// Marks a start as running, from the call until the task of the start ends.
+/// Marks a start as running, from the call until the task of the start has
+/// made the report.
 /// It also ends when the call is dropped or the task is stopped.
 struct StartGuard(Arc<Avr>);
 
@@ -275,16 +280,21 @@ impl Drop for StartGuard {
     }
 }
 
-/// A start that runs in the background. Dropping it does not stop the start.
+/// A start that runs in the background. Dropping it does not stop the start,
+/// [`Started::stop`] does.
 ///
 /// The waits take `&mut self` and keep their result, so they can be called
 /// one after the other, and again. A wait that is dropped, for example by a
 /// timeout, can be called again.
 #[derive(Debug)]
 pub struct Started {
-    handle: JoinHandle<StartReport>,
-    /// Set when the task of the start has ended.
+    /// The task of the start, which then reads the slow settings.
+    handle: JoinHandle<()>,
+    /// Gives the report, until it is in `report`.
+    report_receiver: Option<oneshot::Receiver<StartReport>>,
     report: Option<StartReport>,
+    /// Set when the task ended without a report and `handle` was not read.
+    join_pending: bool,
     /// Gives the check of the known values, until it is in `info_check`.
     info_receiver: Option<oneshot::Receiver<InfoCheck>>,
     info_check: Option<InfoCheck>,
@@ -322,17 +332,49 @@ impl Started {
     ///
     /// # Panics
     ///
-    /// Panics if the task of the start panicked.
+    /// Panics if the task of the start panicked before the report.
     pub async fn basic_synced(&mut self) -> &StartReport {
-        if self.report.is_none() {
-            let report = match (&mut self.handle).await {
-                Ok(report) => report,
-                Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-                Err(_) => stopped_report(),
-            };
-            self.report = Some(report);
+        if let Some(receiver) = &mut self.report_receiver {
+            let result = receiver.await;
+            // A receiver that has given its result must not be polled again.
+            self.report_receiver = None;
+            match result {
+                Ok(report) => self.report = Some(report),
+                Err(_) => self.join_pending = true,
+            }
+        }
+        // The task ended without a report: stopped, or a panic.
+        if self.join_pending {
+            let result = (&mut self.handle).await;
+            self.join_pending = false;
+            if let Err(error) = result
+                && error.is_panic()
+            {
+                std::panic::resume_unwind(error.into_panic());
+            }
         }
         self.report.get_or_insert_with(stopped_report)
+    }
+
+    /// Stops the start and the read of the slow settings, also when they
+    /// wait for an answer. It does not close telnet or HEOS, and does not
+    /// stop other calls on the receiver. A report that the task made before
+    /// the stop is kept, otherwise the report has [`Error::Stopped`].
+    ///
+    /// The task ends at its next await, not in this call. If the report was
+    /// not there yet, a new start of the same receiver gives
+    /// [`Error::StartRunning`] until then. [`Started::basic_synced`] waits
+    /// for that end. [`Started::all_synced`] also waits for the telnet
+    /// answers if the report says that telnet is open.
+    pub fn stop(&self) {
+        self.handle.abort();
+    }
+
+    /// Gives a handle that does what [`Started::stop`] does, for another
+    /// task, for example while this one waits in [`Started::all_synced`].
+    #[must_use]
+    pub fn stopper(&self) -> StartStopper {
+        StartStopper(self.handle.abort_handle())
     }
 
     /// Waits as [`Started::basic_synced`] does, and then until the telnet
@@ -346,11 +388,11 @@ impl Started {
     ///
     /// A value that changes later arrives as an event, as always. A caller
     /// that does not need to wait does not have to call this: dropping
-    /// [`Started`] does not stop the start.
+    /// [`Started`] does not stop the start, see [`Started::stop`].
     ///
     /// # Panics
     ///
-    /// Panics if the task of the start panicked.
+    /// Panics if the task of the start panicked before the report.
     pub async fn all_synced(&mut self) -> &StartReport {
         #[cfg_attr(not(feature = "telnet"), expect(unused_variables))]
         let telnet_open = self.basic_synced().await.telnet.is_open();
@@ -391,8 +433,20 @@ impl Started {
     }
 }
 
-/// The report of a start that was stopped before it ended. It happens only
-/// when the runtime shuts down.
+/// Stops a start from another task, see [`Started::stopper`]. Dropping it
+/// does not stop the start.
+#[derive(Clone, Debug)]
+pub struct StartStopper(AbortHandle);
+
+impl StartStopper {
+    /// Does what [`Started::stop`] does.
+    pub fn stop(&self) {
+        self.0.abort();
+    }
+}
+
+/// The report of a start that was stopped before it ended, by
+/// [`Started::stop`] or when the runtime shuts down.
 const fn stopped_report() -> StartReport {
     StartReport {
         telnet: TelnetStart::Unknown,
@@ -486,22 +540,24 @@ impl Avr {
         } else {
             (None, None, Some(InfoCheck::NotNeeded))
         };
+        let (report_sender, report_receiver) = oneshot::channel();
         let (slow_sender, slow_settings) = oneshot::channel();
         Ok(Started {
             handle: tokio::spawn(async move {
                 let (report, read_slow) = task.finish_reads(options, telnet, info_sender).await;
-                let report = StartReport { heos, ..report };
                 drop(running);
+                // Fails only if the caller dropped `Started`.
+                let _ = report_sender.send(StartReport { heos, ..report });
                 // The slow settings come after the report, so that waiting
-                // for it does not take longer.
+                // for it does not take longer. The same task reads them, so
+                // that `Started::stop` stops them too.
                 if read_slow {
-                    tokio::spawn(async move {
-                        let _ = task.read_settings(SettingsPart::Slow).await;
-                        let _ = slow_sender.send(());
-                    });
+                    let _ = task.read_settings(SettingsPart::Slow).await;
+                    let _ = slow_sender.send(());
                 }
-                report
             }),
+            report_receiver: Some(report_receiver),
+            join_pending: false,
             report: None,
             info_receiver,
             info_check,

@@ -58,7 +58,8 @@ use follow_up::FollowUp;
 
 pub use follow_up::FollowUpRead;
 pub use start::{
-    HeosStart, InfoCheck, StartOptions, StartPages, StartReport, Started, TelnetStart, TelnetSync,
+    HeosStart, InfoCheck, StartOptions, StartPages, StartReport, StartStopper, Started,
+    TelnetStart, TelnetSync,
 };
 
 /// Name of a receiver that has none.
