@@ -1823,7 +1823,8 @@ impl Avr {
     /// written, each written query has its answer, and each list has its
     /// `END` line. A query without an answer for
     /// [`TelnetConfig::answer_quiet`] counts as not answered: some receivers
-    /// never answer some queries. Gives the queries that were not answered.
+    /// never answer some queries. Gives the queries that were not answered,
+    /// each once.
     /// Queries that are added while this waits are covered too. Queries that
     /// the connection asks by itself, for example after a signal hint or for
     /// a signal check, are not given; their answers still change the state
@@ -1991,8 +1992,8 @@ impl Avr {
     /// signal and of the speakers. HDR, the pixel depth, the color space and
     /// the FRL rate are not in it: [`Avr::refresh_signal`] reads them over
     /// telnet, or from the web interface without telnet.
-    /// [`Avr::refresh_signal_pages`] reads them from the web interface. The
-    /// values are in
+    /// [`Avr::refresh_signal_pages`] reads them from the web interface; it
+    /// also does this read, so do not call both. The values are in
     /// [`DeviceState::signal`](denon_marantz_proto::DeviceState::signal) and,
     /// for Audyssey and the HDMI output, in the fields of
     /// [`DeviceState`](denon_marantz_proto::DeviceState).

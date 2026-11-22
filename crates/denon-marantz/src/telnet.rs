@@ -76,7 +76,8 @@ pub struct TelnetConfig {
     /// Time without an answer after which the queries that are still open
     /// count as not answered, see [`Avr::telnet_sync`](crate::Avr::telnet_sync).
     /// Some receivers never answer some queries. The time counts from the
-    /// last answer or the last query, whichever is later.
+    /// last answer or the last query, whichever is later. It must be below
+    /// [`TelnetConfig::signal_check`] when that is set.
     pub answer_quiet: Duration,
     /// Shortest wait before the video signal is asked after a hint. Some
     /// receivers do not send video signal changes. When the signal changes,
