@@ -211,6 +211,23 @@ fn appcommand0300_commands(queries: Option<&ListedQueries>) -> Box<[Definition]>
         .collect()
 }
 
+/// The query of [`APPCOMMAND0300_COMMANDS`] whose answer gives the value of
+/// `query`. `None` if no query of `AppCommand0300.xml` gives it.
+const fn appcommand0300_definition(query: Query) -> Option<Definition> {
+    use Query as Q;
+    match query {
+        Q::MultEq | Q::DynamicEq | Q::ReferenceLevel | Q::DynamicVolume => {
+            Some(appcommand::GET_AUDYSSEY)
+        }
+        Q::HdmiOutput => Some(appcommand::GET_OUTPUT_SETTINGS),
+        Q::VideoResolution | Q::VideoInput | Q::VideoOutput => Some(appcommand::GET_VIDEO_INFO),
+        Q::SamplingRate | Q::AudioSignal | Q::AudioSound => Some(appcommand::GET_AUDIO_INFO),
+        Q::InputChannels => Some(appcommand::GET_INPUT_SIGNAL),
+        Q::OutputChannels => Some(appcommand::GET_ACTIVE_SPEAKER),
+        _ => None,
+    }
+}
+
 /// Returns true if the receiver is asked `definition`, one of
 /// [`APPCOMMAND0300_COMMANDS`].
 fn asks_appcommand0300(queries: Option<&ListedQueries>, definition: &Definition) -> bool {
@@ -315,9 +332,10 @@ pub struct Info {
     /// information lists. `0` if it says that there are none, `None` if it
     /// does not say. A receiver can accept more than it lists.
     pub quick_select_count: Option<u8>,
-    /// The receiver answers the HDMI output over HTTP, so
-    /// [`Avr::update_signal_and_settings`] and the read after
-    /// `set_hdmi_output` over HTTP read it.
+    /// True if [`Info::queries`] lists `GetOutputSettings`: the receiver
+    /// answers the HDMI output over HTTP. [`Avr::update_signal_and_settings`],
+    /// the read after `set_hdmi_output` and [`Info::http_reads`] use that
+    /// list, not this field.
     pub hdmi_output_over_http: bool,
     /// The `AppCommand` queries that `Deviceinfo.xml` lists. `None` if it has
     /// no list, as on receivers older than about 2015: then the library asks
@@ -549,16 +567,7 @@ impl Info {
             }
             _ => false,
         };
-        let appcommand0300 = match query {
-            Q::MultEq | Q::DynamicEq | Q::ReferenceLevel | Q::DynamicVolume => {
-                asks(appcommand::GET_AUDYSSEY)
-            }
-            Q::HdmiOutput => appcommand && self.hdmi_output_over_http,
-            Q::VideoResolution | Q::VideoInput | Q::VideoOutput => asks(appcommand::GET_VIDEO_INFO),
-            Q::InputChannels => asks(appcommand::GET_INPUT_SIGNAL),
-            Q::OutputChannels => asks(appcommand::GET_ACTIVE_SPEAKER),
-            _ => part == Some(SignalPart::AudioInfo) && asks(appcommand::GET_AUDIO_INFO),
-        };
+        let appcommand0300 = appcommand0300_definition(query).is_some_and(asks);
         // The pages are read with any update method.
         let page = matches!(
             part,
@@ -1877,7 +1886,7 @@ impl Avr {
     /// Reads the video and audio signal, the channels, the Audyssey settings
     /// and the HDMI output from the receiver with one request to
     /// `AppCommand0300.xml`. The HDMI output is read only if
-    /// [`Info::hdmi_output_over_http`] is true.
+    /// [`Info::queries`] lists `GetOutputSettings`.
     ///
     /// This is faster than the pages of the web interface and the telnet
     /// queries for the same values. It gives the
@@ -3007,15 +3016,14 @@ mod tests {
         if let Some(listed) = info.queries.as_mut() {
             listed.audio_info = true;
             listed.zone_tone = true;
+            listed.output_settings = true;
         }
         assert_eq!(info.http_reads(Query::SamplingRate), APPCOMMAND0300);
         assert_eq!(info.http_reads(Query::Zone2Bass), HttpReads::REFRESH);
-        info.hdmi_output_over_http = true;
         assert_eq!(info.http_reads(Query::HdmiOutput), APPCOMMAND0300);
         // Without lists all but the HDMI output are asked, and no settings.
         let mut unlisted = info.clone();
         unlisted.queries = None;
-        unlisted.hdmi_output_over_http = false;
         for (query, expected) in [
             (Query::Bass, UPDATE),
             (Query::MultEq, APPCOMMAND0300),
@@ -3037,6 +3045,77 @@ mod tests {
             (Query::CinemaEq, HttpReads::EMPTY),
         ] {
             assert_eq!(info.http_reads(query), expected, "{query:?}");
+        }
+    }
+
+    #[test]
+    fn signal_and_settings_follow_the_request() {
+        type Set = fn(&mut ListedQueries);
+        let audio_info = |query: Query| query.signal_part() == Some(SignalPart::AudioInfo);
+        for &query in Query::ALL {
+            assert_eq!(
+                audio_info(query),
+                appcommand0300_definition(query) == Some(appcommand::GET_AUDIO_INFO),
+                "{query:?}"
+            );
+        }
+        // Each command of the request gives the value of some query.
+        for definition in APPCOMMAND0300_COMMANDS {
+            assert!(
+                Query::ALL
+                    .iter()
+                    .any(|&query| appcommand0300_definition(query) == Some(definition)),
+                "{:?}",
+                definition.cmd.name
+            );
+        }
+        let lists: [Set; 7] = [
+            |_| {},
+            |listed| listed.audyssey = true,
+            |listed| listed.video_info = true,
+            |listed| listed.audio_info = true,
+            |listed| listed.input_signal = true,
+            |listed| listed.active_speaker = true,
+            |listed| listed.output_settings = true,
+        ];
+        let mut infos = Vec::new();
+        for flag in [false, true] {
+            let mut info = test_info("0301", Brand::Denon, Some(3));
+            // The field is ignored, also when it differs from the list.
+            info.hdmi_output_over_http = flag;
+            infos.push(info.clone());
+            for set in lists {
+                let mut listed = ListedQueries::default();
+                set(&mut listed);
+                info.queries = Some(listed);
+                infos.push(info.clone());
+            }
+        }
+        for info in &mut infos {
+            for update_method in [UpdateMethod::AppCommand, UpdateMethod::StatusPages] {
+                info.update_method = update_method;
+                let sent = appcommand0300_commands(info.queries.as_ref());
+                for &query in Query::ALL {
+                    let expected = update_method == UpdateMethod::AppCommand
+                        && info.offers(query)
+                        && info.zones.contains(&query.zone())
+                        && appcommand0300_definition(query)
+                            .is_some_and(|definition| sent.contains(&definition));
+                    let reads = info.http_reads(query);
+                    // SIGNAL_PAGES reads all that SIGNAL_AND_SETTINGS reads.
+                    assert!(
+                        !reads.contains(HttpReads::SIGNAL_AND_SETTINGS)
+                            || reads.contains(HttpReads::SIGNAL_PAGES),
+                        "{query:?}"
+                    );
+                    assert_eq!(
+                        reads.contains(HttpReads::SIGNAL_AND_SETTINGS),
+                        expected,
+                        "{query:?} {:?} {update_method:?}",
+                        info.queries
+                    );
+                }
+            }
         }
     }
 
