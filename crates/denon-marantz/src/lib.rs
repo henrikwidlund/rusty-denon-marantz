@@ -34,7 +34,8 @@
 //! fill in the rest in the background, and `Avr::changes` reports each
 //! change of the state.
 //!
-//! ```no_run
+#![cfg_attr(feature = "http", doc = "```no_run")]
+#![cfg_attr(not(feature = "http"), doc = "```ignore")]
 //! use std::sync::Arc;
 //! use denon_marantz::{Avr, Zone};
 //! use tokio::sync::broadcast::error::RecvError;
@@ -132,7 +133,7 @@ pub use pacer::{Adaptive, Pacer, Pacing};
 pub use audyssey::Audyssey;
 #[cfg(feature = "http")]
 pub use avr::{
-    Avr, AvrBuilder, FollowUpRead, HeosStart, Info, InfoCheck, StartOptions, StartPages,
+    Avr, AvrBuilder, FollowUpRead, HeosStart, HttpReads, Info, InfoCheck, StartOptions, StartPages,
     StartReport, Started, TelnetStart, TelnetSync, UpdateMethod,
 };
 #[cfg(feature = "http")]

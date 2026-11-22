@@ -199,6 +199,9 @@ To decide what to show, ask `Info`:
 - `supports(feature)`: a spec of the receiver generation has the feature.
 - `readable_over_http(query)`: an HTTP read gives the value, so it is known
   without telnet.
+- `http_reads(query)`: the `Avr` methods that read the value over HTTP, as
+  `HttpReads` (`UPDATE`, `REFRESH`, `SIGNAL_AND_SETTINGS`, `SIGNAL_PAGES`).
+  A caller that polls checks `intersects` with the methods it calls.
 - `has_quick_select(slot)`: the quick select may exist.
 
 The web interface (port 11080) is read on request, because it does not

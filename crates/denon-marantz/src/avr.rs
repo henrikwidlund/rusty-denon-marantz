@@ -1,7 +1,7 @@
 //! A receiver: identification, state and updates over HTTP.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -11,7 +11,7 @@ use denon_marantz_proto::appcommand::{
 };
 use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{
-    Command, Message, Query, QueryGroup, SignalPart, query_for_command, query_for_text,
+    Command, Message, Query, QueryGroup, SignalPart, query_for_command,
 };
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
@@ -99,8 +99,42 @@ const APPCOMMAND0300_COMMANDS: [Definition; 6] = [
     appcommand::GET_OUTPUT_SETTINGS,
 ];
 
-// `Avr::update_signal_and_settings` keeps one bit for each command in a `u8`.
+// `Answered0300` keeps one bit for each command in a `u8`.
 const _: () = assert!(APPCOMMAND0300_COMMANDS.len() <= 8);
+
+/// The commands of [`APPCOMMAND0300_COMMANDS`] whose item in an answer was
+/// not an error item, one bit for each.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Answered0300(u8);
+
+impl Answered0300 {
+    /// The bit of `definition`. `0` for a command that is not in the list.
+    fn bit(definition: &Definition) -> u8 {
+        APPCOMMAND0300_COMMANDS
+            .iter()
+            .position(|known| known == definition)
+            .map_or(0, |index| 1 << index)
+    }
+
+    fn add(&mut self, definition: &Definition) {
+        self.0 |= Self::bit(definition);
+    }
+
+    fn has(self, definition: &Definition) -> bool {
+        let bit = Self::bit(definition);
+        bit != 0 && self.0 & bit == bit
+    }
+
+    /// The answer had the channels of the signal and of the speakers.
+    fn has_channels(self) -> bool {
+        self.has(&appcommand::GET_INPUT_SIGNAL) && self.has(&appcommand::GET_ACTIVE_SPEAKER)
+    }
+
+    /// Number of commands in the set.
+    const fn count(self) -> u32 {
+        self.0.count_ones()
+    }
+}
 
 /// The body of the settings request for `part`, with its number of commands.
 /// `None` if there is nothing to ask.
@@ -437,43 +471,63 @@ impl Info {
     }
 
     /// Returns true if an HTTP read gives the value, so that it is known
-    /// without telnet. Only zones in [`Info::zones`] are read.
+    /// without telnet. Same as `!self.http_reads(query).is_empty()`, see
+    /// [`Info::http_reads`].
+    #[must_use]
+    pub fn readable_over_http(&self, query: Query) -> bool {
+        !self.http_reads(query).is_empty()
+    }
+
+    /// The methods of [`Avr`] that read the value over HTTP. Empty if no HTTP
+    /// read gives it, so that only telnet can tell it. Only zones in
+    /// [`Info::zones`] are read. The set tells what the receiver can give. It
+    /// does not change when the receiver refuses a request; the value then
+    /// stays unknown.
     ///
-    /// The settings of `AppCommand0300.xml` come with the start (if
-    /// [`StartOptions::settings`](crate::StartOptions::settings) is on), with
-    /// [`Avr::refresh`] and with the reads after commands. The LFE level comes
-    /// only when the input mode is not 7.1CH IN.
+    /// [`HttpReads::REFRESH`] is [`Avr::refresh`] without telnet: it does what
+    /// [`Avr::update`] does and reads the settings of `AppCommand0300.xml`.
+    /// The start reads these settings too (if
+    /// [`StartOptions::settings`](crate::StartOptions::settings) is on), and
+    /// so do the reads after commands. The LFE level comes only when the input
+    /// mode is not 7.1CH IN.
     ///
     /// Where the signal values come from:
     ///
     /// - The resolution, the audio signal and the channels:
-    ///   `AppCommand0300.xml`, if the receiver answers it.
+    ///   `AppCommand0300.xml`, if the receiver answers it
+    ///   ([`HttpReads::SIGNAL_AND_SETTINGS`]).
     /// - HDR, the color space, the pixel depth, the FRL rate and BT.2020: the
     ///   video page of the web interface. The resolution is on it too.
-    /// - The channels, if `AppCommand0300.xml` gives no answer: the channels
-    ///   page of the web interface.
+    /// - The channels, if `AppCommand0300.xml` does not give them: the
+    ///   channels page of the web interface.
     ///
+    /// [`Avr::refresh_signal_pages`] ([`HttpReads::SIGNAL_PAGES`]) reads
+    /// `AppCommand0300.xml` first, then always the video page, and the
+    /// channels page when `AppCommand0300.xml` does not give the channels.
     /// The start reads the two pages only if
     /// [`StartOptions::signal_pages`](crate::StartOptions::signal_pages) is
-    /// on. [`Avr::refresh_signal_pages`] always reads the video page, and the
-    /// channels page when `AppCommand0300.xml` gives no answer. A value stays
-    /// unknown if the receiver has no such page: the start then gives
-    /// [`PageStatus::NotFound`] for it. The video page has BT.2020 only for
-    /// some signals.
+    /// on. A value stays unknown if the receiver has no such page: the start
+    /// then gives [`PageStatus::NotFound`] for it. The video page has BT.2020
+    /// only for some signals.
     ///
     /// Status pages of some receivers do not tell which sources are in use.
     /// On receivers without `AppCommand`, the friendly name is only in
     /// [`Info::friendly_name`].
     #[must_use]
-    pub fn readable_over_http(&self, query: Query) -> bool {
+    pub fn http_reads(&self, query: Query) -> HttpReads {
         use Query as Q;
         if !self.offers(query) || !self.zones.contains(&query.zone()) {
-            return false;
+            return HttpReads::EMPTY;
+        }
+        // The settings rows use the other query of the same value.
+        if query == Q::AutoLipSyncAls {
+            return self.http_reads(Q::AutoLipSync);
         }
         let appcommand = self.update_method == UpdateMethod::AppCommand;
         let queries = self.queries.as_ref();
         let asks = |definition| appcommand && asks_appcommand0300(queries, &definition);
-        match query {
+        let part = query.signal_part();
+        let update = match query {
             Q::Source
             | Q::Volume
             | Q::Mute
@@ -493,30 +547,124 @@ impl Info {
             Q::ToneControl | Q::Bass | Q::Treble => {
                 appcommand && queries.is_none_or(|queries| queries.tone_control)
             }
+            _ => false,
+        };
+        let appcommand0300 = match query {
             Q::MultEq | Q::DynamicEq | Q::ReferenceLevel | Q::DynamicVolume => {
                 asks(appcommand::GET_AUDYSSEY)
             }
             Q::HdmiOutput => appcommand && self.hdmi_output_over_http,
-            // The settings rows use the other query of the same value.
-            Q::AutoLipSyncAls => self.readable_over_http(Q::AutoLipSync),
-            _ => match query.signal_part() {
-                Some(SignalPart::AudioInfo) => asks(appcommand::GET_AUDIO_INFO),
-                // The pages are read with any update method.
-                Some(SignalPart::Video | SignalPart::Channels | SignalPart::Colorimetry) => true,
-                Some(_) => false,
-                None => {
-                    appcommand
-                        && queries.is_some_and(|queries| {
-                            settings_request_asks(
-                                query,
-                                queries,
-                                self.read_zone_count(),
-                                self.features,
-                            )
-                        })
-                }
-            },
+            Q::VideoResolution | Q::VideoInput | Q::VideoOutput => asks(appcommand::GET_VIDEO_INFO),
+            Q::InputChannels => asks(appcommand::GET_INPUT_SIGNAL),
+            Q::OutputChannels => asks(appcommand::GET_ACTIVE_SPEAKER),
+            _ => part == Some(SignalPart::AudioInfo) && asks(appcommand::GET_AUDIO_INFO),
+        };
+        // The pages are read with any update method.
+        let page = matches!(
+            part,
+            Some(SignalPart::Video | SignalPart::Channels | SignalPart::Colorimetry)
+        );
+        let settings = appcommand
+            && queries.is_some_and(|queries| {
+                settings_request_asks(query, queries, self.read_zone_count(), self.features)
+            });
+        let mut reads = HttpReads::EMPTY;
+        if update {
+            reads |= HttpReads::UPDATE | HttpReads::REFRESH;
         }
+        if appcommand0300 {
+            reads |= HttpReads::SIGNAL_AND_SETTINGS | HttpReads::SIGNAL_PAGES;
+        }
+        if page {
+            reads |= HttpReads::SIGNAL_PAGES;
+        }
+        if settings {
+            reads |= HttpReads::REFRESH;
+        }
+        reads
+    }
+}
+
+/// A set of [`Avr`] methods that read values over HTTP, see
+/// [`Info::http_reads`]. Combine them with `|`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct HttpReads(u8);
+
+impl HttpReads {
+    /// No method.
+    pub const EMPTY: Self = Self(0);
+    /// [`Avr::update`].
+    pub const UPDATE: Self = Self(1);
+    /// [`Avr::refresh`] while telnet is not connected. It reads all that
+    /// [`HttpReads::UPDATE`] reads, and the settings of `AppCommand0300.xml`.
+    pub const REFRESH: Self = Self(1 << 1);
+    /// [`Avr::update_signal_and_settings`].
+    pub const SIGNAL_AND_SETTINGS: Self = Self(1 << 2);
+    /// [`Avr::refresh_signal_pages`]. It reads all that
+    /// [`HttpReads::SIGNAL_AND_SETTINGS`] reads, and the signal pages.
+    pub const SIGNAL_PAGES: Self = Self(1 << 3);
+
+    /// Names for `Debug`, in bit order.
+    const NAMES: [(Self, &'static str); 4] = [
+        (Self::UPDATE, "UPDATE"),
+        (Self::REFRESH, "REFRESH"),
+        (Self::SIGNAL_AND_SETTINGS, "SIGNAL_AND_SETTINGS"),
+        (Self::SIGNAL_PAGES, "SIGNAL_PAGES"),
+    ];
+
+    /// Returns true if the set has no method.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns true if the set has all methods of `other`.
+    #[must_use]
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Returns true if the set has at least one method of `other`.
+    #[must_use]
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    /// The methods that are in one of the sets or in both.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl std::ops::BitOr for HttpReads {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        self.union(other)
+    }
+}
+
+impl std::ops::BitOrAssign for HttpReads {
+    fn bitor_assign(&mut self, other: Self) {
+        *self = self.union(other);
+    }
+}
+
+impl std::fmt::Debug for HttpReads {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HttpReads(")?;
+        let mut first = true;
+        for (bit, name) in Self::NAMES {
+            if self.contains(bit) {
+                if !first {
+                    f.write_str(" | ")?;
+                }
+                f.write_str(name)?;
+                first = false;
+            }
+        }
+        f.write_str(")")
     }
 }
 
@@ -588,9 +736,10 @@ pub struct Avr {
     appcommand0300_parts: [Request0300; 2],
     /// Reads that the receiver does not answer.
     missing: Arc<Missing>,
-    /// The last start read the audio signal and the channels with
-    /// `AppCommand0300.xml`, see [`APPCOMMAND0300_FIRST`].
-    signal_from_appcommand: AtomicBool,
+    /// The commands of the first `AppCommand0300.xml` request of the last
+    /// start (see [`APPCOMMAND0300_FIRST`]) that were answered without an
+    /// error item, as [`Answered0300`].
+    signal_answered: AtomicU8,
     channels: Channels,
     /// A start is running, see [`Avr::start_with`].
     starting: AtomicBool,
@@ -1763,9 +1912,38 @@ impl Avr {
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
     pub async fn update_signal_and_settings(&self) -> Result<PageStatus, Error> {
-        self.read_appcommand0300(&self.appcommand0300_commands, &self.appcommand0300_body)
+        self.update_signal_and_settings_with_channels()
             .await
             .map(|(status, _)| status)
+    }
+
+    /// Like [`Avr::update_signal_and_settings`]. Also gives true if the answer
+    /// has items for the channels of the signal and of the speakers that are
+    /// not error items.
+    pub(crate) async fn update_signal_and_settings_with_channels(
+        &self,
+    ) -> Result<(PageStatus, bool), Error> {
+        self.read_appcommand0300(&self.appcommand0300_commands, &self.appcommand0300_body)
+            .await
+            .map(|(status, answered)| (status, answered.has_channels()))
+    }
+
+    /// The commands of the first `AppCommand0300.xml` request of the last
+    /// start that were answered without an error item.
+    fn signal_answered(&self) -> Answered0300 {
+        Answered0300(self.signal_answered.load(Ordering::Relaxed))
+    }
+
+    /// The last start read the channels of the signal and of the speakers
+    /// with `AppCommand0300.xml`.
+    pub(crate) fn channels_from_appcommand(&self) -> bool {
+        self.signal_answered().has_channels()
+    }
+
+    /// The last start read the audio signal with `AppCommand0300.xml`.
+    #[cfg(feature = "telnet")]
+    pub(crate) fn audio_info_from_appcommand(&self) -> bool {
+        self.signal_answered().has(&appcommand::GET_AUDIO_INFO)
     }
 
     /// Like [`Avr::update_signal_and_settings`], in the two requests of
@@ -1773,26 +1951,26 @@ impl Avr {
     /// come soon. The status is [`PageStatus::Read`] if one request was read.
     /// Else it is the status of the first request.
     pub(crate) async fn update_signal_and_settings_in_parts(&self) -> Result<PageStatus, Error> {
-        self.signal_from_appcommand.store(false, Ordering::Relaxed);
+        self.signal_answered.store(0, Ordering::Relaxed);
         let mut status = None;
-        // The first request has values for each of its commands.
-        let mut signal_read = false;
+        // The commands of the first request that were answered.
+        let mut first_answered = Answered0300::default();
         for (index, part) in self.appcommand0300_parts.iter().enumerate() {
             if part.commands.is_empty() {
                 continue;
             }
-            let (part_status, part_complete) =
+            let (part_status, part_answered) =
                 match self.read_appcommand0300(&part.commands, &part.body).await {
                     Ok(result) => result,
                     // The values of the request that was read count.
                     Err(error) if status == Some(PageStatus::Read) => {
                         tracing::debug!(host = %self.info.host, %error, "AppCommand0300 not read");
-                        (PageStatus::NoAnswer, false)
+                        (PageStatus::NoAnswer, Answered0300::default())
                     }
                     Err(error) => return Err(error),
                 };
             if index == 0 {
-                signal_read = part_status == PageStatus::Read && part_complete;
+                first_answered = part_answered;
             }
             if status.is_none() || part_status == PageStatus::Read {
                 status = Some(part_status);
@@ -1804,23 +1982,23 @@ impl Avr {
         }
         // The start asks telnet again for what an error item left out. The
         // values of the second request do not change what it asks.
-        self.signal_from_appcommand
-            .store(signal_read, Ordering::Relaxed);
+        self.signal_answered
+            .store(first_answered.0, Ordering::Relaxed);
         Ok(status.unwrap_or(PageStatus::NotFound))
     }
 
     /// Sends `body`, the request for `commands`, to `AppCommand0300.xml` and
-    /// puts the answer into the state. Also gives if each command but the
-    /// HDMI output had values.
+    /// puts the answer into the state. Also gives the commands that were
+    /// answered without an error item.
     async fn read_appcommand0300(
         &self,
         commands: &[Definition],
         body: &Bytes,
-    ) -> Result<(PageStatus, bool), Error> {
+    ) -> Result<(PageStatus, Answered0300), Error> {
         if self.info.update_method != UpdateMethod::AppCommand
             || self.missing.appcommand0300.load(Ordering::Relaxed)
         {
-            return Ok((PageStatus::NotFound, false));
+            return Ok((PageStatus::NotFound, Answered0300::default()));
         }
         // Telnet reports the Audyssey values and the HDMI output, so a blank
         // one must not clear them.
@@ -1830,8 +2008,7 @@ impl Avr {
             .post_parsed(Endpoint::AppCommand0300.path(), body.clone(), |body| {
                 // A busy receiver can leave items out.
                 let response = Response::parse_at_most(body, commands.len())?;
-                // One bit for each command with values in the answer.
-                let mut answered = 0_u8;
+                let mut answered = Answered0300::default();
                 self.channels.modify(|state, notify| {
                     for (index, item) in response.matched(commands) {
                         // An error item has no values, and must not clear
@@ -1839,8 +2016,8 @@ impl Avr {
                         if item.is_error() {
                             continue;
                         }
-                        answered |= 1 << index;
                         let definition = &commands[index];
+                        answered.add(definition);
                         let keep_known = telnet_open
                             && (*definition == appcommand::GET_AUDYSSEY
                                 || *definition == appcommand::GET_OUTPUT_SETTINGS);
@@ -1856,29 +2033,25 @@ impl Avr {
                         }
                     }
                 });
-                // The HDMI output is not part of the signal.
-                let complete = commands.iter().enumerate().all(|(index, definition)| {
-                    answered & 1 << index != 0 || *definition == appcommand::GET_OUTPUT_SETTINGS
-                });
-                if answered.count_ones() as usize != commands.len() {
+                if answered.count() as usize != commands.len() {
                     tracing::debug!(
                         host = %self.info.host,
-                        answered = answered.count_ones(),
+                        answered = answered.count(),
                         asked = commands.len(),
                         "AppCommand0300 answer has no values for some commands"
                     );
                 }
-                Ok(complete)
+                Ok(answered)
             })
             .await;
         match result {
-            Ok(complete) => {
+            Ok(answered) => {
                 self.forget_telnet_values(&Ok(PageStatus::Read));
                 // Only the video values can make BT.2020 not known.
                 if commands.contains(&appcommand::GET_VIDEO_INFO) {
                     self.ask_colorimetry_if_unknown().await;
                 }
-                Ok((PageStatus::Read, complete))
+                Ok((PageStatus::Read, answered))
             }
             // A timeout or a network error can pass.
             Err(error) if error.is_unreachable() => Err(error),
@@ -1894,7 +2067,7 @@ impl Avr {
                     Error::Forbidden { .. } => PageStatus::Refused(403),
                     _ => PageStatus::Unreadable,
                 };
-                Ok((status, false))
+                Ok((status, Answered0300::default()))
             }
         }
     }
@@ -2329,7 +2502,7 @@ impl AvrBuilder {
             appcommand0300_body,
             appcommand0300_parts,
             missing,
-            signal_from_appcommand: AtomicBool::new(false),
+            signal_answered: AtomicU8::new(0),
             channels,
             starting: AtomicBool::new(false),
             #[cfg(feature = "telnet")]
@@ -2573,8 +2746,9 @@ impl Offered {
 
     /// [`Offered::offers`] for the value of the query text. True for a text
     /// that is not in the query lists.
+    #[cfg(feature = "telnet")]
     pub(crate) fn offers_text(self, text: &str) -> bool {
-        query_for_text(text).is_none_or(|query| self.offers(query))
+        denon_marantz_proto::telnet::query_for_text(text).is_none_or(|query| self.offers(query))
     }
 
     /// See [`Info::lists`].
@@ -2790,5 +2964,112 @@ mod tests {
         assert!(!info.readable_over_http(Query::Dimmer));
         assert!(!info.readable_over_http(Query::CinemaEq));
         assert!(!info.readable_over_http(Query::SamplingRate));
+    }
+
+    #[test]
+    fn http_reads_name_the_methods() {
+        const UPDATE: HttpReads = HttpReads::UPDATE.union(HttpReads::REFRESH);
+        const APPCOMMAND0300: HttpReads =
+            HttpReads::SIGNAL_AND_SETTINGS.union(HttpReads::SIGNAL_PAGES);
+        let mut info = test_info("0301", Brand::Denon, Some(2));
+        let mut listed = ListedQueries::default();
+        listed.tone_control = true;
+        listed.audyssey = true;
+        listed.video_info = true;
+        listed.input_signal = true;
+        listed.surround_parameter = true;
+        info.queries = Some(listed);
+        for (query, expected) in [
+            (Query::Volume, UPDATE),
+            (Query::Zone2Power, UPDATE),
+            (Query::Dimmer, UPDATE),
+            (Query::Bass, UPDATE),
+            (Query::MultEq, APPCOMMAND0300),
+            (Query::VideoResolution, APPCOMMAND0300),
+            (Query::VideoInput, APPCOMMAND0300),
+            (Query::InputChannels, APPCOMMAND0300),
+            (Query::OutputChannels, HttpReads::SIGNAL_PAGES),
+            (Query::HdrFormat, HttpReads::SIGNAL_PAGES),
+            (Query::ExtendedColorimetry, HttpReads::SIGNAL_PAGES),
+            (Query::CinemaEq, HttpReads::REFRESH),
+            (Query::Zone2Bass, HttpReads::EMPTY),
+            (Query::SamplingRate, HttpReads::EMPTY),
+            (Query::HdmiOutput, HttpReads::EMPTY),
+            (Query::Zone3Power, HttpReads::EMPTY),
+            (Query::Menu, HttpReads::EMPTY),
+        ] {
+            assert_eq!(info.http_reads(query), expected, "{query:?}");
+        }
+        assert_eq!(
+            info.http_reads(Query::AutoLipSyncAls),
+            info.http_reads(Query::AutoLipSync)
+        );
+        if let Some(listed) = info.queries.as_mut() {
+            listed.audio_info = true;
+            listed.zone_tone = true;
+        }
+        assert_eq!(info.http_reads(Query::SamplingRate), APPCOMMAND0300);
+        assert_eq!(info.http_reads(Query::Zone2Bass), HttpReads::REFRESH);
+        info.hdmi_output_over_http = true;
+        assert_eq!(info.http_reads(Query::HdmiOutput), APPCOMMAND0300);
+        // Without lists all but the HDMI output are asked, and no settings.
+        let mut unlisted = info.clone();
+        unlisted.queries = None;
+        unlisted.hdmi_output_over_http = false;
+        for (query, expected) in [
+            (Query::Bass, UPDATE),
+            (Query::MultEq, APPCOMMAND0300),
+            (Query::SamplingRate, APPCOMMAND0300),
+            (Query::OutputChannels, APPCOMMAND0300),
+            (Query::HdmiOutput, HttpReads::EMPTY),
+            (Query::CinemaEq, HttpReads::EMPTY),
+        ] {
+            assert_eq!(unlisted.http_reads(query), expected, "{query:?}");
+        }
+        info.update_method = UpdateMethod::StatusPages;
+        for (query, expected) in [
+            (Query::Volume, UPDATE),
+            (Query::Dimmer, HttpReads::EMPTY),
+            (Query::MultEq, HttpReads::EMPTY),
+            (Query::HdmiOutput, HttpReads::EMPTY),
+            (Query::VideoResolution, HttpReads::SIGNAL_PAGES),
+            (Query::InputChannels, HttpReads::SIGNAL_PAGES),
+            (Query::CinemaEq, HttpReads::EMPTY),
+        ] {
+            assert_eq!(info.http_reads(query), expected, "{query:?}");
+        }
+    }
+
+    #[test]
+    fn answered_0300_has_the_added_commands() {
+        let mut answered = Answered0300::default();
+        answered.add(&appcommand::GET_INPUT_SIGNAL);
+        assert!(!answered.has_channels());
+        answered.add(&appcommand::GET_ACTIVE_SPEAKER);
+        answered.add(&appcommand::GET_DIMMER);
+        assert!(answered.has_channels());
+        assert!(!answered.has(&appcommand::GET_AUDIO_INFO));
+        assert!(!answered.has(&appcommand::GET_DIMMER));
+        assert_eq!(answered.count(), 2);
+    }
+
+    #[test]
+    fn http_reads_combine() {
+        let both = HttpReads::UPDATE | HttpReads::SIGNAL_PAGES;
+        assert!(HttpReads::EMPTY.is_empty());
+        assert_eq!(HttpReads::default(), HttpReads::EMPTY);
+        assert!(!both.is_empty());
+        assert!(both.contains(HttpReads::UPDATE));
+        assert!(both.contains(HttpReads::EMPTY));
+        assert!(!both.contains(HttpReads::UPDATE | HttpReads::REFRESH));
+        assert!(both.intersects(HttpReads::SIGNAL_PAGES | HttpReads::REFRESH));
+        assert!(!both.intersects(HttpReads::REFRESH | HttpReads::SIGNAL_AND_SETTINGS));
+        assert!(!both.intersects(HttpReads::EMPTY));
+        let mut reads = HttpReads::EMPTY;
+        reads |= HttpReads::UPDATE;
+        reads |= HttpReads::SIGNAL_PAGES;
+        assert_eq!(reads, both);
+        assert_eq!(format!("{both:?}"), "HttpReads(UPDATE | SIGNAL_PAGES)");
+        assert_eq!(format!("{:?}", HttpReads::EMPTY), "HttpReads()");
     }
 }

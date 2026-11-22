@@ -642,10 +642,10 @@ impl Avr {
         });
         // The answer of `AppCommand0300.xml` has the channels, also when the
         // pages are not read.
-        channels |= self.signal_from_appcommand.load(Ordering::Relaxed);
+        channels |= self.channels_from_appcommand();
         let mut queries = Vec::new();
         // The first queries left these out for a receiver with `AppCommand0300.xml`.
-        if self.has_appcommand0300() && !self.signal_from_appcommand.load(Ordering::Relaxed) {
+        if self.has_appcommand0300() && !self.audio_info_from_appcommand() {
             queries.extend(signal_queries(brand, SignalPart::AudioInfo));
         }
         if !channels {
@@ -766,7 +766,8 @@ impl Avr {
 
     /// Reads the video and audio signal over HTTP, also while telnet is open:
     /// `AppCommand0300.xml`, if the receiver has it, the video signal page
-    /// and, without an answer of `AppCommand0300.xml`, the channels page.
+    /// and, if `AppCommand0300.xml` does not give the channels, the channels
+    /// page.
     /// While telnet is open, it asks telnet only for BT.2020 when the page
     /// changed the signal and the receiver reports BT.2020 on telnet.
     ///
@@ -779,15 +780,13 @@ impl Avr {
     /// Returns an error if the web interface does not answer, or answers with
     /// no page that can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
-        // A receiver that answers `AppCommand0300.xml` gives the resolution, the
-        // audio signal and the channels at once, and its answer for the
-        // channels is more complete than the page.
-        let answered = matches!(
-            self.update_signal_and_settings().await,
-            Ok(PageStatus::Read)
-        );
+        // When the answer of `AppCommand0300.xml` has the channels, the
+        // channels page is not read: the answer is more complete than the
+        // page.
+        let appcommand0300 = self.update_signal_and_settings_with_channels().await;
+        let answered = matches!(appcommand0300, Ok((PageStatus::Read, _)));
         let video = self.read_video_page().await;
-        let channels = if answered {
+        let channels = if matches!(appcommand0300, Ok((PageStatus::Read, true))) {
             Ok(PageStatus::Skipped(SkipReason::AlreadyRead))
         } else {
             self.read_channels_page().await
@@ -832,7 +831,7 @@ impl Avr {
             pages.push((group, status));
         }
         let (video_signal, audio_channels) = if let Some(video_signal) = video_signal {
-            let channels = if self.signal_from_appcommand.load(Ordering::Relaxed) {
+            let channels = if self.channels_from_appcommand() {
                 // The answer of `AppCommand0300.xml` has the channels. The page
                 // has none for a stream of objects, and would clear them.
                 PageStatus::Skipped(SkipReason::AlreadyRead)

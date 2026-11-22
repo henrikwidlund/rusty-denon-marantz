@@ -740,7 +740,7 @@ pub(crate) fn fake_receiver_gets(text: &str) -> bool {
 /// The Denon queries of the group that the fake receiver gets, see
 /// [`fake_receiver_gets`]. Not filtered by spec generation.
 pub(crate) fn fake_group_queries(
-    group: denon_marantz::QueryGroup,
+    group: denon_marantz_proto::telnet::QueryGroup,
 ) -> impl Iterator<Item = &'static str> {
     denon_marantz_proto::telnet::group_queries(denon_marantz_proto::Brand::Denon, group)
         .filter(|text| fake_receiver_gets(text))

@@ -1309,6 +1309,66 @@ async fn refresh_signal_pages_with_telnet_reads_only_the_pages() {
     assert_eq!(telnet.received().len(), before, "no telnet queries");
 }
 
+/// How often [`Avr::refresh_signal_pages`] reads the channels page, for a
+/// receiver with this device information and this `AppCommand0300.xml` answer.
+async fn channels_page_reads(info: &'static [u8], answer: String) -> usize {
+    let web = web_interface().await;
+    // `Avr::update` is not called, so tone control does not matter.
+    let receiver = common::receiver_with_info_and_signal_answers(info, false, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX2016)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    assert!(avr.snapshot().device().signal.channels.input.is_some());
+    web.requests()
+        .iter()
+        .filter(|seen| seen.path == AUDIO_CHANNELS_PATH)
+        .count()
+}
+
+#[tokio::test]
+async fn refresh_signal_pages_reads_the_channels_page_only_without_channels_from_appcommand0300() {
+    let full = common::appcommand0300_answer("");
+    assert_eq!(
+        channels_page_reads(AVR_X_OUTPUT_SETTINGS_INFO, full.clone()).await,
+        0
+    );
+    // The channel queries are not asked.
+    assert_eq!(
+        channels_page_reads(common::AUDIO_INFO_ONLY_INFO, full.clone()).await,
+        1
+    );
+    // The answer has no item for the speakers.
+    let without_speakers = full.replace(&common::appcommand0300_item("GetActiveSpeaker"), "");
+    assert_eq!(
+        channels_page_reads(AVR_X_OUTPUT_SETTINGS_INFO, without_speakers).await,
+        1
+    );
+    // With an item for each asked command, the order of the items decides
+    // which command an error item is for.
+    let all = full.replace(
+        "</rx>",
+        &format!("{}</rx>", common::output_settings_item("2")),
+    );
+    let error_for =
+        |name: &str| all.replace(&common::appcommand0300_item(name), "<error>2</error>");
+    // An error item for another command does not matter.
+    assert_eq!(
+        channels_page_reads(AVR_X_OUTPUT_SETTINGS_INFO, error_for("GetVideoInfo")).await,
+        0
+    );
+    assert_eq!(
+        channels_page_reads(AVR_X_OUTPUT_SETTINGS_INFO, error_for("GetActiveSpeaker")).await,
+        1
+    );
+}
+
 #[tokio::test]
 async fn refresh_signal_pages_asks_telnet_for_bt2020_after_a_change() {
     let (_web, telnet, avr) = quiet_telnet().await;
@@ -1468,6 +1528,58 @@ async fn refresh_signal_says_when_nothing_was_read() {
         Some("4K50")
     );
     assert!(avr.snapshot().device().signal.channels.input.is_some());
+}
+
+/// The device information of a receiver that lists the channel queries of
+/// `AppCommand0300.xml`, but not `GetAudioInfo`.
+const CHANNELS_ONLY_INFO: &[u8] =
+    b"<Device_Info><CommApiVers>0301</CommApiVers><ModelName>AVR-X3700H</ModelName>\
+    <DeviceZones>2</DeviceZones><DeviceCapabilities><Setup>\
+    <StatusInfo><Commands><GetInputSignal ver=\"1\">1</GetInputSignal>\
+    <GetActiveSpeaker ver=\"1\">1</GetActiveSpeaker></Commands></StatusInfo>\
+    </Setup></DeviceCapabilities></Device_Info>";
+
+/// Starts a receiver with this device information and the full
+/// `AppCommand0300.xml` answer. Gives the status of the channels page and the
+/// telnet lines after the queue is done.
+async fn start_signal_reads(info: &'static [u8]) -> (PageStatus, String) {
+    let web = web_interface().await;
+    let answer = common::appcommand0300_answer("");
+    // Neither info lists tone control.
+    let receiver = common::receiver_with_info_and_signal_answers(info, false, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let telnet = FakeTelnet::start().await;
+    let avr = Arc::new(
+        builder(&receiver, ReceiverType::AvrX2016)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .telnet_config(telnet_config(telnet.port))
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
+    let channels = report.web_interface.as_ref().unwrap().audio_channels;
+    wait_for_the_queue(&avr, &telnet).await;
+    (channels, telnet.received())
+}
+
+#[tokio::test]
+async fn the_start_reads_the_channels_page_when_appcommand0300_has_no_channel_queries() {
+    let (channels, sent) = start_signal_reads(common::AUDIO_INFO_ONLY_INFO).await;
+    assert_eq!(channels, PageStatus::Read);
+    assert!(!sent.contains("SYSDA ?"), "{sent}");
+}
+
+#[tokio::test]
+async fn the_start_asks_telnet_for_the_audio_signal_when_appcommand0300_has_no_audio_query() {
+    let (channels, sent) = start_signal_reads(CHANNELS_ONLY_INFO).await;
+    assert_eq!(channels, PageStatus::Skipped(SkipReason::AlreadyRead));
+    assert!(sent.contains("SYSDA ?"), "{sent}");
+    assert!(!sent.contains("OPINFINS ?"), "{sent}");
 }
 
 #[tokio::test]
