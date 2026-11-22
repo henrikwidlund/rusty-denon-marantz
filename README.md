@@ -116,8 +116,9 @@ answered the telnet queries of the start, and each list answer has its `END`
 line, so the values that only telnet gives are in the state. A query without an
 answer for `TelnetConfig::answer_quiet` (2 s) counts as not answered, and the
 report lists it in `telnet_not_answered`. If `StartOptions::telnet_wait` ends
-first, the list has all queries that were still open then. Both are optional:
-values that arrive later come as events.
+first, the list has all queries that were still open then. Queries that the
+library asks by itself, for example for a signal check, are not listed. Both
+are optional: values that arrive later come as events.
 Both keep the report, so `basic_synced()` and then `all_synced()` works, and a
 wait that was stopped by a timeout can be called again.
 When telnet is not connected, the start reads some settings over
