@@ -1371,6 +1371,56 @@ async fn refresh_signal_pages_reads_the_channels_page_only_without_channels_from
     );
 }
 
+#[tokio::test]
+async fn refresh_signal_pages_keeps_the_channels_when_an_answer_leaves_them_out() {
+    let web = web_interface().await;
+    let full = common::appcommand0300_answer("");
+    let without_speakers = full.replace(&common::appcommand0300_item("GetActiveSpeaker"), "");
+    // 0: full answer, 1: without the speakers, 2: refused.
+    let mode = Arc::new(AtomicUsize::new(0));
+    let answer_mode = Arc::clone(&mode);
+    // The start calls `Avr::update`, which asks tone control.
+    let receiver = common::receiver_with_info_and_signal_answers(
+        AVR_X_OUTPUT_SETTINGS_INFO,
+        true,
+        move |_| match answer_mode.load(Ordering::Relaxed) {
+            0 => Reply::Body(full.clone().into_bytes()),
+            1 => Reply::Body(without_speakers.clone().into_bytes()),
+            _ => Reply::Status(500),
+        },
+    )
+    .await;
+    let avr = Arc::new(
+        builder(&receiver, ReceiverType::AvrX2016)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    started.basic_synced().await;
+    let channels = avr.snapshot().device().signal.channels.clone();
+    assert!(channels.input.is_some());
+    let asked = || {
+        web.requests()
+            .iter()
+            .filter(|seen| seen.path == AUDIO_CHANNELS_PATH)
+            .count()
+    };
+    mode.store(1, Ordering::Relaxed);
+    avr.refresh_signal_pages().await.unwrap();
+    assert_eq!(asked(), 0);
+    assert_eq!(avr.snapshot().device().signal.channels, channels);
+    // Without an answer of `AppCommand0300.xml`, the page is read.
+    mode.store(2, Ordering::Relaxed);
+    avr.refresh_signal_pages().await.unwrap();
+    assert_eq!(asked(), 1);
+}
+
 /// An `Avr` for a receiver with this device information and the full
 /// `AppCommand0300.xml` answer, with a web interface that answers 404 for all
 /// pages.

@@ -799,7 +799,8 @@ impl Avr {
     /// Reads the video and audio signal over HTTP, also while telnet is open:
     /// `AppCommand0300.xml`, if the receiver has it, the video signal page
     /// and, if `AppCommand0300.xml` does not give the channels, the channels
-    /// page.
+    /// page. If the last start got the channels from `AppCommand0300.xml`, an
+    /// answer without them keeps the old values and the page is not read.
     /// While telnet is open, it asks telnet only for BT.2020 when the page
     /// changed the signal and the receiver reports BT.2020 on telnet.
     ///
@@ -817,11 +818,14 @@ impl Avr {
     pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
         // When the answer of `AppCommand0300.xml` has the channels, the
         // channels page is not read: the answer is more complete than the
-        // page.
+        // page. A busy receiver can leave them out of one answer; the page has
+        // none for a stream of objects and would clear them.
         let appcommand0300 = self.update_signal_and_settings_with_channels().await;
         let answered = matches!(appcommand0300, Ok((PageStatus::Read, _)));
         let video = self.read_video_page().await;
-        let channels = if matches!(appcommand0300, Ok((PageStatus::Read, true))) {
+        let channels = if matches!(appcommand0300, Ok((PageStatus::Read, true)))
+            || (answered && self.channels_from_appcommand())
+        {
             Ok(PageStatus::Skipped(SkipReason::AlreadyRead))
         } else {
             self.read_channels_page().await

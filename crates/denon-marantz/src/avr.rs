@@ -525,7 +525,8 @@ impl Info {
     ///
     /// [`Avr::refresh_signal_pages`] ([`HttpReads::SIGNAL_PAGES`]) reads
     /// `AppCommand0300.xml` first, then the video page, and the channels page
-    /// when `AppCommand0300.xml` does not give the channels. A page that
+    /// when `AppCommand0300.xml` does not give the channels, in this answer or
+    /// at the last start. A page that
     /// answered 404 is not asked again.
     /// The start reads the two pages only if
     /// [`StartOptions::signal_pages`](crate::StartOptions::signal_pages) is
