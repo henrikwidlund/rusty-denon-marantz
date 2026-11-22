@@ -32,7 +32,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["client-le
 tokio = { version = "1", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt"] }
-mdns-sd = { version = "0.21.7", default-features = false, features = ["async"] }
+mdns-sd = { version = "0.22", default-features = false, features = ["async"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
