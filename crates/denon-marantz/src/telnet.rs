@@ -1062,8 +1062,13 @@ impl Queue {
             let background = &self.background;
             self.own
                 .retain(|own| background.iter().any(|query| query == own));
+            // A query can be written twice: report it once.
             for waiter in &mut self.waiters {
-                waiter.missed.extend(missed.iter().cloned());
+                for query in &missed {
+                    if !waiter.missed.contains(query) {
+                        waiter.missed.push(query.clone());
+                    }
+                }
             }
             if !self.waiters.iter().any(|waiter| waiter.start) {
                 for query in missed {
@@ -2167,6 +2172,20 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_query_written_twice_is_reported_once() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add(["PSDYNVOL ?"]);
+        write_next(&mut queue);
+        // Asked again while the first copy waits for its answer.
+        queue.add(["PSDYNVOL ?"]);
+        write_next(&mut queue);
+        let mut waiting = waiter(&mut queue);
+        queue.check_answers(Instant::now() + quiet, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&["PSDYNVOL ?"]));
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn a_query_of_the_caller_stays_the_callers() {
         let quiet = Duration::from_millis(2000);
         let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
@@ -2182,12 +2201,10 @@ mod tests {
         write_next(&mut queue);
         let mut waiting = waiter(&mut queue);
         queue.check_answers(Instant::now() + quiet, quiet);
-        let SyncResult::Done(mut missed) = waiting.try_recv().unwrap().unwrap() else {
-            panic!("the wait did not end");
-        };
-        missed.sort();
-        missed.dedup();
-        assert_eq!(missed, ["SYSDA ?", "SYSMI ?"]);
+        assert_eq!(
+            waiting.try_recv().unwrap().unwrap(),
+            done(&["SYSDA ?", "SYSMI ?"])
+        );
     }
 
     #[tokio::test(start_paused = true)]
