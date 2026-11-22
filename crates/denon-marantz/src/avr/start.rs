@@ -777,7 +777,9 @@ impl Avr {
     ///
     /// Returns an error if nothing could be asked or read: telnet is not open
     /// and a request did not reach the receiver, or all answered with nothing
-    /// that can be read ([`Error::NothingRead`]).
+    /// that can be read ([`Error::NothingRead`]). It is also
+    /// [`Error::NothingRead`] when no page was asked, because all answered 404
+    /// before.
     pub async fn refresh_signal(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if self.telnet_connected() {
@@ -808,7 +810,8 @@ impl Avr {
     ///
     /// Returns an error if nothing was read: the error of a request that did
     /// not reach the receiver, or [`Error::NothingRead`] if all answered with
-    /// nothing that can be read.
+    /// nothing that can be read, or if no page was asked because all answered
+    /// 404 before.
     pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
         // When the answer of `AppCommand0300.xml` has the channels, the
         // channels page is not read: the answer is more complete than the
