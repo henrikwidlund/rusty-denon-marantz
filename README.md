@@ -597,7 +597,7 @@ RUSTFLAGS="-D warnings" cargo clippy --locked --workspace --all-targets --all-fe
 cargo test --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
 cargo deny check
-for f in "" telnet http discovery mdns telnet,http serde http,serde; do
+for f in "" telnet http discovery mdns telnet,http serde http,serde heos telnet,heos; do
   cargo check --locked -p denon-marantz --no-default-features --features "$f"
 done
 ```
