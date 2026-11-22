@@ -21,15 +21,14 @@ use denon_marantz_proto::telnet::{
     MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
     signal_queries,
 };
-use denon_marantz_proto::{
-    Brand, DAB_QUERIES, DeviceFeatures, HD_RADIO_QUERIES, SpecGeneration, TUNER_QUERIES,
-};
+use denon_marantz_proto::{Brand, DAB_QUERIES, HD_RADIO_QUERIES, TUNER_QUERIES};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::avr::{Info, Offered};
 use crate::channels::Channels;
 use crate::error::Error;
 use crate::host::UrlHost;
@@ -291,21 +290,28 @@ struct Queries {
     single_zone: bool,
     /// The groups that the connection fetches, in this order.
     groups: &'static [QueryGroup],
-    /// The features from the device information. Queries of a feature that
-    /// it does not list are left out of the lists. `None` asks all.
-    features: Option<DeviceFeatures>,
-    /// Queries of a [`SpecFeature`](denon_marantz_proto::SpecFeature) that
-    /// the specs of this generation do not have are left out too.
-    generation: SpecGeneration,
+    /// Queries of values that the receiver does not offer are left out of
+    /// the lists, see [`Info::offers`].
+    offered: Offered,
     /// The tuner has DAB: the DAB queries go with the tuner queries.
     dab: bool,
 }
 
 impl Queries {
-    /// Returns false for a query of a feature that the receiver does not
-    /// list or that its spec generation does not have.
+    fn new(groups: &'static [QueryGroup], info: &Info) -> Self {
+        Self {
+            brand: info.brand,
+            single_zone: info.single_zone(),
+            groups,
+            offered: info.offered(),
+            dab: info.has_dab(),
+        }
+    }
+
+    /// Returns false for a query of a value that the receiver does not
+    /// offer, see [`Info::offers`].
     fn wanted(self, query: &str) -> bool {
-        self.features.is_none_or(|features| features.allows(query)) && self.generation.allows(query)
+        self.offered.offers_text(query)
     }
 
     fn all(self) -> VecDeque<Cow<'static, str>> {
@@ -322,26 +328,11 @@ impl Queries {
 }
 
 impl Telnet {
-    pub(crate) fn new(
-        config: TelnetConfig,
-        background_pause: Duration,
-        brand: Brand,
-        single_zone: bool,
-        features: Option<DeviceFeatures>,
-        generation: SpecGeneration,
-        dab: bool,
-    ) -> Self {
+    pub(crate) fn new(config: TelnetConfig, background_pause: Duration, info: &Info) -> Self {
         Self {
             config,
             background_pause,
-            queries: Queries {
-                brand,
-                single_zone,
-                groups: config.query_groups,
-                features,
-                generation,
-                dab,
-            },
+            queries: Queries::new(config.query_groups, info),
             events: broadcast::Sender::new(EVENT_CAPACITY),
             status: watch::Sender::new(TelnetStatus::Disconnected),
             forget: Arc::new(AtomicBool::new(false)),
@@ -482,9 +473,8 @@ impl Telnet {
             .collect()
     }
 
-    /// Returns false for a query of a feature that the receiver does not
-    /// list in its device information, or that its spec generation does not
-    /// have.
+    /// Returns false for a query of a value that the receiver does not
+    /// offer, see [`Info::offers`].
     pub(crate) fn wanted(&self, query: &str) -> bool {
         self.queries.wanted(query)
     }
@@ -1314,6 +1304,9 @@ async fn until_stopped<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::avr::test_info;
+    use denon_marantz_proto::Zone;
+    use denon_marantz_proto::telnet::query_for_text;
 
     #[test]
     fn default_settings_are_valid() {
@@ -1499,48 +1492,94 @@ mod tests {
         assert_eq!(random_wait(min, min), min);
     }
 
-    fn test_queries(brand: Brand, single_zone: bool, generation: SpecGeneration) -> Queries {
-        Queries {
-            brand,
-            single_zone,
-            groups: QueryGroup::DEFAULT_ORDER,
-            features: None,
-            generation,
-            dab: false,
-        }
+    fn test_queries(brand: Brand, zones: Option<u8>, version: &str) -> Queries {
+        Queries::new(QueryGroup::DEFAULT_ORDER, &test_info(version, brand, zones))
+    }
+
+    fn has(queries: &VecDeque<Cow<'static, str>>, text: &str) -> bool {
+        queries.iter().any(|query| query == text)
     }
 
     #[test]
     fn queries_follow_the_spec_generation() {
-        let all = |generation| test_queries(Brand::Denon, false, generation).all();
-        let has = |queries: &VecDeque<Cow<'static, str>>, text: &str| {
-            queries.iter().any(|query| query == text)
-        };
-        let current = all(SpecGeneration::Current);
+        let all = |version| test_queries(Brand::Denon, Some(3), version).all();
+        let current = all("0301");
         for text in ["PSMODE: ?", "PSFH: ?", "MNPRV?", "PSDIL ?"] {
             assert!(!has(&current, text), "{text}");
         }
         assert!(has(&current, "MV?"));
-        let denon2015 = all(SpecGeneration::Denon2015);
+        let denon2015 = all("0300");
         assert!(has(&denon2015, "PSMODE: ?") && has(&denon2015, "PSDIL ?"));
         assert!(!has(&denon2015, "PSFH: ?") && !has(&denon2015, "MNPRV?"));
-        assert!(has(&all(SpecGeneration::Unknown), "PSAFD ?"));
+        assert!(has(&all(""), "PSAFD ?"));
     }
 
     #[test]
     fn power_query_depends_on_the_zones() {
-        let multi = test_queries(Brand::Denon, false, SpecGeneration::Unknown).all();
+        let multi = test_queries(Brand::Denon, Some(3), "").all();
         assert_eq!(multi.front().map(Cow::as_ref), Some("ZM?"));
-        let single = test_queries(Brand::Marantz, true, SpecGeneration::Unknown).all();
+        let single = test_queries(Brand::Marantz, Some(1), "").all();
         assert_eq!(single.front().map(Cow::as_ref), Some("PW?"));
+        for (zones, power) in [(Some(0), "PW?"), (Some(4), "ZM?"), (None, "ZM?")] {
+            let first = test_queries(Brand::Denon, zones, "").all().pop_front();
+            assert_eq!(first.as_deref(), Some(power), "{zones:?}");
+        }
         assert_eq!(
             multi.len(),
             1 + queries(Brand::Denon, QueryGroup::DEFAULT_ORDER).count()
         );
+        let zone_queries = queries(Brand::Marantz, QueryGroup::DEFAULT_ORDER)
+            .filter(|text| query_for_text(text).is_some_and(|query| query.zone() != Zone::Main))
+            .count();
         assert_eq!(
             single.len(),
-            1 + queries(Brand::Marantz, QueryGroup::DEFAULT_ORDER).count()
+            1 + queries(Brand::Marantz, QueryGroup::DEFAULT_ORDER).count() - zone_queries
         );
+    }
+
+    #[test]
+    fn queries_follow_the_zones() {
+        let all = |zones| test_queries(Brand::Denon, zones, "0301").all();
+        let zone2 = [
+            "Z2?",
+            "Z2MU?",
+            "Z2SLP?",
+            "Z2QUICK ?",
+            "SSVCTZ2S ?",
+            "Z2HDA?",
+        ];
+        let zone3 = ["Z3?", "Z3MU?", "Z3SLP?", "Z3QUICK ?", "SSVCTZ3S ?", "Z3CS?"];
+        for (zones, has_zone2, has_zone3) in [
+            (Some(1), false, false),
+            (Some(2), true, false),
+            (Some(3), true, true),
+            (Some(4), true, true),
+            (Some(0), false, false),
+            (None, true, true),
+        ] {
+            let queries = all(zones);
+            assert!(has(&queries, "MV?"), "{zones:?}");
+            for text in zone2 {
+                assert_eq!(has(&queries, text), has_zone2, "{zones:?} {text}");
+            }
+            for text in zone3 {
+                assert_eq!(has(&queries, text), has_zone3, "{zones:?} {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn queries_follow_info_offers() {
+        for (version, zones) in [("0301", Some(1)), ("0300", Some(2)), ("", None)] {
+            for brand in [Brand::Denon, Brand::Marantz] {
+                let info = test_info(version, brand, zones);
+                let list = Queries::new(QueryGroup::DEFAULT_ORDER, &info);
+                for text in queries(brand, QueryGroup::DEFAULT_ORDER) {
+                    let query = query_for_text(text).unwrap();
+                    assert_eq!(list.wanted(text), info.offers(query), "{text}");
+                }
+            }
+        }
     }
 
     #[tokio::test(start_paused = true)]

@@ -174,7 +174,9 @@ again with `telnet_refresh_group`. The counts are the queries for a Denon and fo
 a Marantz receiver. A receiver from about 2016 lists its features in
 `Deviceinfo.xml` (`Info::features`). The queries of a feature that it does not
 list are not sent. Queries that the protocol specs of the receiver generation
-do not have (`Info::spec_generation`) are not sent either.
+do not have (`Info::spec_generation`) are not sent either. Queries of zone 2 or
+zone 3 are not sent to a receiver whose device information says that it does
+not have that zone (`Info::zone_count`).
 
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|

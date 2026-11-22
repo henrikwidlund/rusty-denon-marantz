@@ -400,9 +400,14 @@ impl Query {
     }
 }
 
-/// The value that a query text of any brand asks for. A binary search, so
-/// that filtering a whole list stays fast.
-pub(crate) fn query_for_text(text: &str) -> Option<Query> {
+/// The value that a query text of any brand asks for, for example
+/// [`Query::Zone2Power`] for `Z2?`.
+///
+/// `None` for a text that is not in the query lists. Exact text only; for a
+/// command line see [`query_for_command`]. A binary search, so that
+/// filtering a whole list stays fast.
+#[must_use]
+pub fn query_for_text(text: &str) -> Option<Query> {
     sorted::find(&BY_TEXT, (text, ""))
 }
 

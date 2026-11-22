@@ -14,9 +14,8 @@ pub use answers::{AnswerLine, AnswerTracker, answer_prefix};
 pub use command::Command;
 pub use decoder::LineDecoder;
 pub use event::{DuplicateFilter, Event, EventZone, Message};
-pub(crate) use query::query_for_text;
 pub use query::{
     DEVICE_POWER_QUERY, MAIN_ZONE_POWER_QUERY, Query, QueryGroup, SignalPart,
-    after_appcommand_queries, group_queries, queries, query_for_command, signal_queries,
-    state_queries,
+    after_appcommand_queries, group_queries, queries, query_for_command, query_for_text,
+    signal_queries, state_queries,
 };

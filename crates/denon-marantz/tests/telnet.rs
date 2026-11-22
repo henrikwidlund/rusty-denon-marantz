@@ -9,14 +9,15 @@ use std::time::Duration;
 use common::{
     AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, FakeTelnet,
     LOOPBACK_V6, Reply, appcommand0300_answer, avr_x_receiver, avr_x_receiver_on,
-    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, contains, output_settings_item,
-    quick_follow_up, receiver_with_audyssey, receiver_with_info_and_signal_answers, wait_until,
+    avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, contains, fake_group_queries,
+    fake_receiver_gets, output_settings_item, quick_follow_up, receiver_with_audyssey,
+    receiver_with_info_and_signal_answers, wait_until,
 };
 use denon_marantz::{
     Ask, Avr, Blocker, Command, Error, Feature, PageStatus, Query, QueryGroup, SettingStatus,
     SkipReason, TelnetConfig, TelnetEvent, TelnetStatus, ToneBlocker,
 };
-use denon_marantz_proto::telnet::{Event, EventZone, group_queries, state_queries};
+use denon_marantz_proto::telnet::{Event, EventZone, state_queries};
 use denon_marantz_proto::{
     AudioRestorer, AudysseyDsx, AutoStandby, BluetoothOutputMode, Brand, Channel, ChannelLevel,
     DabDrc, DabStationOrder, DeviceFeature, DeviceFeatures, DigitalCodec, DimmerMode, DiracFilter,
@@ -539,10 +540,11 @@ async fn invalid_settings_are_refused() {
     assert!(matches!(error, Error::InvalidConfig(_)), "{error:?}");
 }
 
-/// The queries of the default order that a 0301 receiver gets: the queries
-/// that only older specs have are left out.
+/// The queries of the default order that the 0301 fake receiver gets: the
+/// queries that only older specs have and those of zone 3 are left out.
 fn current_state_queries() -> impl Iterator<Item = &'static str> {
-    state_queries(Brand::Denon).filter(|query| SpecGeneration::Current.allows(query))
+    state_queries(Brand::Denon)
+        .filter(|query| SpecGeneration::Current.allows(query) && fake_receiver_gets(query))
 }
 
 /// The last query of [`current_state_queries`] that a receiver with these
@@ -587,8 +589,8 @@ async fn the_connection_fetches_the_chosen_groups_in_the_chosen_order() {
     };
     let (_avr, _http) = connected(config).await;
     let expected: Vec<String> = std::iter::once("ZM?")
-        .chain(group_queries(Brand::Denon, QueryGroup::Signal))
-        .chain(group_queries(Brand::Denon, QueryGroup::Core))
+        .chain(fake_group_queries(QueryGroup::Signal))
+        .chain(fake_group_queries(QueryGroup::Core))
         .map(str::to_owned)
         .collect();
     wait_until("the chosen queries", || {
@@ -609,10 +611,10 @@ async fn a_group_that_was_left_out_can_be_fetched_later() {
         ..telnet_config(telnet.port)
     };
     let (avr, _http) = connected(config).await;
-    let core = 1 + group_queries(Brand::Denon, QueryGroup::Core).count();
+    let core = 1 + fake_group_queries(QueryGroup::Core).count();
     wait_until("the core queries", || sent(&telnet).len() >= core).await;
     avr.telnet_refresh_group(QueryGroup::Names).await.unwrap();
-    let names: Vec<String> = group_queries(Brand::Denon, QueryGroup::Names)
+    let names: Vec<String> = fake_group_queries(QueryGroup::Names)
         .map(str::to_owned)
         .collect();
     wait_until("the names queries", || {

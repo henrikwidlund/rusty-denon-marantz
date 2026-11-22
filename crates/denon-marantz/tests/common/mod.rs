@@ -730,6 +730,22 @@ pub(crate) fn no_heos() -> denon_marantz::heos::HeosConfig {
     }
 }
 
+/// Returns true for a query text that a receiver of [`AVR_X_INFO`] or of
+/// another info with `<DeviceZones>2` gets: no zone 3 queries.
+pub(crate) fn fake_receiver_gets(text: &str) -> bool {
+    denon_marantz_proto::telnet::query_for_text(text)
+        .is_none_or(|query| query.zone() != denon_marantz::Zone::Zone3)
+}
+
+/// The Denon queries of the group that the fake receiver gets, see
+/// [`fake_receiver_gets`]. Not filtered by spec generation.
+pub(crate) fn fake_group_queries(
+    group: denon_marantz::QueryGroup,
+) -> impl Iterator<Item = &'static str> {
+    denon_marantz_proto::telnet::group_queries(denon_marantz_proto::Brand::Denon, group)
+        .filter(|text| fake_receiver_gets(text))
+}
+
 /// Waits until `condition` is true. Fails the test after two seconds.
 pub(crate) async fn wait_until(what: &str, mut condition: impl FnMut() -> bool) {
     for _ in 0..200 {

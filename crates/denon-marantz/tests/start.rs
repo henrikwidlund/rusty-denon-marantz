@@ -17,8 +17,8 @@ use common::{
     AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_AND_SIGNAL_INFO, AVR_X_SETTINGS_INFO,
     Fake, FakeTelnet, OLDER_SETTINGS_INFO, Reply, SettingsReplies, appcommand0300_requests,
     avr_x_receiver, avr_x_receiver_with_held_settings, avr_x_receiver_with_info,
-    avr_x_receiver_with_settings, builder, config, friendly_name_answer, is_friendly_name_request,
-    wait_until,
+    avr_x_receiver_with_settings, builder, config, fake_group_queries, friendly_name_answer,
+    is_friendly_name_request, wait_until,
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
@@ -122,13 +122,37 @@ async fn connected_with(
     )
 }
 
+#[tokio::test]
+async fn a_connection_to_a_receiver_with_one_zone_sends_no_zone_2_or_3_queries() {
+    const ONE_ZONE_INFO: &[u8] = b"<Device_Info><CommApiVers>0301</CommApiVers>\
+        <DeviceZones>1</DeviceZones></Device_Info>";
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let http = avr_x_receiver_with_info(ONE_ZONE_INFO).await;
+    let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(telnet.port)).await;
+    avr.telnet_connect().await.unwrap();
+    avr.telnet_refresh_group(QueryGroup::Zones).await.unwrap();
+    // A main zone group that the connect does not ask for goes last.
+    avr.telnet_refresh_group(QueryGroup::Picture).await.unwrap();
+    let last = group_queries(Brand::Denon, QueryGroup::Picture)
+        .last()
+        .unwrap();
+    wait_until("the end of the queue", || {
+        lines(&telnet.received()).contains(&last)
+    })
+    .await;
+    let received = telnet.received();
+    let sent = lines(&received);
+    assert!(sent.contains(&"PW?") && !sent.contains(&"ZM?"), "{sent:?}");
+    for line in sent.iter().filter(|line| line.ends_with('?')) {
+        assert!(!line.contains("Z2") && !line.contains("Z3"), "{line}");
+    }
+}
+
 /// Waits until the queries that wait in the connection are written. A group
 /// that the start does not ask for goes last, so its last query shows the end.
 async fn wait_for_the_queue(avr: &Avr, telnet: &FakeTelnet) {
     avr.telnet_refresh_group(QueryGroup::Zones).await.unwrap();
-    let last = group_queries(Brand::Denon, QueryGroup::Zones)
-        .last()
-        .unwrap();
+    let last = fake_group_queries(QueryGroup::Zones).last().unwrap();
     wait_until("the end of the queue", || {
         lines(&telnet.received()).contains(&last)
     })
@@ -368,7 +392,7 @@ async fn the_groups_of_the_config_are_asked_at_the_start_after_the_first_queries
     wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
-    let device: Vec<_> = group_queries(Brand::Denon, QueryGroup::Device).collect();
+    let device: Vec<_> = fake_group_queries(QueryGroup::Device).collect();
     // The last query of the first list: the signal queries that only telnet answers.
     let last_first = signal_queries(Brand::Denon, SignalPart::TelnetOnly)
         .last()
@@ -389,7 +413,7 @@ async fn the_groups_of_the_config_are_asked_at_the_start_after_the_first_queries
 
 /// How often the client sent each query of the group.
 fn asked(sent: &[&str], group: QueryGroup) -> Vec<usize> {
-    group_queries(Brand::Denon, group)
+    fake_group_queries(group)
         .map(|query| sent.iter().filter(|line| **line == query).count())
         .collect()
 }
@@ -434,9 +458,7 @@ async fn a_reconnect_asks_the_groups_of_the_config_again_once() {
     let avr = connected(&http, ReceiverType::AvrX, &web, &telnet, WITH_DEVICE).await;
     avr.start().await.unwrap().basic_synced().await;
     wait_for_the_queue(&avr, &telnet).await;
-    let last = group_queries(Brand::Denon, QueryGroup::Device)
-        .last()
-        .unwrap();
+    let last = fake_group_queries(QueryGroup::Device).last().unwrap();
     let count = |received: &str| lines(received).iter().filter(|line| **line == last).count();
     assert_eq!(count(&telnet.received()), 1);
 
@@ -513,7 +535,7 @@ async fn the_start_asks_for_each_query_once() {
     wait_for_the_queue(&avr, &telnet).await;
     let received = telnet.received();
     let sent = lines(&received);
-    let zones = group_queries(Brand::Denon, QueryGroup::Zones).count();
+    let zones = fake_group_queries(QueryGroup::Zones).count();
     let mut asked: Vec<&str> = sent[..sent.len() - zones]
         .iter()
         .copied()

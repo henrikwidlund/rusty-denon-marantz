@@ -11,7 +11,7 @@ use denon_marantz_proto::appcommand::{
 };
 use denon_marantz_proto::status_page::{self, Page};
 use denon_marantz_proto::telnet::{
-    Command, Message, Query, QueryGroup, SignalPart, query_for_command,
+    Command, Message, Query, QueryGroup, SignalPart, query_for_command, query_for_text,
 };
 use denon_marantz_proto::{
     BASS_PATH, BassSettings, Brand, CHANNEL_LEVELS_PATH, CROSSOVERS_PATH, Change, DISTANCES_PATH,
@@ -293,10 +293,12 @@ pub struct Info {
     /// ([`ListedQueries::surround_parameter`]).
     pub queries: Option<ListedQueries>,
     /// Zones that [`Avr::update`] reads. The main zone and the others that the
-    /// receiver has.
+    /// receiver has. If [`Info::zone_count`] is known, the telnet queries of
+    /// a zone that is not here are not sent.
     pub zones: Vec<Zone>,
     /// Number of zones that the device information lists. `None` if it does
-    /// not say: [`Info::zones`] has the main zone only then.
+    /// not say: [`Info::zones`] has the main zone only then, and the telnet
+    /// queries of all zones are sent.
     pub zone_count: Option<u8>,
     /// The features that the device information lists. The state queries of
     /// a feature that it does not list are not sent at the start, with
@@ -345,10 +347,16 @@ impl Info {
     /// its zone. What the device information does not say counts as present.
     #[must_use]
     pub fn offers(&self, query: Query) -> bool {
-        query
-            .spec_feature()
-            .is_none_or(|feature| self.supports(feature))
-            && self.lists(query)
+        self.offered().offers(query)
+    }
+
+    /// The rule of [`Info::offers`], as a copy that tasks can keep.
+    pub(crate) fn offered(&self) -> Offered {
+        Offered {
+            generation: self.spec_generation(),
+            features: self.features,
+            other_zones: [Zone::Zone2, Zone::Zone3].map(|zone| self.has_zone(zone)),
+        }
     }
 
     /// Returns true if the receiver may accept the command: as
@@ -395,13 +403,19 @@ impl Info {
     /// Returns true if the device information lists the feature and the zone
     /// of the value, or does not say.
     fn lists(&self, query: Query) -> bool {
-        self.has_zone(query.zone()) && query.listed_in(self.features)
+        self.offered().lists(query)
     }
 
     /// Returns true if the device information lists the zone, or does not
     /// say how many zones there are.
     fn has_zone(&self, zone: Zone) -> bool {
         zone == Zone::Main || self.zone_count.is_none() || self.zones.contains(&zone)
+    }
+
+    /// Returns true if the receiver has neither zone 2 nor zone 3, see
+    /// [`Info::has_zone`].
+    pub(crate) fn single_zone(&self) -> bool {
+        !self.has_zone(Zone::Zone2) && !self.has_zone(Zone::Zone3)
     }
 
     /// The number of zones that [`Avr::update`] reads.
@@ -1649,7 +1663,9 @@ impl Avr {
     /// last value are shown again. A group that the connection does not fetch
     /// at connect (see [`TelnetConfig::query_groups`]) stays empty until this
     /// is called. Queries of features that [`Info::features`] does not list,
-    /// or that [`Info::spec_generation`] does not have, are not sent.
+    /// that [`Info::spec_generation`] does not have, or of a zone that the
+    /// receiver does not have (see [`Info::zone_count`]), are not sent. A
+    /// group can then be empty.
     ///
     /// The receiver does not send the values that depend on a changed value,
     /// for example the Dirac Live filters of another speaker preset. A caller
@@ -2253,8 +2269,7 @@ impl AvrBuilder {
         known: bool,
     ) -> Result<Avr, Error> {
         let appcommand0300_commands = appcommand0300_commands(info.queries.as_ref());
-        let single_zone = info.zone_count == Some(1);
-        let channels = Channels::new(State::new(single_zone));
+        let channels = Channels::new(State::new(info.single_zone()));
         let missing = Arc::new(Missing::new(
             info.receiver_type,
             info.queries.as_ref(),
@@ -2273,15 +2288,7 @@ impl AvrBuilder {
         };
         let appcommand0300_parts = [part(true)?, part(false)?];
         #[cfg(feature = "telnet")]
-        let telnet = Telnet::new(
-            self.telnet,
-            self.background_pause,
-            info.brand,
-            single_zone,
-            info.features,
-            info.spec_generation(),
-            info.has_dab(),
-        );
+        let telnet = Telnet::new(self.telnet, self.background_pause, &info);
         let follow_up = FollowUp::start(
             self.follow_up_read,
             &http,
@@ -2442,7 +2449,6 @@ fn info_from(
         device_info,
         type_proof,
     } = identified;
-    let zone_count = usize::from(device_info.device_zones.unwrap_or(1)).clamp(1, Zone::ALL.len());
     Info {
         host,
         receiver_type,
@@ -2464,7 +2470,7 @@ fn info_from(
             &appcommand::GET_OUTPUT_SETTINGS,
         ),
         queries: device_info.queries,
-        zones: Zone::ALL[..zone_count].to_vec(),
+        zones: listed_zones(device_info.device_zones),
         zone_count: device_info.device_zones,
         features: device_info.features,
         ranges: device_info.ranges,
@@ -2546,61 +2552,108 @@ fn parse_page(body: Option<&Bytes>) -> Option<Page<'_>> {
         .ok()
 }
 
+/// The rule of [`Info::offers`]: what the spec generation and the device
+/// information say about the values of a receiver.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Offered {
+    generation: SpecGeneration,
+    features: Option<DeviceFeatures>,
+    /// For zone 2 and zone 3: see [`Info::has_zone`].
+    other_zones: [bool; 2],
+}
+
+impl Offered {
+    /// See [`Info::offers`].
+    pub(crate) fn offers(self, query: Query) -> bool {
+        query
+            .spec_feature()
+            .is_none_or(|feature| self.generation.supports(feature))
+            && self.lists(query)
+    }
+
+    /// [`Offered::offers`] for the value of the query text. True for a text
+    /// that is not in the query lists.
+    pub(crate) fn offers_text(self, text: &str) -> bool {
+        query_for_text(text).is_none_or(|query| self.offers(query))
+    }
+
+    /// See [`Info::lists`].
+    const fn lists(self, query: Query) -> bool {
+        self.has_zone(query.zone()) && query.listed_in(self.features)
+    }
+
+    const fn has_zone(self, zone: Zone) -> bool {
+        match zone {
+            Zone::Zone2 => self.other_zones[0],
+            Zone::Zone3 => self.other_zones[1],
+            _ => true,
+        }
+    }
+}
+
+/// The zones for the zone count of the device information: the main zone
+/// only if it does not say.
+fn listed_zones(count: Option<u8>) -> Vec<Zone> {
+    Zone::ALL[..usize::from(count.unwrap_or(1)).clamp(1, Zone::ALL.len())].to_vec()
+}
+
+/// Info of a receiver for tests. `zones` is the zone count of the device
+/// information.
+#[cfg(test)]
+pub(crate) fn test_info(version: &str, brand: Brand, zones: Option<u8>) -> Info {
+    Info {
+        host: "receiver".into(),
+        receiver_type: ReceiverType::AvrX2016,
+        port: 8080,
+        type_proof: TypeProof::Read,
+        update_method: UpdateMethod::AppCommand,
+        brand,
+        manufacturer: None,
+        model_name: None,
+        serial_number: None,
+        friendly_name: String::new(),
+        comm_api_version: Some(version.into()),
+        mac_address: None,
+        dirac_live: false,
+        tuner: TunerInfo::Unknown,
+        quick_select_count: None,
+        hdmi_output_over_http: false,
+        queries: None,
+        zones: listed_zones(zones),
+        zone_count: zones,
+        features: None,
+        ranges: DeviceRanges::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use denon_marantz_proto::{DeviceFeature, RemoteKey, SoundSettingValue, ValueRange};
 
     use super::*;
 
-    fn info(version: &str, brand: Brand, zones: Option<u8>) -> Info {
-        let count = usize::from(zones.unwrap_or(1));
-        Info {
-            host: "receiver".into(),
-            receiver_type: ReceiverType::AvrX2016,
-            port: 8080,
-            type_proof: TypeProof::Read,
-            update_method: UpdateMethod::AppCommand,
-            brand,
-            manufacturer: None,
-            model_name: None,
-            serial_number: None,
-            friendly_name: String::new(),
-            comm_api_version: Some(version.into()),
-            mac_address: None,
-            dirac_live: false,
-            tuner: TunerInfo::Unknown,
-            quick_select_count: None,
-            hdmi_output_over_http: false,
-            queries: None,
-            zones: Zone::ALL[..count].to_vec(),
-            zone_count: zones,
-            features: None,
-            ranges: DeviceRanges::default(),
-        }
-    }
-
     #[test]
     fn generation_hides_older_commands() {
-        let current = info("0301", Brand::Denon, Some(2));
+        let current = test_info("0301", Brand::Denon, Some(2));
         assert_eq!(current.spec_generation(), SpecGeneration::Current);
         assert!(current.has_heos());
         assert!(!current.supports(SpecFeature::ProLogicMode));
         assert!(!current.offers(Query::ProLogicMode));
         assert!(!current.offers_line("PSMODE:MUSIC"));
         assert!(current.offers_line("PSLFL 05"));
-        let old = info("0210", Brand::Marantz, Some(2));
+        let old = test_info("0210", Brand::Marantz, Some(2));
         assert!(old.offers(Query::DynamicCompression));
         assert!(!old.offers(Query::SurroundBackMode));
         assert!(!old.offers_line("PSDIL ON"));
-        let unknown = info("", Brand::Denon, None);
+        let unknown = test_info("", Brand::Denon, None);
         assert!(unknown.offers(Query::AutoFlagDetect));
     }
 
     #[test]
     fn zone_lines_need_the_zone() {
-        let one = info("0301", Brand::Denon, Some(1));
-        let two = info("0301", Brand::Denon, Some(2));
-        let unknown = info("0301", Brand::Denon, None);
+        let one = test_info("0301", Brand::Denon, Some(1));
+        let two = test_info("0301", Brand::Denon, Some(2));
+        let unknown = test_info("0301", Brand::Denon, None);
         for line in ["Z2PSBAS 50", "Z2MU ON", "Z250", "Z2ON"] {
             assert!(!one.offers_line(line), "{line}");
             assert!(two.offers_line(line), "{line}");
@@ -2621,7 +2674,7 @@ mod tests {
 
     #[test]
     fn listed_features_decide() {
-        let mut info = info("0301", Brand::Denon, Some(3));
+        let mut info = test_info("0301", Brand::Denon, Some(3));
         info.features = Some(DeviceFeatures::default().with(DeviceFeature::Lfe));
         assert!(!info.offers_line("BTLEV UP"));
         assert!(!info.offers(Query::BluetoothLevel));
@@ -2633,7 +2686,7 @@ mod tests {
 
     #[test]
     fn commands_check_ranges_and_network_audio() {
-        let mut info = info("0300", Brand::Denon, Some(1));
+        let mut info = test_info("0300", Brand::Denon, Some(1));
         let lfe = |value| Command::SetSoundSetting(SoundSettingValue::LfeExternalInput(value));
         assert!(info.offers_command(Zone::Main, &lfe(15)));
         info.ranges.lfe_external_input = Some(ValueRange {
@@ -2666,7 +2719,7 @@ mod tests {
 
     #[test]
     fn quick_select_slots_follow_the_count() {
-        let mut info = info("0301", Brand::Denon, Some(1));
+        let mut info = test_info("0301", Brand::Denon, Some(1));
         assert!(!info.has_quick_select(0));
         assert!(info.has_quick_select(MAX_QUICK_SELECT));
         assert!(!info.has_quick_select(MAX_QUICK_SELECT + 1));
@@ -2684,7 +2737,7 @@ mod tests {
 
     #[test]
     fn http_reads_follow_the_lists() {
-        let mut info = info("0301", Brand::Denon, Some(2));
+        let mut info = test_info("0301", Brand::Denon, Some(2));
         let mut listed = ListedQueries::default();
         listed.surround_parameter = true;
         listed.zone_tone = true;
