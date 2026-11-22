@@ -22,9 +22,9 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Ask, Avr, Error, HttpReads, InfoCheck, MissingSources, PageStatus, Query, QueryGroup,
-    ReceiverType, SkipReason, StartOptions, Started, TelnetConfig, TelnetStart, TelnetSync,
-    UpdateMethod, Zone,
+    Ask, Avr, Error, HttpConfig, HttpReads, Info, InfoCheck, MissingSources, PageStatus, Query,
+    QueryGroup, ReceiverType, SkipReason, StartOptions, Started, TelnetConfig, TelnetStart,
+    TelnetSync, UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -898,6 +898,20 @@ async fn connect_avr_x(http: &Fake, web: &Fake) -> Arc<Avr> {
     )
 }
 
+/// Connects from stored values, with the web interface.
+async fn known_avr_x(web: &Fake, info: Info, http: HttpConfig) -> Arc<Avr> {
+    Arc::new(
+        Avr::builder("127.0.0.1")
+            .http_config(http)
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(info)
+            .connect()
+            .await
+            .unwrap(),
+    )
+}
+
 #[tokio::test]
 async fn a_receiver_that_has_no_query_list_is_not_asked_for_the_settings() {
     let web = web_interface().await;
@@ -1137,6 +1151,7 @@ async fn a_stop_does_not_end_the_telnet_wait_of_all_synced() {
         started
     });
     tokio::task::yield_now().await;
+    assert!(!wait.is_finished());
     stopper.stop();
     let mut started = timeout(Duration::from_secs(2), wait)
         .await
@@ -1227,16 +1242,7 @@ async fn a_receiver_from_stored_values_reads_the_settings() {
     let web = web_interface().await;
     let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
     let info = connect_avr_x(&http, &web).await.info().clone();
-    let avr = Arc::new(
-        Avr::builder("127.0.0.1")
-            .http_config(config())
-            .web_interface_port(web.port)
-            .web_interface_config(config())
-            .known(info)
-            .connect()
-            .await
-            .unwrap(),
-    );
+    let avr = known_avr_x(&web, info, config()).await;
     start_without_telnet(&avr).await;
     assert_eq!(settings_requests(&http).len(), 2);
     assert_eq!(
@@ -1254,16 +1260,7 @@ async fn stored_values_without_the_settings_queries_read_no_settings_and_are_cha
     let info = connect_avr_x(&http, &web).await.info().clone();
     let mut old = info.clone();
     old.queries.as_mut().unwrap().surround_parameter = false;
-    let avr = Arc::new(
-        Avr::builder("127.0.0.1")
-            .http_config(config())
-            .web_interface_port(web.port)
-            .web_interface_config(config())
-            .known(old)
-            .connect()
-            .await
-            .unwrap(),
-    );
+    let avr = known_avr_x(&web, old, config()).await;
     let before = settings_requests(&http).len();
     let mut started = avr
         .start_with(StartOptions::new().telnet(false))
@@ -2312,7 +2309,7 @@ async fn the_start_checks_the_known_values() {
     let mut started = read.start_with(options).await.unwrap();
     assert!(matches!(started.info_check().await, InfoCheck::NotNeeded));
 
-    let same = Arc::new(builder().known(info.clone()).connect().await.unwrap());
+    let same = known_avr_x(&web, info.clone(), config()).await;
     let mut started = same.start_with(options).await.unwrap();
     assert!(matches!(started.info_check().await, InfoCheck::Same));
     // It keeps the result.
@@ -2320,7 +2317,7 @@ async fn the_start_checks_the_known_values() {
 
     let mut old = info.clone();
     old.friendly_name = "Old name".to_owned();
-    let changed = Arc::new(builder().known(old).connect().await.unwrap());
+    let changed = known_avr_x(&web, old, config()).await;
     let mut started = changed.start_with(options).await.unwrap();
     match started.info_check().await {
         InfoCheck::Changed(new) => assert_eq!(**new, info),
@@ -2338,16 +2335,7 @@ async fn a_stop_before_the_check_of_known_values_fails_the_check() {
         .unwrap()
         .info()
         .clone();
-    let avr = Arc::new(
-        Avr::builder("127.0.0.1")
-            .http_config(config())
-            .web_interface_port(web.port)
-            .web_interface_config(config())
-            .known(info)
-            .connect()
-            .await
-            .unwrap(),
-    );
+    let avr = known_avr_x(&web, info, config()).await;
     let mut started = avr
         .start_with(StartOptions::new().telnet(false))
         .await
@@ -2375,16 +2363,12 @@ async fn a_stop_during_the_check_of_known_values_fails_the_check() {
         .unwrap()
         .info()
         .clone();
-    let avr = Arc::new(
-        Avr::builder("127.0.0.1")
-            .http_config(config())
-            .web_interface_port(web.port)
-            .web_interface_config(config())
-            .known(info)
-            .connect()
-            .await
-            .unwrap(),
-    );
+    // A long timeout, so that the stop comes before a timeout error.
+    let http_config = HttpConfig {
+        request_timeout: Duration::from_secs(10),
+        ..config()
+    };
+    let avr = known_avr_x(&web, info, http_config).await;
     let mut started = avr
         .start_with(StartOptions::new().telnet(false))
         .await
@@ -2420,16 +2404,7 @@ async fn the_check_of_known_values_comes_before_the_pages() {
         .unwrap()
         .info()
         .clone();
-    let avr = Arc::new(
-        Avr::builder("127.0.0.1")
-            .http_config(config())
-            .web_interface_port(web.port)
-            .web_interface_config(config())
-            .known(info)
-            .connect()
-            .await
-            .unwrap(),
-    );
+    let avr = known_avr_x(&web, info, config()).await;
     let mut started = avr
         .start_with(StartOptions::new().telnet(false))
         .await

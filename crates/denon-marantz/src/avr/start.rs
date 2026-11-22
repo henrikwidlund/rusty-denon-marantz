@@ -283,7 +283,7 @@ impl Drop for StartGuard {
 /// A start that runs in the background. Dropping it does not stop the start,
 /// [`Started::stop`] does.
 ///
-/// With the `telnet` feature, it holds the [`Avr`] until [`Started`] is
+/// With the `telnet` feature, it holds the [`Avr`] until this value is
 /// dropped. A stop alone does not release it.
 ///
 /// The waits take `&mut self` and keep their result, so they can be called
@@ -364,18 +364,21 @@ impl Started {
     /// stop other calls on the receiver. A report that the task made before
     /// the stop is kept, otherwise the report has [`Error::Stopped`].
     ///
-    /// The task ends at its next await, not in this call. If the report was
-    /// not there yet, a new start of the same receiver gives
+    /// The task ends at its next await, not in this call. If the task had
+    /// not made the report yet, a new start of the same receiver gives
     /// [`Error::StartRunning`] until then, and [`Started::basic_synced`]
-    /// waits for that end. If the report was there, only
-    /// [`Started::all_synced`] waits for that end, because it waits for the
-    /// slow settings read. [`Started::all_synced`] also waits for the telnet
-    /// answers if the report says that telnet is open.
+    /// waits for that end. If it had made it, only [`Started::all_synced`]
+    /// waits for that end, because it waits for the slow settings read.
+    /// [`Started::all_synced`] also waits for the telnet answers if the
+    /// report says that telnet is open.
     ///
-    /// A stop before the report can leave some signal values unread, also
-    /// the telnet queries for the signal if telnet is open. Then call
-    /// [`Avr::refresh_signal`], and [`Avr::refresh_signal_pages`] for the
-    /// pages.
+    /// A stop before the report can leave some signal values unread. If
+    /// telnet is open, some telnet queries for the signal may not be sent
+    /// either. In both cases, call [`Avr::refresh_signal`]. If telnet is
+    /// open, also call [`Avr::refresh_signal_pages`] for the values that only
+    /// the pages give. A stop before the report can also leave the settings
+    /// availability unread, see [`Avr::update_settings_availability`]. Without
+    /// telnet, a stop can leave the settings unread, see [`Avr::refresh`].
     pub fn stop(&self) {
         self.handle.abort();
     }
