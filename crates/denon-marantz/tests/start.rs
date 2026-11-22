@@ -686,9 +686,7 @@ async fn the_signal_pages_can_be_turned_off() {
 #[tokio::test]
 async fn a_closed_telnet_port_is_in_the_report() {
     let web = web_interface().await;
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let http = avr_x_receiver().await;
     let avr = Arc::new(
         builder(&http, ReceiverType::AvrX)
@@ -1296,9 +1294,7 @@ async fn a_start_with_telnet_running_does_not_read_the_settings_over_http() {
 #[tokio::test]
 async fn a_start_with_a_closed_telnet_port_reads_the_settings_over_http() {
     let web = web_interface().await;
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let http = avr_x_receiver_with_info(AVR_X_SETTINGS_INFO).await;
     let avr = connected_with(&http, ReceiverType::AvrX, &web, telnet_config(port)).await;
     let mut started = avr.start().await.unwrap();
@@ -1355,9 +1351,7 @@ async fn telnet_can_be_left_closed() {
 
 #[tokio::test]
 async fn a_web_interface_that_does_not_answer_is_in_the_report() {
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let telnet = FakeTelnet::start().await;
     let http = avr_x_receiver().await;
     let avr = Arc::new(
@@ -1710,9 +1704,7 @@ async fn refresh_signal_without_telnet_reads_only_the_pages() {
 
 #[tokio::test]
 async fn refresh_signal_is_an_error_if_nothing_can_be_asked() {
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let http = avr_x_receiver().await;
     let avr = builder(&http, ReceiverType::AvrX)
         .web_interface_port(port)

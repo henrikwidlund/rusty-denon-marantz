@@ -6,9 +6,12 @@ mod common;
 use std::time::Duration;
 
 use common::{
-    Fake, PID, Reply, answer, connect, echo, event, from_data, name, next_change, under_process,
+    Fake, PID, Reply, answer, config, connect, echo, event, from_data, name, next_change,
+    under_process,
 };
-use denon_marantz_heos::{Change, Error, MediaType, PlayMode, PlayerId, QueueId, RepeatMode};
+use denon_marantz_heos::{
+    Change, Error, Heos, HeosConfig, MediaType, PlayMode, PlayerId, QueueId, RepeatMode,
+};
 
 /// Answers from the data. Commands without an answer there get [`echo`].
 fn device(line: &str) -> Reply {
@@ -180,11 +183,13 @@ async fn play_commands_send_their_values() {
 
 #[tokio::test]
 async fn under_process_allows_more_time() {
-    // A line every 300 ms: the answer comes after 900 ms. The command timeout
-    // is 500 ms, the slow command limit 1200 ms.
+    // A line every 600 ms: the answer comes after 1800 ms. The command timeout
+    // is 900 ms, so both "under process" lines must extend the deadline. The
+    // slow command limit is 3000 ms. Large gaps keep the test stable on slow
+    // machines.
     let fake = Fake::start(|line| match name(line) {
         "browse/browse" => Reply::Paced(
-            Duration::from_millis(300),
+            Duration::from_millis(600),
             vec![
                 under_process("browse/browse"),
                 under_process("browse/browse"),
@@ -194,7 +199,16 @@ async fn under_process_allows_more_time() {
         _ => from_data(line),
     })
     .await;
-    let heos = connect(&fake).await;
+    let heos = Heos::connect_with(
+        "127.0.0.1",
+        HeosConfig {
+            command_timeout: Duration::from_millis(900),
+            slow_command_limit: Duration::from_millis(3000),
+            ..config(fake.port)
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(heos.favorites(None).await.unwrap().items.len(), 2);
 }
 

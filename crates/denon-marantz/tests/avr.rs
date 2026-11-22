@@ -379,9 +379,7 @@ async fn description_is_tried_again_unless_it_timed_out() {
 
 #[tokio::test]
 async fn nothing_answering_is_an_error() {
-    let unused = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = unused.local_addr().unwrap().port();
-    drop(unused);
+    let port = common::CLOSED_PORT;
     let error = Avr::builder("127.0.0.1")
         .http_config(config())
         .probes(&[(ReceiverType::AvrX, port)])
@@ -592,9 +590,7 @@ async fn a_missing_speaker_page_is_not_an_error() {
 async fn a_receiver_without_the_port_is_an_error_that_the_client_can_see() {
     let receiver = avr_x_receiver().await;
     // A port that nothing listens on.
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let avr = builder(&receiver, ReceiverType::AvrX)
         .web_interface_port(port)
         .web_interface_config(config())
@@ -658,9 +654,7 @@ async fn missing_source_pages_are_skipped_and_a_closed_port_is_an_error() {
     assert_eq!(result.assignments, PageStatus::NotFound);
     assert!(avr.snapshot().device().sources.get("MPLAY").is_none());
 
-    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = closed.local_addr().unwrap().port();
-    drop(closed);
+    let port = common::CLOSED_PORT;
     let avr = builder(&receiver, ReceiverType::AvrX)
         .web_interface_port(port)
         .web_interface_config(config())

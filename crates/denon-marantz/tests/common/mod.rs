@@ -713,17 +713,12 @@ pub(crate) fn builder(fake: &Fake, receiver_type: ReceiverType) -> AvrBuilder {
     builder
 }
 
-/// HEOS settings that fail fast, so that a start does not wait for HEOS: no
-/// fake listens on the port.
+/// HEOS settings that fail fast, so that a start does not wait for HEOS: the
+/// port refuses connections.
 #[cfg(feature = "heos")]
 pub(crate) fn no_heos() -> denon_marantz::heos::HeosConfig {
-    let port = std::net::TcpListener::bind(LOOPBACK)
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
     denon_marantz::heos::HeosConfig {
-        port,
+        port: CLOSED_PORT,
         connect_timeout: Duration::from_millis(200),
         command_timeout: Duration::from_millis(200),
         ..denon_marantz::heos::HeosConfig::default()
@@ -941,3 +936,10 @@ pub(crate) const SOUND_BAR_INFO: &[u8] = b"<Device_Info><CommApiVers>0301</CommA
 /// The device information of an AV receiver with a category.
 pub(crate) const AV_RECEIVER_INFO: &[u8] = b"<Device_Info><CommApiVers>0301</CommApiVers>\
     <ModelName>AVC-X3700H</ModelName><CategoryName>AV RECEIVER</CategoryName></Device_Info>";
+
+/// A local port that refuses connections. Test servers bind port 0 and get a
+/// port from the ephemeral range, so no test can take this port.
+pub(crate) const CLOSED_PORT: u16 = 1;
+
+/// A second port like [`CLOSED_PORT`], for tests that need two of them.
+pub(crate) const OTHER_CLOSED_PORT: u16 = 2;

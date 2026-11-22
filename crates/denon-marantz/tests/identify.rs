@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{Fake, Reply, config};
+use common::{CLOSED_PORT, Fake, OTHER_CLOSED_PORT, Reply, config};
 use denon_marantz::{TypeProof, identify_on};
 use denon_marantz_proto::ReceiverType;
 
@@ -17,11 +17,6 @@ const OLD_INFO: &[u8] =
     <DeviceZones>1</DeviceZones></Device_Info>";
 const OLD_MODEL_PAGE: &[u8] =
     include_bytes!("../../denon-marantz-proto/tests/data/xml/AVR-1912-Deviceinfo.xml");
-
-fn unused_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
-}
 
 #[tokio::test]
 async fn first_avr_x_answer_wins() {
@@ -90,10 +85,9 @@ async fn old_receiver_on_a_shared_port_keeps_its_device_info() {
 
 #[tokio::test]
 async fn falls_back_to_the_next_port() {
-    let closed = unused_port();
     let open = Fake::start(|_| Reply::Body(AVR_X_INFO.to_vec())).await;
     let candidates = [
-        (ReceiverType::AvrX2016, closed),
+        (ReceiverType::AvrX2016, CLOSED_PORT),
         (ReceiverType::AvrX, open.port),
     ];
     let found = identify_on("127.0.0.1", &candidates, config())
@@ -191,7 +185,7 @@ async fn old_model_page_on_one_port_wins_over_an_error_on_another() {
 async fn old_model_page_wins_over_no_answer_on_another_port() {
     let old = Fake::start(|_| Reply::Body(OLD_MODEL_PAGE.to_vec())).await;
     let candidates = [
-        (ReceiverType::AvrX2016, unused_port()),
+        (ReceiverType::AvrX2016, CLOSED_PORT),
         (ReceiverType::AvrX, old.port),
     ];
     let found = identify_on("127.0.0.1", &candidates, config())
@@ -205,7 +199,7 @@ async fn old_model_page_wins_over_no_answer_on_another_port() {
 async fn no_answer_on_one_port_and_an_error_on_another_proves_nothing() {
     let old = Fake::start(|_| Reply::Status(404)).await;
     let candidates = [
-        (ReceiverType::AvrX2016, unused_port()),
+        (ReceiverType::AvrX2016, CLOSED_PORT),
         (ReceiverType::AvrX, old.port),
     ];
     let found = identify_on("127.0.0.1", &candidates, config())
@@ -231,8 +225,8 @@ async fn device_info_of_an_old_receiver_is_kept() {
 #[tokio::test]
 async fn nothing_answering_is_an_error() {
     let candidates = [
-        (ReceiverType::AvrX2016, unused_port()),
-        (ReceiverType::AvrX, unused_port()),
+        (ReceiverType::AvrX2016, CLOSED_PORT),
+        (ReceiverType::AvrX, OTHER_CLOSED_PORT),
     ];
     let error = identify_on("127.0.0.1", &candidates, config())
         .await

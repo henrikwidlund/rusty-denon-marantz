@@ -7,7 +7,7 @@ mod common;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use common::{Fake, Reply, config};
+use common::{CLOSED_PORT, Fake, Reply, config};
 use denon_marantz::{Error, HttpClient, HttpConfig, Pacing};
 
 fn client(fake: &Fake, config: HttpConfig) -> HttpClient {
@@ -148,16 +148,7 @@ async fn a_forbidden_page_is_its_own_error() {
 
 #[tokio::test]
 async fn refused_connection_is_a_network_error() {
-    let fake = Fake::start(|_| Reply::Body(Vec::new())).await;
-    let port = fake.port;
-    drop(fake);
-    // The listener task keeps running until the runtime ends, so use a port
-    // that nothing listens on.
-    let unused = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let free_port = unused.local_addr().unwrap().port();
-    drop(unused);
-    assert_ne!(port, free_port);
-    let client = HttpClient::new("127.0.0.1", free_port, config()).unwrap();
+    let client = HttpClient::new("127.0.0.1", CLOSED_PORT, config()).unwrap();
     let error = client.get("/x").await.unwrap_err();
     // Windows reports a refused connection after about two seconds, so the
     // short timeout of the test can come first.
@@ -298,16 +289,6 @@ async fn parsed_post_answers() {
     assert!(error.to_string().contains("POST http://"), "{error}");
 }
 
-/// A port that refuses connections now. It is free, so a test can listen on
-/// it later.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 /// Tries to build a connection again within `connect_retry`. On Windows a
 /// refused connection is reported after about two seconds, so a short
 /// connect timeout ends each try sooner there.
@@ -320,13 +301,17 @@ fn retrying(connect_retry: Duration) -> HttpConfig {
     }
 }
 
-/// Answers one request on `port` with `ok`, after `delay`.
-fn answer_later(port: u16, delay: Duration) {
+/// Returns a port that accepts no connection until `delay` has passed, then
+/// answers one request with `ok`. The port stays bound the whole time, so no
+/// other test can take it. Before `delay`, Linux and Windows refuse a
+/// connection and macOS lets it time out.
+fn answer_later(delay: Duration) -> u16 {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let port = socket.local_addr().unwrap().port();
     tokio::spawn(async move {
         tokio::time::sleep(delay).await;
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-            .await
-            .unwrap();
+        let listener = socket.listen(1).unwrap();
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut buffer = [0_u8; 1024];
         let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buffer).await;
@@ -337,20 +322,19 @@ fn answer_later(port: u16, delay: Duration) {
         .await
         .unwrap();
     });
+    port
 }
 
 #[tokio::test]
 async fn a_connection_that_cannot_be_built_is_tried_again() {
-    let port = free_port();
-    answer_later(port, Duration::from_millis(200));
+    let port = answer_later(Duration::from_millis(200));
     let client = HttpClient::new("127.0.0.1", port, retrying(Duration::from_secs(2))).unwrap();
     assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
 }
 
 #[tokio::test]
 async fn without_connect_retry_a_connection_is_tried_once() {
-    let port = free_port();
-    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::ZERO)).unwrap();
+    let client = HttpClient::new("127.0.0.1", CLOSED_PORT, retrying(Duration::ZERO)).unwrap();
     let started = Instant::now();
     let error = client.get("/x").await.unwrap_err();
     assert!(error.is_not_sent(), "{error:?}");
@@ -360,8 +344,12 @@ async fn without_connect_retry_a_connection_is_tried_once() {
 
 #[tokio::test]
 async fn connect_retry_ends_at_its_limit() {
-    let port = free_port();
-    let client = HttpClient::new("127.0.0.1", port, retrying(Duration::from_millis(300))).unwrap();
+    let client = HttpClient::new(
+        "127.0.0.1",
+        CLOSED_PORT,
+        retrying(Duration::from_millis(300)),
+    )
+    .unwrap();
     let started = Instant::now();
     let error = client.get("/x").await.unwrap_err();
     assert!(error.is_not_sent(), "{error:?}");
@@ -386,15 +374,14 @@ async fn a_request_that_was_sent_is_not_sent_again() {
 
 #[tokio::test]
 async fn a_connect_retry_without_end_works() {
-    let port = free_port();
-    answer_later(port, Duration::from_millis(100));
+    let port = answer_later(Duration::from_millis(100));
     let client = HttpClient::new("127.0.0.1", port, retrying(Duration::MAX)).unwrap();
     assert_eq!(&client.get("/x").await.unwrap()[..], b"ok");
 }
 
 #[tokio::test]
 async fn only_a_connection_that_was_not_opened_is_not_sent() {
-    let refused = HttpClient::new("127.0.0.1", free_port(), retrying(Duration::ZERO))
+    let refused = HttpClient::new("127.0.0.1", CLOSED_PORT, retrying(Duration::ZERO))
         .unwrap()
         .get("/x")
         .await

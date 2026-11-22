@@ -347,3 +347,7 @@ pub(crate) async fn wait_until(mut done: impl FnMut() -> bool) {
     }
     panic!("timed out");
 }
+
+/// A local port that refuses connections. Test servers bind port 0 and get a
+/// port from the ephemeral range, so no test can take this port.
+pub(crate) const CLOSED_PORT: u16 = 1;

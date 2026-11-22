@@ -470,11 +470,8 @@ mod tests {
     #[cfg(feature = "http")]
     #[tokio::test]
     async fn a_closed_port_is_a_refused_connection() {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // Port 1 is outside the ephemeral range, so no test server gets it.
+        let port = 1;
         // Windows tries a refused connect again for about 2s before it fails.
         let config = crate::HttpConfig {
             connect_timeout: Duration::from_secs(10),

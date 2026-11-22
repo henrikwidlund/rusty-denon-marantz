@@ -509,9 +509,7 @@ async fn dropping_the_avr_closes_the_connection() {
 
 #[tokio::test]
 async fn a_failed_first_connection_is_an_error() {
-    let unused = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = unused.local_addr().unwrap().port();
-    drop(unused);
+    let port = common::CLOSED_PORT;
     let http = avr_x_receiver().await;
     let avr = builder(&http, ReceiverType::AvrX)
         .telnet_config(telnet_config(port))

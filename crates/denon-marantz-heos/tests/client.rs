@@ -5,9 +5,8 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    Fake, IP, LOOPBACK, LOOPBACK_V6, PID, REGISTER, Reply, answer, answer_lines, config, connect,
-    counter, event, failure, from_data, name, next_change, now_playing, wait_for_registers,
-    wait_until,
+    Fake, IP, LOOPBACK_V6, PID, REGISTER, Reply, answer, answer_lines, config, connect, counter,
+    event, failure, from_data, name, next_change, now_playing, wait_for_registers, wait_until,
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
@@ -499,10 +498,7 @@ async fn an_ipv6_host_works_with_and_without_brackets() {
 
 #[tokio::test]
 async fn connect_fails_without_a_device() {
-    let listener = tokio::net::TcpListener::bind(LOOPBACK).await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let error = Heos::connect_with("127.0.0.1", config(port))
+    let error = Heos::connect_with("127.0.0.1", config(common::CLOSED_PORT))
         .await
         .unwrap_err();
     // Windows reports a refused connection after about two seconds, so the
