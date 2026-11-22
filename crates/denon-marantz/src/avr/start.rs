@@ -283,6 +283,9 @@ impl Drop for StartGuard {
 /// A start that runs in the background. Dropping it does not stop the start,
 /// [`Started::stop`] does.
 ///
+/// With the `telnet` feature, it holds the [`Avr`] until [`Started`] is
+/// dropped. A stop alone does not release it.
+///
 /// The waits take `&mut self` and keep their result, so they can be called
 /// one after the other, and again. A wait that is dropped, for example by a
 /// timeout, can be called again.
@@ -363,9 +366,16 @@ impl Started {
     ///
     /// The task ends at its next await, not in this call. If the report was
     /// not there yet, a new start of the same receiver gives
-    /// [`Error::StartRunning`] until then. [`Started::basic_synced`] waits
-    /// for that end. [`Started::all_synced`] also waits for the telnet
+    /// [`Error::StartRunning`] until then, and [`Started::basic_synced`]
+    /// waits for that end. If the report was there, only
+    /// [`Started::all_synced`] waits for that end, because it waits for the
+    /// slow settings read. [`Started::all_synced`] also waits for the telnet
     /// answers if the report says that telnet is open.
+    ///
+    /// A stop before the report can leave some signal values unread, also
+    /// the telnet queries for the signal if telnet is open. Then call
+    /// [`Avr::refresh_signal`], and [`Avr::refresh_signal_pages`] for the
+    /// pages.
     pub fn stop(&self) {
         self.handle.abort();
     }

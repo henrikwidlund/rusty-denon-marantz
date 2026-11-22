@@ -16,9 +16,9 @@ use tokio::time::timeout;
 use common::{
     AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_AND_SIGNAL_INFO, AVR_X_SETTINGS_INFO,
     Fake, FakeTelnet, OLDER_SETTINGS_INFO, Reply, SettingsReplies, appcommand0300_requests,
-    avr_x_receiver, avr_x_receiver_with_held_settings, avr_x_receiver_with_info,
-    avr_x_receiver_with_settings, builder, config, fake_group_queries, friendly_name_answer,
-    is_friendly_name_request, wait_until,
+    avr_x_receiver, avr_x_receiver_that_can_hang, avr_x_receiver_with_held_settings,
+    avr_x_receiver_with_info, avr_x_receiver_with_settings, builder, config, fake_group_queries,
+    friendly_name_answer, is_friendly_name_request, wait_until,
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
@@ -720,7 +720,7 @@ async fn a_closed_telnet_port_is_in_the_report() {
 #[tokio::test]
 async fn a_start_that_is_dropped_leaves_telnet_closed() {
     let hang = Arc::new(AtomicBool::new(false));
-    let http = common::avr_x_receiver_that_can_hang(hang.clone()).await;
+    let http = avr_x_receiver_that_can_hang(hang.clone()).await;
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = Arc::new(
         builder(&http, ReceiverType::AvrX)
@@ -752,7 +752,7 @@ async fn a_start_that_is_dropped_leaves_telnet_closed() {
 #[tokio::test]
 async fn a_second_start_is_refused_while_the_first_runs() {
     let hang = Arc::new(AtomicBool::new(false));
-    let http = common::avr_x_receiver_that_can_hang(hang.clone()).await;
+    let http = avr_x_receiver_that_can_hang(hang.clone()).await;
     let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
     let avr = Arc::new(
         builder(&http, ReceiverType::AvrX)
@@ -989,18 +989,13 @@ async fn a_fast_settings_read_without_answer_skips_the_slow_one() {
 
 #[tokio::test]
 async fn all_synced_can_wait_again_for_the_slow_settings_after_a_timeout() {
-    let web = web_interface().await;
-    let release = Arc::new(AtomicBool::new(false));
-    let http = avr_x_receiver_with_held_settings(Arc::clone(&release)).await;
-    let avr = connect_avr_x(&http, &web).await;
-    let mut started = avr
-        .start_with(StartOptions::new().telnet(false))
-        .await
-        .unwrap();
+    let SlowReadWaits {
+        release,
+        avr,
+        mut started,
+        ..
+    } = slow_read_waits().await;
     // The timeout must stop the wait for the slow settings, not the start.
-    timeout(Duration::from_secs(5), started.basic_synced())
-        .await
-        .unwrap();
     assert!(
         timeout(Duration::from_millis(100), started.all_synced())
             .await
@@ -1068,17 +1063,15 @@ struct SlowReadWaits {
     started: Started,
 }
 
-/// Starts it and returns after the fake got that request.
+/// Starts it and returns after the fake got that request. The task has sent
+/// the report then, but it is not read.
 async fn slow_read_waits() -> SlowReadWaits {
     let web = web_interface().await;
     let release = Arc::new(AtomicBool::new(false));
     let http = avr_x_receiver_with_held_settings(Arc::clone(&release)).await;
     let avr = connect_avr_x(&http, &web).await;
-    let mut started = avr
+    let started = avr
         .start_with(StartOptions::new().telnet(false))
-        .await
-        .unwrap();
-    timeout(Duration::from_secs(5), started.basic_synced())
         .await
         .unwrap();
     wait_until("the slow settings request", || {
@@ -1104,6 +1097,7 @@ async fn stop_ends_the_slow_settings_read_and_keeps_the_report() {
         mut started,
         ..
     } = slow_read_waits().await;
+    started.basic_synced().await;
     started.stop();
     let report = timeout(Duration::from_millis(100), started.all_synced())
         .await
@@ -1114,6 +1108,43 @@ async fn stop_ends_the_slow_settings_read_and_keeps_the_report() {
     release.store(true, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(avr.snapshot().device().sound_settings.audio_delay, None);
+}
+
+#[tokio::test]
+async fn a_report_sent_before_the_stop_and_read_after_it_is_kept() {
+    let SlowReadWaits { mut started, .. } = slow_read_waits().await;
+    started.stop();
+    let report = timeout(Duration::from_millis(100), started.basic_synced())
+        .await
+        .unwrap();
+    assert!(report.web_interface.is_ok(), "{:?}", report.web_interface);
+}
+
+#[tokio::test]
+async fn a_stop_does_not_end_the_telnet_wait_of_all_synced() {
+    let (web, telnet) = (web_interface().await, FakeTelnet::start().await);
+    let avr = started(&web, &telnet).await;
+    let mut started = avr
+        .start_with(StartOptions::new().telnet_wait(Duration::from_millis(300)))
+        .await
+        .unwrap();
+    started.basic_synced().await;
+    // With telnet the slow settings are not read, so the task has ended. The
+    // telnet wait runs in the task that calls `all_synced`.
+    let stopper = started.stopper();
+    let wait = tokio::spawn(async move {
+        started.all_synced().await;
+        started
+    });
+    tokio::task::yield_now().await;
+    stopper.stop();
+    let mut started = timeout(Duration::from_secs(2), wait)
+        .await
+        .unwrap()
+        .unwrap();
+    let report = started.all_synced().await;
+    assert_eq!(report.telnet_sync, TelnetSync::NoAnswer);
+    assert!(report.web_interface.is_ok(), "{:?}", report.web_interface);
 }
 
 #[tokio::test]
@@ -2332,6 +2363,51 @@ async fn a_stop_before_the_check_of_known_values_fails_the_check() {
     avr.start_with(StartOptions::new().telnet(false))
         .await
         .unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_during_the_check_of_known_values_fails_the_check() {
+    let (hang, web) = (Arc::new(AtomicBool::new(false)), web_interface().await);
+    let http = avr_x_receiver_that_can_hang(Arc::clone(&hang)).await;
+    let info = builder(&http, ReceiverType::AvrX)
+        .connect()
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let avr = Arc::new(
+        Avr::builder("127.0.0.1")
+            .http_config(config())
+            .web_interface_port(web.port)
+            .web_interface_config(config())
+            .known(info)
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false))
+        .await
+        .unwrap();
+    // The task has not run yet on this runtime with one thread, so the
+    // check sends its requests after this.
+    hang.store(true, Ordering::SeqCst);
+    let before = http.requests().len();
+    wait_until("the AppCommand request of the check", || {
+        http.requests()[before..]
+            .iter()
+            .any(|seen| seen.path == "/goform/AppCommand.xml")
+    })
+    .await;
+    started.stop();
+    let check = timeout(Duration::from_millis(100), started.info_check())
+        .await
+        .unwrap();
+    assert!(
+        matches!(check, InfoCheck::Failed(Error::Stopped)),
+        "{check:?}"
+    );
+    assert_eq!(web.requests().len(), 0, "the pages were asked");
 }
 
 #[tokio::test]
