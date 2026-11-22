@@ -27,7 +27,7 @@ macro_rules! query_values {
 
         impl Query {
             /// All values.
-            pub const ALL: &'static [Self] = &[$(Self::$name,)*];
+            pub const ALL: &[Self] = &[$(Self::$name,)*];
         }
     };
 }

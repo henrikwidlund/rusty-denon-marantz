@@ -660,7 +660,7 @@ impl HttpReads {
     pub const SIGNAL_PAGES: Self = Self(1 << 3);
 
     /// Names for `Debug`, in bit order.
-    const NAMES: [(Self, &'static str); 4] = [
+    const NAMES: [(Self, &str); 4] = [
         (Self::UPDATE, "UPDATE"),
         (Self::REFRESH, "REFRESH"),
         (Self::SIGNAL_AND_SETTINGS, "SIGNAL_AND_SETTINGS"),

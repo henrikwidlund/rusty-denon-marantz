@@ -15,7 +15,7 @@ macro_rules! labeled_enum {
 
         impl $name {
             /// All values.
-            pub const ALL: &'static [Self] = &[ $( Self::$variant, )+ ];
+            pub const ALL: &[Self] = &[ $( Self::$variant, )+ ];
 
             /// Name for display.
             #[must_use]

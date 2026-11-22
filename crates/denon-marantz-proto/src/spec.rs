@@ -67,7 +67,7 @@ const CURRENT: u8 = 1 << 3;
 
 impl SpecFeature {
     /// All values.
-    pub const ALL: &'static [Self] = &[
+    pub const ALL: &[Self] = &[
         Self::ProLogicMode,
         Self::SurroundBackMode,
         Self::FrontHeight,

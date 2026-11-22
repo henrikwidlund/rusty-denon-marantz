@@ -404,7 +404,7 @@ macro_rules! device_features {
 
         impl DeviceFeature {
             /// All values.
-            pub const ALL: &'static [Self] = &[$(Self::$name,)*];
+            pub const ALL: &[Self] = &[$(Self::$name,)*];
 
             /// Where the entry is below `DeviceCapabilities/Setup`.
             const fn path(self) -> Path {
