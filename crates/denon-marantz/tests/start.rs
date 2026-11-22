@@ -68,6 +68,7 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         answer_quiet: Duration::from_secs(5),
         signal_wait_min: Duration::from_millis(300),
         signal_wait_max: Duration::from_millis(1200),
+        signal_check: None,
         query_groups: QueryGroup::START_ORDER,
     }
 }

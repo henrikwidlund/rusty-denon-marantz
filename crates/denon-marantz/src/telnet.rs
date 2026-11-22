@@ -21,7 +21,7 @@ use denon_marantz_proto::telnet::{
     MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
     signal_queries,
 };
-use denon_marantz_proto::{Brand, DAB_QUERIES, HD_RADIO_QUERIES, TUNER_QUERIES};
+use denon_marantz_proto::{Brand, DAB_QUERIES, HD_RADIO_QUERIES, Power, TUNER_QUERIES, Zone};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -82,18 +82,38 @@ pub struct TelnetConfig {
     /// receivers do not send video signal changes. When the signal changes,
     /// they send the sound mode (`MS`) or `SSINFAISSIG`, also with the same
     /// value, or a new audio sample rate (`SSINFAISFSV`). After the first such
-    /// line, the video signal queries are sent after a random wait between
-    /// this and [`TelnetConfig::signal_wait_max`]. Answers to queries of this
-    /// connection are not hints. A line with a known input resolution in the
-    /// meantime cancels these queries, for example when another client asked.
-    /// If that client asked only for the resolution, the other values can stay
-    /// old. The random wait makes it less likely that several clients ask at
-    /// the same time. When the answer has no input resolution yet (`---`), the
-    /// queries are sent once more after 1 s.
+    /// line, the video signal and channel queries are sent after a random wait
+    /// between this and [`TelnetConfig::signal_wait_max`]. Answers to queries
+    /// of this connection are not hints. A line with a known input resolution
+    /// in the meantime cancels the video queries, for example when another
+    /// client asked. If that client asked only for the resolution, the other
+    /// values can stay old. The channel queries are still sent. The random wait
+    /// makes it less likely that several clients ask at the same time. When
+    /// the answer has no input resolution yet (`---`), the video queries are
+    /// sent once more after 1 s. Some changes send none of these lines, see
+    /// [`TelnetConfig::signal_check`].
     pub signal_wait_min: Duration,
-    /// Longest wait before the video signal is asked after a hint, see
+    /// Longest wait before the signal is asked after a hint, see
     /// [`TelnetConfig::signal_wait_min`].
     pub signal_wait_max: Duration,
+    /// Time between checks of the signal while the main zone is on. Some
+    /// receivers do not send all changes of the audio and video signal. A
+    /// check asks the input resolution, HDR, audio signal, sample rate, sound
+    /// and channels. A query is left out when its line came since the last
+    /// check and this connection did not ask for it, for example because
+    /// another client asked. If the resolution or HDR changed, all video
+    /// signal queries are sent. If another client asked only for the
+    /// resolution, the other video values can stay old. Only receivers with
+    /// `CommApiVers` 0301 or higher get checks, see
+    /// [`Info::has_heos`](crate::Info::has_heos). The main zone counts as on
+    /// when the state says so, for example after its power line came. The
+    /// video queries are left out while a video read waits for its write or
+    /// its answers. A query that was not answered three times in a row is
+    /// left out until a line for it comes. It must be above
+    /// [`TelnetConfig::answer_quiet`], so that a query usually counts as not
+    /// answered before the next check. A random wait of up to 0.5 s is added
+    /// to each time. `None` turns the checks off. The default is 5 s.
+    pub signal_check: Option<Duration>,
     /// The groups of queries that fill the state after a connect, in the order
     /// that they are sent. A group that is left out stays empty until the
     /// receiver reports a change, or until it is fetched with
@@ -120,6 +140,7 @@ impl Default for TelnetConfig {
             answer_quiet: Duration::from_secs(2),
             signal_wait_min: Duration::from_millis(300),
             signal_wait_max: Duration::from_millis(1200),
+            signal_check: Some(Duration::from_secs(5)),
             query_groups: QueryGroup::START_ORDER,
         }
     }
@@ -147,6 +168,14 @@ impl TelnetConfig {
         if self.signal_wait_min > self.signal_wait_max {
             return Err(Error::InvalidConfig(
                 "signal_wait_min must not be above signal_wait_max",
+            ));
+        }
+        if self
+            .signal_check
+            .is_some_and(|every| every <= self.answer_quiet)
+        {
+            return Err(Error::InvalidConfig(
+                "signal_check must be above answer_quiet",
             ));
         }
         Ok(())
@@ -295,6 +324,9 @@ struct Queries {
     offered: Offered,
     /// The tuner has DAB: the DAB queries go with the tuner queries.
     dab: bool,
+    /// The receiver follows the current specs, see [`Info::has_heos`]. Only
+    /// such receivers get signal checks.
+    signal_check: bool,
 }
 
 impl Queries {
@@ -305,6 +337,7 @@ impl Queries {
             groups,
             offered: info.offered(),
             dab: info.has_dab(),
+            signal_check: info.has_heos(),
         }
     }
 
@@ -633,6 +666,13 @@ struct Queue {
     /// start begins its wait after its pages, so a query can count as not
     /// answered before.
     start_missed: Vec<Cow<'static, str>>,
+    /// For each query of [`SIGNAL_CHECK`], how often in a row it was not
+    /// answered, up to [`SIGNAL_CHECK_MISSES`].
+    check_misses: [u8; SIGNAL_CHECK.len()],
+    /// Queries that were last added by the connection itself, not by the
+    /// caller: hint reads, checks and other follow-up reads. A miss of such a
+    /// query is not reported to the waits.
+    own: Vec<&'static str>,
 }
 
 /// A caller that waits until the queries are answered.
@@ -646,22 +686,46 @@ struct Waiter {
     start: bool,
 }
 
-/// When to ask the video signal after a hint, see
-/// [`TelnetConfig::signal_wait_min`].
+/// When to ask the signal after a hint, see
+/// [`TelnetConfig::signal_wait_min`], and when to check it, see
+/// [`TelnetConfig::signal_check`].
 #[derive(Debug, Default)]
 struct SignalHint {
-    /// When the video signal queries are added.
+    /// When the signal queries are added.
     due: Option<Instant>,
+    /// The parts that are asked at `due`.
+    read: SignalRead,
     /// `due` is the second read after an answer without values.
     again_due: bool,
-    /// The last read was the first one after a hint.
+    /// The last read was the first one after a hint, and asked the video
+    /// signal.
     may_ask_again: bool,
     /// The last audio sample rate that the receiver sent by itself. It
     /// repeats it every few seconds.
     sample_rate: String,
+    /// When the signal is checked next, see [`TelnetConfig::signal_check`].
+    check_at: Option<Instant>,
+    /// Time between checks.
+    check_every: Duration,
+    /// The lines of [`SIGNAL_CHECK`] that came since the last check, and that
+    /// this connection did not ask for.
+    fresh: [bool; SIGNAL_CHECK.len()],
+    /// The answer prefix of the last video query of a check, while its
+    /// answers did not come yet.
+    checking: Option<&'static str>,
 }
 
 impl SignalHint {
+    /// Checks the signal every `check_every` plus `jitter`, or never if it
+    /// is `None`.
+    fn new(now: Instant, check_every: Option<Duration>, jitter: Duration) -> Self {
+        Self {
+            check_at: check_every.map(|every| now + every + jitter),
+            check_every: check_every.unwrap_or_default(),
+            ..Self::default()
+        }
+    }
+
     /// Checks a line from the receiver. `answer` says how the line belongs to
     /// the queries of this connection: only `Other` lines are hints. `wait`
     /// gives a random wait.
@@ -676,10 +740,21 @@ impl SignalHint {
         // A new sample rate in an answer to this connection is found when the
         // receiver repeats it.
         let hint = answer == AnswerLine::Other && self.is_hint(line);
+        if answer == AnswerLine::Other
+            && let Some(index) = signal_check_index(line)
+        {
+            self.fresh[index] = true;
+        }
         match input_resolution(line).map(|value| matches!(value.trim(), "" | "---")) {
+            // The answer to a check has only the resolution and HDR.
+            Some(false) if answer == AnswerLine::Answer && self.checking.is_some() => {}
             Some(false) => {
-                // Somebody asked, so the values are new.
-                self.due = None;
+                // Somebody asked, so the video values are new. The channels
+                // are still asked.
+                self.read.video = false;
+                if !self.read.channels {
+                    self.due = None;
+                }
                 self.may_ask_again = false;
             }
             // The answer came before the receiver had the new values.
@@ -688,14 +763,21 @@ impl SignalHint {
                     self.may_ask_again = false;
                     if self.due.is_none() {
                         self.due = Some(now + SIGNAL_AGAIN);
+                        self.read.video = true;
                         self.again_due = true;
                     }
                 }
             }
-            None if hint && self.due.is_none() => {
+            None if hint => {
+                self.read = SignalRead {
+                    video: true,
+                    channels: true,
+                };
                 // Later hints of the burst do not move the time.
-                self.due = Some(now + wait());
-                self.again_due = false;
+                if self.due.is_none() {
+                    self.due = Some(now + wait());
+                    self.again_due = false;
+                }
             }
             None => {}
         }
@@ -717,13 +799,96 @@ impl SignalHint {
         changed
     }
 
-    /// Takes the due time when the queries are added.
-    const fn take_due(&mut self) {
+    /// Checks a line after the duplicate filter. `new` is true if the filter
+    /// let it through. A changed answer to a check asks the video signal.
+    fn check_line(&mut self, line: &str, answer: AnswerLine, new: bool, now: Instant) {
+        let Some(last) = self.checking else {
+            return;
+        };
+        if answer != AnswerLine::Answer
+            || !SIGNAL_CHECK[..SIGNAL_CHECK_VIDEO]
+                .iter()
+                .any(|(_, prefix)| line.starts_with(prefix))
+        {
+            return;
+        }
+        if line.starts_with(last) || new {
+            self.checking = None;
+        }
+        if new {
+            self.read.video = true;
+            self.due.get_or_insert(now);
+        }
+    }
+
+    /// Takes the next check. Returns the queries of [`SIGNAL_CHECK`] whose
+    /// line did not come since the last check. `jitter` is added to the next
+    /// time.
+    fn take_check(&mut self, now: Instant, jitter: Duration) -> [bool; SIGNAL_CHECK.len()] {
+        self.check_at = Some(now + self.check_every + jitter);
+        // A check whose answers did not come has ended.
+        self.checking = None;
+        let ask = self.fresh.map(|fresh| !fresh);
+        self.fresh = [false; SIGNAL_CHECK.len()];
+        ask
+    }
+
+    /// Takes the due time and the parts to ask when the queries are added.
+    const fn take_due(&mut self) -> SignalRead {
+        let read = self.read;
         self.due = None;
-        self.may_ask_again = !self.again_due;
+        // A video read gives the same answers.
+        if read.video {
+            self.checking = None;
+        }
+        self.may_ask_again = read.video && !self.again_due;
+        self.read = SignalRead {
+            video: false,
+            channels: false,
+        };
         self.again_due = false;
+        read
     }
 }
+
+/// The parts of the signal that a hint asks.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SignalRead {
+    /// The video signal.
+    video: bool,
+    /// The channels. Some receivers do not send the input channels by
+    /// themselves when the audio signal changes.
+    channels: bool,
+}
+
+/// The queries of a signal check, see [`TelnetConfig::signal_check`], and
+/// the start of their answer lines. The video queries come first.
+const SIGNAL_CHECK: [(&str, &str); 7] = [
+    ("SSINFSIGRES ?", "SSINFSIGRES I"),
+    ("SSINFSIGHDR ?", "SSINFSIGHDR I"),
+    ("SSINFAISFSV ?", "SSINFAISFSV "),
+    ("SYSDA ?", "SYSDA "),
+    ("SYSMI ?", "SYSMI "),
+    ("OPINFINS ?", "OPINFINS "),
+    ("OPINFASP ?", "OPINFASP "),
+];
+
+/// The index in [`SIGNAL_CHECK`] of the query that `line` answers.
+fn signal_check_index(line: &str) -> Option<usize> {
+    SIGNAL_CHECK
+        .iter()
+        .position(|(_, prefix)| line.starts_with(prefix))
+}
+
+/// A query of [`SIGNAL_CHECK`] that was not answered this often in a row is
+/// left out of the checks, until a line for it comes.
+const SIGNAL_CHECK_MISSES: u8 = 3;
+
+/// The number of video queries at the start of [`SIGNAL_CHECK`].
+const SIGNAL_CHECK_VIDEO: usize = 2;
+
+/// Longest random wait added to the time between signal checks.
+const SIGNAL_CHECK_JITTER: Duration = Duration::from_millis(500);
 
 /// Wait before the video signal is asked again after an answer without values.
 const SIGNAL_AGAIN: Duration = Duration::from_secs(1);
@@ -766,7 +931,27 @@ impl Queue {
             last_activity: now,
             waiters: Vec::new(),
             start_missed: Vec::new(),
+            check_misses: [0; SIGNAL_CHECK.len()],
+            own: Vec::new(),
         }
+    }
+
+    /// Adds queries that the connection asks by itself, see [`Queue::own`].
+    fn add_own(&mut self, queries: impl IntoIterator<Item = &'static str>) {
+        for query in queries {
+            // A query that the caller still waits for stays the caller's.
+            let own = self.own.contains(&query) || !self.is_waiting(query);
+            self.add([query]);
+            if own {
+                self.own.push(query);
+            }
+        }
+    }
+
+    /// True if `query` waits for its write or for its answer.
+    fn is_waiting(&self, query: &str) -> bool {
+        self.background.iter().any(|waiting| waiting == query)
+            || self.answers.open().any(|open| open == query)
     }
 
     /// A query waits for a write.
@@ -828,6 +1013,12 @@ impl Queue {
             }
             _ => {}
         }
+        // The receiver knows the query.
+        if kind != AnswerLine::Related
+            && let Some(index) = signal_check_index(line)
+        {
+            self.check_misses[index] = 0;
+        }
         kind
     }
 
@@ -857,8 +1048,20 @@ impl Queue {
                 return;
             }
             self.waiters.retain(|waiter| !waiter.done.is_closed());
-            let missed: Vec<_> = self.answers.take_open().collect();
+            let mut missed: Vec<_> = self.answers.take_open().collect();
             tracing::debug!(queries = ?missed, "telnet queries not answered");
+            for query in &missed {
+                if let Some(index) = SIGNAL_CHECK.iter().position(|(text, _)| text == query) {
+                    let count = &mut self.check_misses[index];
+                    *count = count.saturating_add(1).min(SIGNAL_CHECK_MISSES);
+                }
+            }
+            // The caller did not ask these. A query can be written twice, so
+            // it leaves `own` only when no copy waits for its write any more.
+            missed.retain(|query| !self.own.iter().any(|own| own == query));
+            let background = &self.background;
+            self.own
+                .retain(|own| background.iter().any(|query| query == own));
             for waiter in &mut self.waiters {
                 waiter.missed.extend(missed.iter().cloned());
             }
@@ -905,11 +1108,12 @@ impl Queue {
 
     /// Gives the callers whose deadline came the queries that are open:
     /// counted as not answered, written without an answer, and not written.
+    /// The connection's own queries are left out, see [`Queue::own`].
     fn end_late_waiters(&mut self, now: Instant) {
         for waiter in self.waiters.extract_if(.., |waiter| waiter.deadline <= now) {
             let mut open = waiter.missed;
             for query in self.answers.open().chain(&self.background) {
-                if !open.contains(query) {
+                if !open.contains(query) && !self.own.iter().any(|own| own == query) {
                     open.push(query.clone());
                 }
             }
@@ -924,6 +1128,8 @@ impl Queue {
         self.queue_work(|queue| {
             for query in queries {
                 let query = query.into();
+                // The caller wants its answer.
+                queue.own.retain(|own| *own != query);
                 if !queue.background.contains(&query) {
                     queue.background.push_back(query);
                 }
@@ -1028,7 +1234,7 @@ impl Worker {
         // Only data from the receiver counts. Writes say nothing about it.
         let mut idle_since = Instant::now();
         let mut asked = false;
-        let mut signal = SignalHint::default();
+        let mut signal = self.signal_hint(idle_since);
         let (wait_min, wait_max) = (self.config.signal_wait_min, self.config.signal_wait_max);
         let end = loop {
             let write_time = queue.write_time(&self.config, self.background_pause);
@@ -1056,7 +1262,8 @@ impl Worker {
                             // and is still a hint.
                             let answer = queue.answer_line(text, idle_since);
                             signal.line(text, answer, idle_since, || random_wait(wait_min, wait_max));
-                            self.handle_line(text, &mut filter);
+                            let new = self.handle_line(text, &mut filter);
+                            signal.check_line(text, answer, new, idle_since);
                         });
                         self.add_source_queries(&mut queue, tuner, hd_radio);
                         // A change made BT.2020 not known: ask once more. The
@@ -1066,7 +1273,7 @@ impl Worker {
                         // off until the next change or `refresh_signal`.
                         if !unknown_before && self.colorimetry_unknown() {
                             filter.forget_colorimetry();
-                            queue.add(signal_queries(self.queries.brand, SignalPart::Colorimetry));
+                            queue.add_own(signal_queries(self.queries.brand, SignalPart::Colorimetry));
                         }
                     }
                     Err(error) => break End::Failed(error),
@@ -1077,6 +1284,8 @@ impl Worker {
                         filter.clear();
                         let all = self.queries.all();
                         queue.queue_work(|queue| queue.background = all);
+                        // The caller wants all answers.
+                        queue.own.clear();
                         // All are asked again.
                         queue.start_missed.clear();
                     }
@@ -1107,8 +1316,10 @@ impl Worker {
                     queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
                 }
                 () = tokio::time::sleep_until(signal.due.unwrap_or_else(Instant::now)), if signal.due.is_some() => {
-                    signal.take_due();
-                    queue.add(self.video_queries());
+                    self.add_signal_queries(&mut queue, signal.take_due());
+                }
+                () = tokio::time::sleep_until(signal.check_at.unwrap_or_else(Instant::now)), if signal.check_at.is_some() => {
+                    self.check_signal(&mut queue, &mut signal);
                 }
                 () = tokio::time::sleep_until(answer_time.unwrap_or_else(Instant::now)), if answer_time.is_some() => {
                     queue.check_answers(Instant::now(), self.config.answer_quiet);
@@ -1182,21 +1393,82 @@ impl Worker {
     /// Asks for the tuner or HD Radio values after the source changed to it.
     fn add_source_queries(&self, queue: &mut Queue, tuner: bool, hd_radio: bool) {
         if tuner {
-            queue.add(TUNER_QUERIES);
+            queue.add_own(TUNER_QUERIES);
             if self.queries.dab {
-                queue.add(DAB_QUERIES);
+                queue.add_own(DAB_QUERIES);
             }
         }
         if hd_radio {
-            queue.add(HD_RADIO_QUERIES);
+            queue.add_own(HD_RADIO_QUERIES);
         }
     }
 
-    /// The video signal queries of a hint. Answers that change the signal
-    /// make BT.2020 not known, and that asks for it.
-    fn video_queries(&self) -> impl Iterator<Item = &'static str> + use<> {
+    /// Adds the signal queries of a hint. Video answers that change the
+    /// signal make BT.2020 not known, and that asks for it.
+    fn add_signal_queries(&self, queue: &mut Queue, read: SignalRead) {
         let queries = self.queries;
-        signal_queries(queries.brand, SignalPart::Video).filter(move |query| queries.wanted(query))
+        let parts = [
+            (read.video, SignalPart::Video),
+            (read.channels, SignalPart::Channels),
+        ];
+        for (_, part) in parts.into_iter().filter(|(asked, _)| *asked) {
+            queue
+                .add_own(signal_queries(queries.brand, part).filter(|query| queries.wanted(query)));
+        }
+    }
+
+    /// The hint and check state of a new connection.
+    fn signal_hint(&self, now: Instant) -> SignalHint {
+        let check = self
+            .config
+            .signal_check
+            .filter(|_| self.queries.signal_check);
+        SignalHint::new(now, check, random_wait(Duration::ZERO, SIGNAL_CHECK_JITTER))
+    }
+
+    /// Sends the queries of [`SIGNAL_CHECK`] that are due, while the main zone
+    /// is on.
+    fn check_signal(&self, queue: &mut Queue, signal: &mut SignalHint) {
+        let previous = signal.checking;
+        let ask = signal.take_check(
+            Instant::now(),
+            random_wait(Duration::ZERO, SIGNAL_CHECK_JITTER),
+        );
+        let on = self
+            .channels
+            .read(|state| state.zone(Zone::Main).power == Some(Power::On));
+        if !on {
+            return;
+        }
+        let queries = self.queries;
+        let misses = queue.check_misses;
+        // A video read that is due, or waits for its write or its answers,
+        // gives the values.
+        let video_busy = (signal.due.is_some() && signal.read.video)
+            || SIGNAL_CHECK[..SIGNAL_CHECK_VIDEO]
+                .iter()
+                .any(|(query, _)| queue.is_waiting(query));
+        let due = |index: usize| {
+            let query = SIGNAL_CHECK[index].0;
+            ask[index]
+                && !(video_busy && index < SIGNAL_CHECK_VIDEO)
+                && misses[index] < SIGNAL_CHECK_MISSES
+                && queries.wanted(query)
+        };
+        signal.checking = if video_busy {
+            // The answers of an earlier check can still come.
+            previous
+        } else {
+            (0..SIGNAL_CHECK_VIDEO)
+                .rev()
+                .find(|&index| due(index))
+                .map(|index| SIGNAL_CHECK[index].1)
+        };
+        queue.add_own(
+            (0..SIGNAL_CHECK.len())
+                .filter(|&index| due(index))
+                .map(|index| SIGNAL_CHECK[index].0),
+        );
     }
 
     fn colorimetry_unknown(&self) -> bool {
@@ -1204,16 +1476,17 @@ impl Worker {
             .read(|state| state.device().signal.needs_colorimetry_query())
     }
 
-    fn handle_line(&self, line: &str, filter: &mut DuplicateFilter) {
+    /// Applies a line. Returns false if the duplicate filter dropped it.
+    fn handle_line(&self, line: &str, filter: &mut DuplicateFilter) -> bool {
         let Some(message) = Message::parse(line) else {
-            return;
+            return true;
         };
         if !filter.accept(message.parameter) {
             tracing::trace!(
                 event = message.event.code(),
                 "telnet duplicate event ignored"
             );
-            return;
+            return false;
         }
         // A line can have personal data, for example a title.
         #[cfg(feature = "sensitive-logs")]
@@ -1231,6 +1504,7 @@ impl Worker {
                 parameter: message.parameter.into(),
             });
         }
+        true
     }
 }
 
@@ -1345,6 +1619,14 @@ mod tests {
                 signal_wait_min: Duration::from_secs(3),
                 ..default
             },
+            TelnetConfig {
+                signal_check: Some(Duration::ZERO),
+                ..default
+            },
+            TelnetConfig {
+                signal_check: Some(default.answer_quiet),
+                ..default
+            },
         ];
         for config in bad {
             assert!(
@@ -1404,8 +1686,190 @@ mod tests {
             let mut hint = SignalHint::default();
             hint.line("MSSTEREO", AnswerLine::Other, start, wait);
             hint.line(line, AnswerLine::Other, start, wait);
-            assert_eq!(hint.due.is_none(), cancel, "{line}");
+            assert_eq!(!hint.read.video, cancel, "{line}");
+            // The channels are still asked at the same time.
+            assert_eq!(hint.due, Some(start + wait()), "{line}");
+            assert!(hint.read.channels, "{line}");
         }
+    }
+
+    #[test]
+    fn a_hint_asks_for_the_video_signal_and_the_channels() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        assert_eq!(
+            hint.take_due(),
+            SignalRead {
+                video: true,
+                channels: true
+            }
+        );
+        // A known input resolution leaves only the channels.
+        hint.line("SSINFAISSIG 25", AnswerLine::Other, now, wait);
+        hint.line("SSINFSIGRES I4K24", AnswerLine::Other, now, wait);
+        assert_eq!(
+            hint.take_due(),
+            SignalRead {
+                video: false,
+                channels: true
+            }
+        );
+        // A read without video does not ask again.
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(hint.due, None);
+    }
+
+    #[test]
+    fn the_second_read_asks_only_for_the_video_signal() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        hint.take_due();
+        hint.line("SSINFSIGRES I--- ", AnswerLine::Answer, now, wait);
+        assert_eq!(
+            hint.take_due(),
+            SignalRead {
+                video: true,
+                channels: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_line_that_this_connection_did_not_ask_for_skips_its_check() {
+        let now = Instant::now();
+        let every = Duration::from_secs(5);
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::new(now, Some(every), Duration::ZERO);
+        assert_eq!(hint.check_at, Some(now + every));
+        // Sent by itself, or the answer to another client.
+        hint.line("SYSDA PCM", AnswerLine::Other, now, wait);
+        // Answers to this connection count as not seen.
+        hint.line("OPINFINS 2211", AnswerLine::Answer, now, wait);
+        hint.line("SSINFSIGRES O4K24", AnswerLine::Related, now, wait);
+        let jitter = Duration::from_millis(100);
+        let at = now + every;
+        assert_eq!(
+            hint.take_check(at, jitter),
+            [true, true, true, false, true, true, true]
+        );
+        assert_eq!(hint.check_at, Some(at + every + jitter));
+        // Only since the last check.
+        assert_eq!(hint.take_check(at, jitter), [true; SIGNAL_CHECK.len()]);
+        // Off.
+        assert_eq!(SignalHint::new(now, None, Duration::ZERO).check_at, None);
+        // The first check has its random wait too.
+        let jitter = Duration::from_millis(300);
+        assert_eq!(
+            SignalHint::new(now, Some(every), jitter).check_at,
+            Some(now + every + jitter)
+        );
+    }
+
+    #[test]
+    fn the_signal_check_queries_are_signal_queries() {
+        for brand in [Brand::Denon, Brand::Marantz] {
+            for (query, prefix) in SIGNAL_CHECK {
+                assert!(
+                    group_queries(brand, QueryGroup::Signal).any(|text| text == query),
+                    "{query}"
+                );
+                // The answer starts with the command of the query.
+                assert_eq!(query.split(' ').next(), prefix.split(' ').next(), "{query}");
+            }
+        }
+        let video = signal_queries(Brand::Denon, SignalPart::Video).collect::<Vec<_>>();
+        for (index, (query, _)) in SIGNAL_CHECK.iter().enumerate() {
+            assert_eq!(index < SIGNAL_CHECK_VIDEO, video.contains(query), "{query}");
+        }
+    }
+
+    #[test]
+    fn only_a_changed_check_answer_asks_for_the_video_signal() {
+        let now = Instant::now();
+        let mut hint = SignalHint::new(now, Some(Duration::from_secs(30)), Duration::ZERO);
+        // No check was sent.
+        hint.check_line("SSINFSIGRES I4K24", AnswerLine::Answer, true, now);
+        assert_eq!(hint.due, None);
+        // Same values: nothing, and the HDR answer ends the check.
+        hint.checking = Some("SSINFSIGHDR I");
+        hint.check_line("SSINFSIGRES I4K24", AnswerLine::Answer, false, now);
+        assert!(hint.checking.is_some());
+        hint.check_line("SSINFSIGHDR I---", AnswerLine::Answer, false, now);
+        assert_eq!(hint.checking, None);
+        assert_eq!(hint.due, None);
+        // An answer to another client is not the check.
+        hint.checking = Some("SSINFSIGHDR I");
+        hint.check_line("SSINFSIGHDR IDolby Vision", AnswerLine::Other, true, now);
+        assert_eq!(hint.due, None);
+        // A changed resolution asks now, before the HDR answer.
+        let mut res = SignalHint::new(now, Some(Duration::from_secs(30)), Duration::ZERO);
+        res.checking = Some("SSINFSIGHDR I");
+        res.check_line("SSINFSIGRES I4K50", AnswerLine::Answer, true, now);
+        assert_eq!(res.checking, None);
+        assert_eq!(res.due, Some(now));
+        // A changed value asks now.
+        hint.check_line("SSINFSIGHDR IDolby Vision", AnswerLine::Answer, true, now);
+        assert_eq!(hint.checking, None);
+        assert_eq!(hint.due, Some(now));
+        assert_eq!(
+            hint.take_due(),
+            SignalRead {
+                video: true,
+                channels: false
+            }
+        );
+    }
+
+    #[test]
+    fn a_check_without_hdr_ends_with_the_resolution() {
+        let now = Instant::now();
+        let mut hint = SignalHint {
+            checking: Some("SSINFSIGRES I"),
+            ..SignalHint::default()
+        };
+        hint.check_line("SSINFSIGRES I4K24", AnswerLine::Answer, false, now);
+        assert_eq!(hint.checking, None);
+        // A later answer that passes the filter asks nothing.
+        hint.check_line("SSINFSIGRES I4K24", AnswerLine::Answer, true, now);
+        assert_eq!(hint.due, None);
+    }
+
+    #[test]
+    fn a_check_answer_does_not_cancel_the_video_read_of_a_hint() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        hint.checking = Some("SSINFSIGHDR I");
+        hint.line("SSINFSIGRES I4K24", AnswerLine::Answer, now, wait);
+        assert!(hint.read.video);
+        // Without a check, an own answer with the values still cancels it.
+        hint.checking = None;
+        hint.line("SSINFSIGRES I4K24", AnswerLine::Answer, now, wait);
+        assert!(!hint.read.video);
+    }
+
+    #[test]
+    fn a_channel_read_keeps_the_check_going() {
+        let now = Instant::now();
+        let wait = || Duration::from_millis(500);
+        let mut hint = SignalHint::default();
+        hint.line("MSDOLBY ATMOS", AnswerLine::Other, now, wait);
+        // Another client asked for the resolution.
+        hint.line("SSINFSIGRES I4K24", AnswerLine::Other, now, wait);
+        hint.checking = Some("SSINFSIGHDR I");
+        assert_eq!(
+            hint.take_due(),
+            SignalRead {
+                video: false,
+                channels: true
+            }
+        );
+        assert_eq!(hint.checking, Some("SSINFSIGHDR I"));
     }
 
     #[test]
@@ -1632,6 +2096,112 @@ mod tests {
     /// The result of a wait that ended, with these queries not answered.
     fn done(not_answered: &[&'static str]) -> SyncResult {
         SyncResult::Done(not_answered.iter().copied().map(Cow::Borrowed).collect())
+    }
+
+    /// Writes the next query that waits, as the worker does.
+    fn write_next(queue: &mut Queue) {
+        let query = queue.background.pop_front().unwrap();
+        queue.answers.written(query);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn only_the_queries_of_the_caller_are_reported() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add_own(["SYSDA ?"]);
+        queue.add(["MV?"]);
+        write_next(&mut queue);
+        write_next(&mut queue);
+        let mut waiting = waiter(&mut queue);
+        let mut start = start_waiter(&mut queue);
+        queue.check_answers(Instant::now() + quiet, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&["MV?"]));
+        assert_eq!(start.try_recv().unwrap().unwrap(), done(&["MV?"]));
+        assert_eq!(queue.own, [] as [&str; 0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_miss_before_the_start_waits_reports_only_the_queries_of_the_caller() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add(["MV?"]);
+        queue.add_own(["SYSDA ?"]);
+        write_next(&mut queue);
+        write_next(&mut queue);
+        let later = Instant::now() + quiet;
+        queue.check_answers(later, quiet);
+        let mut start = start_waiter(&mut queue);
+        queue.check_answers(later, quiet);
+        assert_eq!(start.try_recv().unwrap().unwrap(), done(&["MV?"]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_own_query_written_twice_is_not_reported() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add_own(["SYSDA ?"]);
+        write_next(&mut queue);
+        queue.add_own(["SYSDA ?"]);
+        write_next(&mut queue);
+        let mut waiting = waiter(&mut queue);
+        queue.check_answers(Instant::now() + quiet, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
+        assert_eq!(queue.own, [] as [&str; 0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_own_query_that_waits_for_its_second_write_stays_own() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add_own(["SYSDA ?"]);
+        write_next(&mut queue);
+        queue.add_own(["SYSDA ?"]);
+        let mut waiting = waiter(&mut queue);
+        let later = Instant::now() + quiet;
+        queue.check_answers(later, quiet);
+        assert_eq!(queue.own, ["SYSDA ?"]);
+        write_next(&mut queue);
+        queue.check_answers(later + quiet, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
+        assert_eq!(queue.own, [] as [&str; 0]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_query_of_the_caller_stays_the_callers() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add(["SYSDA ?"]);
+        write_next(&mut queue);
+        queue.add_own(["SYSDA ?"]);
+        assert_eq!(queue.own, [] as [&str; 0]);
+        queue.add_own(["SYSMI ?"]);
+        // The caller asks it later.
+        queue.add(["SYSMI ?"]);
+        assert_eq!(queue.own, [] as [&str; 0]);
+        write_next(&mut queue);
+        write_next(&mut queue);
+        let mut waiting = waiter(&mut queue);
+        queue.check_answers(Instant::now() + quiet, quiet);
+        let SyncResult::Done(mut missed) = waiting.try_recv().unwrap().unwrap() else {
+            panic!("the wait did not end");
+        };
+        missed.sort();
+        missed.dedup();
+        assert_eq!(missed, ["SYSDA ?", "SYSMI ?"]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_at_its_deadline_gets_no_own_queries() {
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        queue.add_own(["SYSDA ?"]);
+        write_next(&mut queue);
+        queue.add_own(["SYSMI ?"]);
+        queue.add(["MV?"]);
+        let now = Instant::now();
+        let mut waiting = waiter_until(&mut queue, now);
+        queue.end_late_waiters(now);
+        let open = SyncResult::TimedOut(vec![Cow::Borrowed("MV?")]);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), open);
     }
 
     #[tokio::test(start_paused = true)]

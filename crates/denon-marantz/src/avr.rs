@@ -1824,8 +1824,10 @@ impl Avr {
     /// `END` line. A query without an answer for
     /// [`TelnetConfig::answer_quiet`] counts as not answered: some receivers
     /// never answer some queries. Gives the queries that were not answered.
-    /// Queries that are added while this waits are covered too. See also
-    /// [`Started::all_synced`].
+    /// Queries that are added while this waits are covered too. Queries that
+    /// the connection asks by itself, for example after a signal hint or for
+    /// a signal check, are not given; their answers still change the state
+    /// and send events. See also [`Started::all_synced`].
     ///
     /// The receiver sends each answer to every telnet connection, so an
     /// answer to a query of another client also counts. Its value is just as

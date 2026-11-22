@@ -243,19 +243,31 @@ code does not choose. Auto low latency mode and quick frame transport come only
 from the web interface. To read these pages also while telnet is open, for
 example after a page failed at the start, call `refresh_signal_pages`.
 
-Some receivers do not send video signal changes on telnet. When the signal
-changes, they send the sound mode (`MS`) or `SSINFAISSIG`, also with the same
-value, or a new audio sample rate (`SSINFAISFSV`). Telnet asks for the video
-signal after the first such line, after a random wait
-(`TelnetConfig::signal_wait_min` and `signal_wait_max`, 0.3 to 1.2 s). Answers
-to queries of this connection are not hints. A line with a known input
-resolution in the meantime cancels this, for example the answer to another
-client's query: the receiver sends answers to every telnet client. When the
-answer has no input resolution yet (`---`), telnet asks once more after 1 s. The
-receiver sends the sample rate only every few seconds, so a change found this
-way comes later. A source that changes the video signal without any of these
-lines is not found. To catch such changes, call `refresh_signal` at a fixed
-interval.
+Some receivers do not send all signal changes on telnet. Two things fill the
+gaps:
+
+1. Hints. When the signal changes, some receivers send the sound mode (`MS`)
+   or `SSINFAISSIG`, also with the same value, or a new audio sample rate
+   (`SSINFAISFSV`). Telnet asks for the video signal and the channels after
+   the first such line, after a random wait (`TelnetConfig::signal_wait_min`
+   and `signal_wait_max`, 0.3 to 1.2 s). Answers to queries of this
+   connection are not hints. A line with a known input resolution in the
+   meantime cancels the video queries, for example the answer to another
+   client's query: the receiver sends answers to every telnet client. The
+   channels are still asked. When the answer has no input resolution yet
+   (`---`), telnet asks for the video signal once more after 1 s.
+2. Checks. Some changes come without any line, for example a PCM start
+   without a sample rate, or SDR to Dolby Vision with the same audio. So on
+   receivers with `CommApiVers` 0301 or higher, while the main zone is on,
+   telnet asks for the input resolution, HDR, audio signal, sample rate,
+   sound and channels every `TelnetConfig::signal_check` (5 s, `None` turns
+   it off). There is no such check without telnet. It leaves out a
+   query when its line came since the last check and this connection did not
+   ask for it, for example because another client or the web interface asked.
+   If the resolution or HDR changed, it asks for the whole video signal. If
+   another client asked only for the resolution, the other video values can
+   stay old. A query that was not answered three times in a row is left out
+   until a line for it comes.
 
 The signal fields keep the values as the receiver sends them. Two methods of
 `SignalState` add what the receiver leaves out. `effective_pixel_depth()` gives

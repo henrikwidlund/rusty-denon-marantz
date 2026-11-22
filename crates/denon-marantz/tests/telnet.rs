@@ -47,6 +47,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         answer_quiet: Duration::from_millis(200),
         signal_wait_min: Duration::from_millis(300),
         signal_wait_max: Duration::from_millis(1200),
+        // Tests that need it turn it on.
+        signal_check: None,
         query_groups: QueryGroup::DEFAULT_ORDER,
     }
 }
@@ -2816,18 +2818,35 @@ fn count_sent(telnet: &FakeTelnet, query: &str) -> usize {
 }
 
 #[tokio::test]
-async fn a_signal_hint_asks_for_the_video_signal_once() {
+async fn a_signal_hint_asks_for_the_video_signal_and_the_channels_once() {
     let telnet = FakeTelnet::start().await;
     let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
     // The burst of a signal change, with values that did not change.
     telnet.send(b"MSDOLBY ATMOS\rPSLFE 00\rSSINFAISSIG 25\rSYSDA Dolby Atmos\r");
     telnet.send(b"MSDOLBY ATMOS\rSSINFAISSIG 25\r");
-    wait_until("the video queries", || {
-        count_sent(&telnet, "SSINFSIGRES ?") == 1 && count_sent(&telnet, "SSINFSIGHDR ?") == 1
+    wait_until("the video and channel queries", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 1
+            && count_sent(&telnet, "SSINFSIGHDR ?") == 1
+            && count_sent(&telnet, "OPINFINS ?") == 1
+            && count_sent(&telnet, "OPINFASP ?") == 1
     })
     .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 1);
+    assert_eq!(count_sent(&telnet, "OPINFINS ?"), 1);
+}
+
+#[tokio::test]
+async fn an_unanswered_hint_read_is_not_reported() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_with_signal_wait(&telnet, Duration::from_millis(100)).await;
+    // The answer to the power query of the connect.
+    wait_until("the power query", || count_sent(&telnet, "ZM?") == 1).await;
+    telnet.send(b"ZMON\rMSDOLBY ATMOS\r");
+    wait_until("the hint read", || count_sent(&telnet, "OPINFASP ?") == 1).await;
+    // The read gets no answers. The caller did not ask for it.
+    let missed = avr.telnet_sync().await.unwrap();
+    assert!(missed.is_empty(), "{missed:?}");
 }
 
 #[tokio::test]
@@ -2863,23 +2882,244 @@ async fn a_signal_read_without_values_asks_once_more() {
     telnet.send(b"SSINFSIGRES I--- \rSSINFSIGRES O--- \r");
     tokio::time::sleep(Duration::from_millis(1500)).await;
     assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 2);
+    // The second read asks only the video signal.
+    assert_eq!(count_sent(&telnet, "OPINFINS ?"), 1);
 }
 
 #[tokio::test]
-async fn a_video_signal_line_cancels_the_signal_hint() {
+async fn a_video_signal_line_cancels_only_the_video_part_of_the_hint() {
     let telnet = FakeTelnet::start().await;
     let _avr = connected_with_signal_wait(&telnet, Duration::from_millis(300)).await;
     telnet.send(b"MSSTEREO\r");
     tokio::time::sleep(Duration::from_millis(50)).await;
     // Another client asked.
     telnet.send(b"SSINFSIGRES I4K24\r");
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    wait_until("the channel queries", || {
+        count_sent(&telnet, "OPINFINS ?") == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         count_sent(&telnet, "SSINFSIGRES ?"),
         0,
         "{:?}",
         sent(&telnet)
     );
+}
+
+/// An `Avr` with telnet that asks nothing after the connect and checks the
+/// signal every second.
+async fn connected_with_signal_check(telnet: &FakeTelnet) -> Avr {
+    connected_with_signal_check_info(telnet, AVR_X_INFO).await
+}
+
+/// Like [`connected_with_signal_check`], with this device information.
+async fn connected_with_signal_check_info(telnet: &FakeTelnet, info: &'static [u8]) -> Avr {
+    let http = avr_x_receiver_with_info(info).await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        signal_check: Some(Duration::from_secs(1)),
+        signal_wait_min: Duration::from_millis(100),
+        signal_wait_max: Duration::from_millis(100),
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    avr
+}
+
+/// Answers to the audio and channel queries of a signal check.
+const AUDIO_CHECK_ANSWERS: &[u8] =
+    b"SSINFAISFSV 441\rSYSDA PCM\rSYSMI Stereo\rOPINFINS 22111111111111000000\rOPINFASP 22121111011000000000000001100000\r";
+
+#[tokio::test]
+async fn a_silent_receiver_gets_a_signal_check() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_check(&telnet).await;
+    // Sent by itself: the first check leaves these queries out.
+    telnet.send(b"ZMON\rSSINFSIGRES I4K50\rSSINFSIGHDR I---\r");
+    // The last query of the check.
+    wait_until("the first check", || count_sent(&telnet, "OPINFASP ?") == 1).await;
+    assert_eq!(count_sent(&telnet, "SSINFSIGRES ?"), 0);
+    telnet.send(AUDIO_CHECK_ANSWERS);
+    wait_until("the second check", || {
+        [
+            "SSINFSIGRES ?",
+            "SSINFSIGHDR ?",
+            "SSINFAISFSV ?",
+            "SYSDA ?",
+            "SYSMI ?",
+            "OPINFINS ?",
+            "OPINFASP ?",
+        ]
+        .iter()
+        .all(|query| count_sent(&telnet, query) == usize::from(!query.starts_with("SSINFSIG")) + 1)
+    })
+    .await;
+    // The same values ask nothing more.
+    telnet.send(b"SSINFSIGRES I4K50\rSSINFSIGRES O4K50\rSSINFSIGHDR I---\rSSINFSIGHDR O---\r");
+    telnet.send(AUDIO_CHECK_ANSWERS);
+    wait_until("the third check", || {
+        count_sent(&telnet, "SSINFSIGRES ?") == 2
+    })
+    .await;
+    assert_eq!(count_sent(&telnet, "SSINFSIGPIX ?"), 0);
+    // A changed value asks for the whole video signal.
+    telnet.send(
+        b"SSINFSIGRES I4K24\rSSINFSIGRES O4K24\rSSINFSIGHDR IDolby Vision\rSSINFSIGHDR ODolby Vision\r",
+    );
+    wait_until("the video queries", || {
+        count_sent(&telnet, "SSINFSIGPIX ?") == 1
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_line_from_another_client_skips_its_check() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_check(&telnet).await;
+    telnet.send(b"ZMON\r");
+    // The last query of the check.
+    wait_until("the first check", || count_sent(&telnet, "OPINFASP ?") == 1).await;
+    telnet.send(b"SSINFSIGRES I4K50\rSSINFSIGRES O4K50\rSSINFSIGHDR I---\rSSINFSIGHDR O---\r");
+    telnet.send(AUDIO_CHECK_ANSWERS);
+    // After the answers are done, the lines answer another client.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    telnet.send(b"SYSDA PCM\rOPINFINS 22111111111111000000\r");
+    wait_until("the second check", || count_sent(&telnet, "SYSMI ?") == 2).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(count_sent(&telnet, "SYSDA ?"), 1, "{:?}", sent(&telnet));
+    assert_eq!(count_sent(&telnet, "OPINFINS ?"), 1);
+}
+
+#[tokio::test]
+async fn a_check_query_without_answers_is_left_out_after_three_misses() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_with_signal_check(&telnet).await;
+    telnet.send(b"ZMON\r");
+    // All answers but SYSMI.
+    let answers: &[u8] = b"SSINFSIGRES I4K50\rSSINFSIGRES O4K50\rSSINFSIGHDR I---\rSSINFSIGHDR O---\r\
+        SSINFAISFSV 441\rSYSDA PCM\rOPINFINS 22111111111111000000\rOPINFASP 22121111011000000000000001100000\r";
+    for check in 1..=4 {
+        wait_until("a check", || count_sent(&telnet, "OPINFASP ?") == check).await;
+        telnet.send(answers);
+    }
+    assert_eq!(count_sent(&telnet, "SYSMI ?"), 3, "{:?}", sent(&telnet));
+    // An answer brings it back.
+    avr.telnet_ask(&[Ask::Raw("SYSMI ?")]).await.unwrap();
+    wait_until("the own query", || count_sent(&telnet, "SYSMI ?") == 4).await;
+    telnet.send(b"SYSMI Stereo\r");
+    wait_until("the next check", || count_sent(&telnet, "OPINFASP ?") == 5).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(count_sent(&telnet, "SYSMI ?"), 5, "{:?}", sent(&telnet));
+    // Three misses again, then a line that the receiver sends by itself
+    // brings it back too.
+    for check in 5..=7 {
+        wait_until("a check", || count_sent(&telnet, "OPINFASP ?") == check).await;
+        telnet.send(answers);
+    }
+    wait_until("a check", || count_sent(&telnet, "OPINFASP ?") == 8).await;
+    telnet.send(answers);
+    assert_eq!(count_sent(&telnet, "SYSMI ?"), 7, "{:?}", sent(&telnet));
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    telnet.send(b"SYSMI Stereo\r");
+    // The next check leaves it out, because the line came since the last one.
+    wait_until("the next check", || count_sent(&telnet, "OPINFASP ?") == 9).await;
+    telnet.send(answers);
+    assert_eq!(count_sent(&telnet, "SYSMI ?"), 7, "{:?}", sent(&telnet));
+    wait_until("the check after", || {
+        count_sent(&telnet, "OPINFASP ?") == 10
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(count_sent(&telnet, "SYSMI ?"), 8, "{:?}", sent(&telnet));
+}
+
+#[tokio::test]
+async fn a_check_does_not_ask_video_while_a_video_read_waits() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let config = TelnetConfig {
+        query_groups: &[],
+        signal_check: Some(Duration::from_secs(1)),
+        signal_wait_min: Duration::from_millis(900),
+        signal_wait_max: Duration::from_millis(900),
+        // The hint read stays open until after the second check.
+        answer_quiet: Duration::from_millis(600),
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    // Sent by itself: the first check leaves the video queries out.
+    telnet.send(b"ZMON\rSSINFSIGRES I4K50\rSSINFSIGHDR I---\r");
+    wait_until("the first check", || count_sent(&telnet, "OPINFASP ?") == 1).await;
+    telnet.send(AUDIO_CHECK_ANSWERS);
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    // The video read of the hint is due or waits for its answers when the
+    // next check comes, 1 to 1.5 s after the first one.
+    telnet.send(b"MSDOLBY ATMOS\r");
+    wait_until("the second check", || count_sent(&telnet, "SYSDA ?") == 2).await;
+    wait_until("the hint read", || {
+        count_sent(&telnet, "SSINFSIGPIX ?") == 1
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Only the hint read.
+    assert_eq!(
+        count_sent(&telnet, "SSINFSIGRES ?"),
+        1,
+        "{:?}",
+        sent(&telnet)
+    );
+}
+
+#[tokio::test]
+async fn a_receiver_before_the_current_specs_gets_no_signal_check() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_check_info(&telnet, common::OLDER_SETTINGS_INFO).await;
+    telnet.send(b"ZMON\r");
+    // More than one check time with its random wait.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(count_sent(&telnet, "SYSDA ?"), 0, "{:?}", sent(&telnet));
+}
+
+#[tokio::test]
+async fn a_missed_check_query_is_reported_only_if_somebody_else_asked() {
+    let telnet = FakeTelnet::start().await;
+    let avr = connected_with_signal_check(&telnet).await;
+    telnet.send(b"ZMON\r");
+    wait_until("the check", || count_sent(&telnet, "OPINFASP ?") == 1).await;
+    // All answers but SYSMI.
+    telnet.send(
+        b"SSINFSIGRES I4K50\rSSINFSIGRES O4K50\rSSINFSIGHDR I---\rSSINFSIGHDR O---\r\
+        SSINFAISFSV 441\rSYSDA PCM\rOPINFINS 22111111111111000000\rOPINFASP 22121111011000000000000001100000\r",
+    );
+    let missed = avr.telnet_sync().await.unwrap();
+    assert!(missed.is_empty(), "{missed:?}");
+    // The caller asks it: then a miss is reported.
+    avr.telnet_ask(&[Ask::Raw("SYSMI ?")]).await.unwrap();
+    let missed = avr.telnet_sync().await.unwrap();
+    assert_eq!(missed, ["SYSMI ?"]);
+}
+
+#[tokio::test]
+async fn there_is_no_signal_check_while_the_main_zone_is_off() {
+    let telnet = FakeTelnet::start().await;
+    let _avr = connected_with_signal_check(&telnet).await;
+    telnet.send(b"ZMOFF\rSSINFSIGRES I---\r");
+    // More than one check time with its random wait.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    assert_eq!(count_sent(&telnet, "SYSDA ?"), 0, "{:?}", sent(&telnet));
+    telnet.send(b"ZMON\r");
+    wait_until("the check", || count_sent(&telnet, "SYSDA ?") == 1).await;
 }
 
 #[tokio::test]

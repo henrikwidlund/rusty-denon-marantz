@@ -236,7 +236,9 @@ pub struct StartReport {
     /// also the queries that were written without an answer yet and the
     /// queries not written yet. Empty otherwise. Each one is the query text
     /// as sent, without the carriage return, so it can be passed to
-    /// [`Avr::telnet_ask`] as [`Ask::Raw`](crate::Ask::Raw).
+    /// [`Avr::telnet_ask`] as [`Ask::Raw`](crate::Ask::Raw). Queries that the
+    /// connection asks by itself, for example for a signal check, are not in
+    /// it.
     pub telnet_not_answered: Vec<Cow<'static, str>>,
     /// What the start did with the HEOS connection. Neither wait waits for
     /// HEOS.
