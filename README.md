@@ -50,7 +50,7 @@ state again.
   [HEOS crates](#heos) for it.
 - How many quick selects the receiver lists (`Info::quick_select_count`).
 - Whether the receiver answers the HDMI output over HTTP
-  (`Info::hdmi_output_over_http`). Receivers from about 2016 do.
+  (`Info::hdmi_output_over_http()`). Receivers from about 2016 do.
 - Which `AppCommand` queries the receiver lists (`Info::queries`). Receivers
   from about 2015 list them, and the library sends only those.
 - Whether the receiver has a tuner and which bands it has (`Info::tuner`).
@@ -202,6 +202,8 @@ To decide what to show, ask `Info`:
 - `http_reads(query)`: the `Avr` methods that read the value over HTTP, as
   `HttpReads` (`UPDATE`, `REFRESH`, `SIGNAL_AND_SETTINGS`, `SIGNAL_PAGES`).
   A caller that polls checks `intersects` with the methods it calls.
+  `Avr::http_reads(query)` also leaves out what the receiver does not have,
+  for example a page that answered 404. Ask it after the start.
 - `has_quick_select(slot)`: the quick select may exist.
 
 The web interface (port 11080) is read on request, because it does not

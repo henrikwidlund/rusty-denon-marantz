@@ -139,9 +139,9 @@ impl Answered0300 {
 /// The body of the settings request for `part`, with its number of commands.
 /// `None` if there is nothing to ask.
 fn settings_request(info: &Info, part: SettingsPart) -> Option<(Bytes, usize)> {
-    // `Missing::appcommand0300` is not checked: it is also set when no
-    // signal query is listed. A receiver that lists a settings query has the
-    // file.
+    // `Missing::appcommand0300` is not checked: it is also set when none of
+    // `APPCOMMAND0300_COMMANDS` is listed. A receiver that lists a settings
+    // query has the file.
     let listed = info.queries?;
     if info.update_method != UpdateMethod::AppCommand {
         return None;
@@ -332,11 +332,6 @@ pub struct Info {
     /// information lists. `0` if it says that there are none, `None` if it
     /// does not say. A receiver can accept more than it lists.
     pub quick_select_count: Option<u8>,
-    /// True if [`Info::queries`] lists `GetOutputSettings`: the receiver
-    /// answers the HDMI output over HTTP. [`Avr::update_signal_and_settings`],
-    /// the read after `set_hdmi_output` and [`Info::http_reads`] use that
-    /// list, not this field.
-    pub hdmi_output_over_http: bool,
     /// The `AppCommand` queries that `Deviceinfo.xml` lists. `None` if it has
     /// no list, as on receivers older than about 2015: then the library asks
     /// as if all but the HDMI output were there, but does not read the
@@ -488,6 +483,15 @@ impl Info {
         slot >= 1 && slot <= MAX_QUICK_SELECT && listed
     }
 
+    /// Returns true if [`Info::queries`] lists `GetOutputSettings`: the
+    /// receiver answers the HDMI output over HTTP, so
+    /// [`Avr::update_signal_and_settings`] and the read after
+    /// `set_hdmi_output` over HTTP read it.
+    #[must_use]
+    pub fn hdmi_output_over_http(&self) -> bool {
+        asks_appcommand0300(self.queries.as_ref(), &appcommand::GET_OUTPUT_SETTINGS)
+    }
+
     /// Returns true if an HTTP read gives the value, so that it is known
     /// without telnet. Same as `!self.http_reads(query).is_empty()`, see
     /// [`Info::http_reads`].
@@ -498,9 +502,9 @@ impl Info {
 
     /// The methods of [`Avr`] that read the value over HTTP. Empty if no HTTP
     /// read gives it, so that only telnet can tell it. Only zones in
-    /// [`Info::zones`] are read. The set tells what the receiver can give. It
-    /// does not change when the receiver refuses a request; the value then
-    /// stays unknown.
+    /// [`Info::zones`] are read. The set tells what the receiver can give
+    /// from its device information. [`Avr::http_reads`] also leaves out what
+    /// the receiver showed it does not have while connected.
     ///
     /// [`HttpReads::REFRESH`] is [`Avr::refresh`] without telnet: it does what
     /// [`Avr::update`] does and reads the settings of `AppCommand0300.xml`.
@@ -520,8 +524,9 @@ impl Info {
     ///   channels page of the web interface.
     ///
     /// [`Avr::refresh_signal_pages`] ([`HttpReads::SIGNAL_PAGES`]) reads
-    /// `AppCommand0300.xml` first, then always the video page, and the
-    /// channels page when `AppCommand0300.xml` does not give the channels.
+    /// `AppCommand0300.xml` first, then the video page, and the channels page
+    /// when `AppCommand0300.xml` does not give the channels. A page that
+    /// answered 404 is not asked again.
     /// The start reads the two pages only if
     /// [`StartOptions::signal_pages`](crate::StartOptions::signal_pages) is
     /// on. A value stays unknown if the receiver has no such page: the start
@@ -533,13 +538,18 @@ impl Info {
     /// [`Info::friendly_name`].
     #[must_use]
     pub fn http_reads(&self, query: Query) -> HttpReads {
+        self.http_reads_without(query, MissingSources::default())
+    }
+
+    /// [`Info::http_reads`] without the sources in `missing`.
+    fn http_reads_without(&self, query: Query, missing: MissingSources) -> HttpReads {
         use Query as Q;
         if !self.offers(query) || !self.zones.contains(&query.zone()) {
             return HttpReads::EMPTY;
         }
         // The settings rows use the other query of the same value.
         if query == Q::AutoLipSyncAls {
-            return self.http_reads(Q::AutoLipSync);
+            return self.http_reads_without(Q::AutoLipSync, missing);
         }
         let appcommand = self.update_method == UpdateMethod::AppCommand;
         let queries = self.queries.as_ref();
@@ -563,16 +573,20 @@ impl Info {
             | Q::Zone2AutoStandby
             | Q::Zone3AutoStandby => appcommand,
             Q::ToneControl | Q::Bass | Q::Treble => {
-                appcommand && queries.is_none_or(|queries| queries.tone_control)
+                appcommand
+                    && !missing.tone_control
+                    && queries.is_none_or(|queries| queries.tone_control)
             }
             _ => false,
         };
-        let appcommand0300 = appcommand0300_definition(query).is_some_and(asks);
+        let appcommand0300 =
+            !missing.appcommand0300 && appcommand0300_definition(query).is_some_and(asks);
         // The pages are read with any update method.
-        let page = matches!(
-            part,
-            Some(SignalPart::Video | SignalPart::Channels | SignalPart::Colorimetry)
-        );
+        let page = match part {
+            Some(SignalPart::Video | SignalPart::Colorimetry) => !missing.video_page,
+            Some(SignalPart::Channels) => !missing.channels_page,
+            _ => false,
+        };
         let settings = appcommand
             && queries.is_some_and(|queries| {
                 settings_request_asks(query, queries, self.read_zone_count(), self.features)
@@ -592,6 +606,19 @@ impl Info {
         }
         reads
     }
+}
+
+/// Sources of values that the receiver does not have, see
+/// [`Avr::http_reads`]. The settings request also goes to
+/// `AppCommand0300.xml`, but it is kept: [`Missing::appcommand0300`] is
+/// also set when none of [`APPCOMMAND0300_COMMANDS`] is listed.
+#[derive(Debug, Clone, Copy, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "one flag for each source")]
+struct MissingSources {
+    appcommand0300: bool,
+    tone_control: bool,
+    video_page: bool,
+    channels_page: bool,
 }
 
 /// A set of [`Avr`] methods that read values over HTTP, see
@@ -769,13 +796,18 @@ pub struct Avr {
 /// Reads that the receiver does not answer, so they are not asked again.
 #[derive(Debug)]
 struct Missing {
-    /// `AppCommand0300.xml` answered 404.
+    /// `AppCommand0300.xml` answered 404, or none of
+    /// [`APPCOMMAND0300_COMMANDS`] is listed.
     appcommand0300: AtomicBool,
     /// A request with tone control failed, and the receiver may not have it.
     tone_control: AtomicBool,
     /// The receiver is older than the 2016 models, which all have tone
     /// control, and `Deviceinfo.xml` does not say if it has it.
     tone_control_optional: bool,
+    /// The video signal page of the web interface answered 404.
+    video_page: AtomicBool,
+    /// The channels page of the web interface answered 404.
+    channels_page: AtomicBool,
 }
 
 impl Missing {
@@ -791,6 +823,18 @@ impl Missing {
             appcommand0300: AtomicBool::new(no_appcommand0300),
             tone_control: AtomicBool::new(queries.is_some_and(|queries| !queries.tone_control)),
             tone_control_optional: queries.is_none() && receiver_type == ReceiverType::AvrX,
+            video_page: AtomicBool::new(false),
+            channels_page: AtomicBool::new(false),
+        }
+    }
+
+    /// The sources that are missing now.
+    fn sources(&self) -> MissingSources {
+        MissingSources {
+            appcommand0300: self.appcommand0300.load(Ordering::Relaxed),
+            tone_control: self.tone_control.load(Ordering::Relaxed),
+            video_page: self.video_page.load(Ordering::Relaxed),
+            channels_page: self.channels_page.load(Ordering::Relaxed),
         }
     }
 
@@ -830,6 +874,17 @@ impl Avr {
     #[must_use]
     pub const fn info(&self) -> &Info {
         &self.info
+    }
+
+    /// Like [`Info::http_reads`], without the sources that the receiver
+    /// does not have: `AppCommand0300.xml` or one of the two signal pages
+    /// after it answered 404, and tone control after a read dropped it.
+    /// Before a read tried a source, it counts as there. The start tries
+    /// most of them, so call this again after it, for example after
+    /// [`Started::basic_synced`](crate::Started::basic_synced).
+    #[must_use]
+    pub fn http_reads(&self, query: Query) -> HttpReads {
+        self.info.http_reads_without(query, self.missing.sources())
     }
 
     /// Reads the device information and the update method again, and
@@ -1886,7 +1941,7 @@ impl Avr {
     /// Reads the video and audio signal, the channels, the Audyssey settings
     /// and the HDMI output from the receiver with one request to
     /// `AppCommand0300.xml`. The HDMI output is read only if
-    /// [`Info::queries`] lists `GetOutputSettings`.
+    /// [`Info::hdmi_output_over_http`] is true.
     ///
     /// This is faster than the pages of the web interface and the telnet
     /// queries for the same values. It gives the
@@ -2647,10 +2702,6 @@ fn info_from(
         dirac_live: device_info.dirac_live,
         tuner: device_info.tuner,
         quick_select_count: device_info.quick_select_count,
-        hdmi_output_over_http: asks_appcommand0300(
-            device_info.queries.as_ref(),
-            &appcommand::GET_OUTPUT_SETTINGS,
-        ),
         queries: device_info.queries,
         zones: listed_zones(device_info.device_zones),
         zone_count: device_info.device_zones,
@@ -2800,7 +2851,6 @@ pub(crate) fn test_info(version: &str, brand: Brand, zones: Option<u8>) -> Info 
         dirac_live: false,
         tuner: TunerInfo::Unknown,
         quick_select_count: None,
-        hdmi_output_over_http: false,
         queries: None,
         zones: listed_zones(zones),
         zone_count: zones,
@@ -3078,18 +3128,13 @@ mod tests {
             |listed| listed.active_speaker = true,
             |listed| listed.output_settings = true,
         ];
-        let mut infos = Vec::new();
-        for flag in [false, true] {
-            let mut info = test_info("0301", Brand::Denon, Some(3));
-            // The field is ignored, also when it differs from the list.
-            info.hdmi_output_over_http = flag;
+        let mut info = test_info("0301", Brand::Denon, Some(3));
+        let mut infos = vec![info.clone()];
+        for set in lists {
+            let mut listed = ListedQueries::default();
+            set(&mut listed);
+            info.queries = Some(listed);
             infos.push(info.clone());
-            for set in lists {
-                let mut listed = ListedQueries::default();
-                set(&mut listed);
-                info.queries = Some(listed);
-                infos.push(info.clone());
-            }
         }
         for info in &mut infos {
             for update_method in [UpdateMethod::AppCommand, UpdateMethod::StatusPages] {
@@ -3116,6 +3161,72 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn http_reads_leave_out_missing_sources() {
+        const UPDATE: HttpReads = HttpReads::UPDATE.union(HttpReads::REFRESH);
+        const BOTH: HttpReads = HttpReads::SIGNAL_AND_SETTINGS.union(HttpReads::SIGNAL_PAGES);
+        const PAGES: HttpReads = HttpReads::SIGNAL_PAGES;
+        const NONE: HttpReads = HttpReads::EMPTY;
+        let mut info = test_info("0301", Brand::Denon, Some(2));
+        let mut listed = ListedQueries::default();
+        listed.tone_control = true;
+        listed.audyssey = true;
+        listed.input_signal = true;
+        listed.surround_parameter = true;
+        info.queries = Some(listed);
+        let without = |missing| {
+            [
+                Query::Bass,
+                Query::MultEq,
+                Query::InputChannels,
+                Query::HdrFormat,
+                Query::ExtendedColorimetry,
+                Query::CinemaEq,
+            ]
+            .map(|query| info.http_reads_without(query, missing))
+        };
+        let refresh = HttpReads::REFRESH;
+        for (missing, expected) in [
+            (
+                MissingSources::default(),
+                [UPDATE, BOTH, BOTH, PAGES, PAGES, refresh],
+            ),
+            (
+                MissingSources {
+                    tone_control: true,
+                    ..MissingSources::default()
+                },
+                [NONE, BOTH, BOTH, PAGES, PAGES, refresh],
+            ),
+            // The settings request is kept, see `MissingSources`.
+            (
+                MissingSources {
+                    appcommand0300: true,
+                    ..MissingSources::default()
+                },
+                [UPDATE, NONE, PAGES, PAGES, PAGES, refresh],
+            ),
+            (
+                MissingSources {
+                    video_page: true,
+                    channels_page: true,
+                    ..MissingSources::default()
+                },
+                [UPDATE, BOTH, BOTH, NONE, NONE, refresh],
+            ),
+            (
+                MissingSources {
+                    appcommand0300: true,
+                    channels_page: true,
+                    ..MissingSources::default()
+                },
+                [UPDATE, NONE, NONE, PAGES, PAGES, refresh],
+            ),
+        ] {
+            assert_eq!(without(missing), expected, "{missing:?}");
         }
     }
 

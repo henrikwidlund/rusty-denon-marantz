@@ -582,17 +582,25 @@ impl Avr {
         }
         // The video page first: it gives HDR, the color space and the pixel
         // depth, which clients need soon.
-        let video = if options.signal_pages {
-            Some(self.read_video_page().await)
+        // A video page that answered 404 before is not asked, so it does not
+        // show if the web interface answers now: the first page after it
+        // decides.
+        let (video, video_sent) = if options.signal_pages {
+            let (result, sent) = self.read_video_page_if_there().await;
+            (Some(result), sent)
         } else {
-            None
+            (None, false)
         };
         // Then the audio signal and the channels, and the rest after them.
         let signal = self
             .update_signal_and_settings_in_parts()
             .await
             .unwrap_or(PageStatus::NoAnswer);
-        let after_video = VideoPage::of(video.as_ref());
+        let after_video = if video_sent {
+            VideoPage::of(video.as_ref())
+        } else {
+            VideoPage::NotAsked
+        };
         let web_interface = match video {
             Some(Err(error)) if after_video == VideoPage::Refused => Err(error),
             video => {
@@ -670,15 +678,27 @@ impl Avr {
         self.info.update_method == UpdateMethod::AppCommand
     }
 
+    /// Reads the video signal page. After a 404 it is not asked again.
     async fn read_video_page(&self) -> Result<PageStatus, Error> {
+        self.read_video_page_if_there().await.0
+    }
+
+    /// [`Avr::read_video_page`]. Also gives true if the request was sent.
+    async fn read_video_page_if_there(&self) -> (Result<PageStatus, Error>, bool) {
+        if self.missing.video_page.load(Ordering::Relaxed) {
+            return (Ok(PageStatus::NotFound), false);
+        }
         let result = self
             .read_web_interface(VIDEO_SIGNAL_PATH, VideoSignalPage::parse, |state, page| {
                 state.apply_video_signal_page(&page)
             })
             .await;
+        if matches!(result, Ok(PageStatus::NotFound)) {
+            self.missing.video_page.store(true, Ordering::Relaxed);
+        }
         self.forget_telnet_values(&result);
         self.ask_colorimetry_if_unknown().await;
-        result
+        (result, true)
     }
 
     /// Asks telnet for the colorimetry if a change made BT.2020 not known, see
@@ -702,7 +722,11 @@ impl Avr {
         }
     }
 
+    /// Reads the channels page. After a 404 it is not asked again.
     async fn read_channels_page(&self) -> Result<PageStatus, Error> {
+        if self.missing.channels_page.load(Ordering::Relaxed) {
+            return Ok(PageStatus::NotFound);
+        }
         let result = self
             .read_web_interface(
                 AUDIO_CHANNELS_PATH,
@@ -710,6 +734,9 @@ impl Avr {
                 |state, page| state.apply_audio_channels_page(&page),
             )
             .await;
+        if matches!(result, Ok(PageStatus::NotFound)) {
+            self.missing.channels_page.store(true, Ordering::Relaxed);
+        }
         self.forget_telnet_values(&result);
         result
     }
@@ -743,13 +770,14 @@ impl Avr {
     /// [`TelnetConfig::signal_wait_min`](crate::TelnetConfig::signal_wait_min).
     /// Call this to see the signal now, or on a timer if the receiver sends
     /// neither changes nor hints. To read the pages also while telnet is
-    /// open, call [`Avr::refresh_signal_pages`].
+    /// open, call [`Avr::refresh_signal_pages`]. A page that answered 404 is
+    /// not asked again.
     ///
     /// # Errors
     ///
     /// Returns an error if nothing could be asked or read: telnet is not open
-    /// and the web interface does not answer, or answers with no page that
-    /// can be read ([`Error::NothingRead`]).
+    /// and a request did not reach the receiver, or all answered with nothing
+    /// that can be read ([`Error::NothingRead`]).
     pub async fn refresh_signal(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if self.telnet_connected() {
@@ -771,14 +799,16 @@ impl Avr {
     /// While telnet is open, it asks telnet only for BT.2020 when the page
     /// changed the signal and the receiver reports BT.2020 on telnet.
     ///
-    /// Use it to read pages that failed before, for example at the start.
+    /// Use it to read pages that failed before, for example at the start. A
+    /// page that answered 404 is not asked again.
     /// Auto low latency mode and quick frame transport come only from the
     /// video signal page. For the signal now, call [`Avr::refresh_signal`].
     ///
     /// # Errors
     ///
-    /// Returns an error if the web interface does not answer, or answers with
-    /// no page that can be read ([`Error::NothingRead`]).
+    /// Returns an error if nothing was read: the error of a request that did
+    /// not reach the receiver, or [`Error::NothingRead`] if all answered with
+    /// nothing that can be read.
     pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
         // When the answer of `AppCommand0300.xml` has the channels, the
         // channels page is not read: the answer is more complete than the
@@ -796,9 +826,12 @@ impl Avr {
         if answered || is_read(&video) || is_read(&channels) {
             return Ok(());
         }
-        // Nothing was read: say why.
+        // Nothing was read: say why. The pages can answer while
+        // `AppCommand0300.xml` does not, and a page that answered 404 before
+        // is not asked, so its error comes last.
         video?;
         channels?;
+        appcommand0300?;
         Err(Error::NothingRead)
     }
 
@@ -865,8 +898,9 @@ impl Avr {
 /// What the start does after the video page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum VideoPage {
-    /// The signal pages are not asked. The first page that is read decides
-    /// if the web interface is there.
+    /// The video page is not asked: the signal pages are off, or it answered
+    /// 404 before. The first page that is read decides if the web interface
+    /// is there.
     NotAsked,
     /// The web interface answered, so the other pages are all read.
     Answered,

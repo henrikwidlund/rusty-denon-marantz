@@ -1152,7 +1152,7 @@ async fn a_receiver_without_the_output_settings_is_not_asked_for_them() {
     let answer: &'static str = Box::leak(appcommand0300_answer("").into_boxed_str());
     let fake = receiver_with_audyssey(Some(answer), true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert!(!avr.info().hdmi_output_over_http);
+    assert!(!avr.info().hdmi_output_over_http());
     assert_eq!(avr.info().queries, None);
     assert_eq!(
         avr.update_signal_and_settings().await.unwrap(),
@@ -1175,7 +1175,7 @@ async fn update_of_a_receiver_with_the_output_settings_reads_the_hdmi_output() {
     })
     .await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
-    assert!(avr.info().hdmi_output_over_http);
+    assert!(avr.info().hdmi_output_over_http());
     assert!(
         avr.info()
             .queries
@@ -1528,4 +1528,9 @@ async fn info_survives_serde() {
     let text = serde_json::to_string(&info).unwrap();
     let back: denon_marantz::Info = serde_json::from_str(&text).unwrap();
     assert_eq!(back, info);
+    // A stored value from a version with the field `hdmi_output_over_http`.
+    let old = text.replacen('{', "{\"hdmi_output_over_http\":false,", 1);
+    let back: denon_marantz::Info = serde_json::from_str(&old).unwrap();
+    assert_eq!(back, info);
+    assert!(back.hdmi_output_over_http());
 }

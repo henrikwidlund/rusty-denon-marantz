@@ -22,8 +22,8 @@ use common::{
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
-    Ask, Avr, Error, InfoCheck, PageStatus, QueryGroup, ReceiverType, SkipReason, StartOptions,
-    TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
+    Ask, Avr, Error, HttpReads, InfoCheck, PageStatus, Query, QueryGroup, ReceiverType, SkipReason,
+    StartOptions, TelnetConfig, TelnetStart, TelnetSync, UpdateMethod, Zone,
 };
 use denon_marantz_proto::telnet::{SignalPart, answer_prefix, group_queries, signal_queries};
 use denon_marantz_proto::{AUDIO_CHANNELS_PATH, Brand, VIDEO_SIGNAL_PATH};
@@ -1369,6 +1369,74 @@ async fn refresh_signal_pages_reads_the_channels_page_only_without_channels_from
     );
 }
 
+/// An `Avr` for a receiver with this device information and the full
+/// `AppCommand0300.xml` answer, with a web interface that answers 404 for all
+/// pages.
+async fn avr_without_signal_pages(info: &'static [u8]) -> (Fake, Avr) {
+    let web = Fake::start(|_| Reply::Status(404)).await;
+    let answer = common::appcommand0300_answer("");
+    // `Avr::update` is not called, so tone control does not matter.
+    let receiver = common::receiver_with_info_and_signal_answers(info, false, move |_| {
+        Reply::Body(answer.clone().into_bytes())
+    })
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX2016)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    (web, avr)
+}
+
+#[tokio::test]
+async fn a_video_page_that_answers_404_is_not_asked_again_and_leaves_http_reads() {
+    let (web, avr) = avr_without_signal_pages(AVR_X_OUTPUT_SETTINGS_INFO).await;
+    let both = HttpReads::SIGNAL_AND_SETTINGS | HttpReads::SIGNAL_PAGES;
+    assert_eq!(avr.http_reads(Query::HdrFormat), HttpReads::SIGNAL_PAGES);
+    avr.refresh_signal_pages().await.unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    let asked = |path: &str| {
+        web.requests()
+            .iter()
+            .filter(|seen| seen.path == path)
+            .count()
+    };
+    assert_eq!(asked(VIDEO_SIGNAL_PATH), 1);
+    // `AppCommand0300.xml` gave the channels, so their page is not asked.
+    assert_eq!(asked(AUDIO_CHANNELS_PATH), 0);
+    assert_eq!(avr.http_reads(Query::HdrFormat), HttpReads::EMPTY);
+    assert_eq!(
+        avr.info().http_reads(Query::HdrFormat),
+        HttpReads::SIGNAL_PAGES
+    );
+    // The values of `AppCommand0300.xml` stay.
+    assert_eq!(avr.http_reads(Query::VideoResolution), both);
+    assert_eq!(avr.http_reads(Query::InputChannels), both);
+}
+
+#[tokio::test]
+async fn a_channels_page_that_answers_404_is_not_asked_again_and_leaves_http_reads() {
+    let (web, avr) = avr_without_signal_pages(common::AUDIO_INFO_ONLY_INFO).await;
+    assert_eq!(
+        avr.http_reads(Query::InputChannels),
+        HttpReads::SIGNAL_PAGES
+    );
+    avr.refresh_signal_pages().await.unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    let channels = web
+        .requests()
+        .iter()
+        .filter(|seen| seen.path == AUDIO_CHANNELS_PATH)
+        .count();
+    assert_eq!(channels, 1);
+    assert_eq!(avr.http_reads(Query::InputChannels), HttpReads::EMPTY);
+    assert_eq!(
+        avr.http_reads(Query::SamplingRate),
+        HttpReads::SIGNAL_AND_SETTINGS | HttpReads::SIGNAL_PAGES
+    );
+}
+
 #[tokio::test]
 async fn refresh_signal_pages_asks_telnet_for_bt2020_after_a_change() {
     let (_web, telnet, avr) = quiet_telnet().await;
@@ -1710,6 +1778,103 @@ async fn a_web_interface_that_hangs_is_asked_for_two_pages_only() {
     // Neither the video page nor the first page after it answered.
     assert!(report.web_interface.as_ref().unwrap_err().is_unreachable());
     assert_eq!(web.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_second_start_after_a_video_page_404_stops_at_a_web_interface_that_hangs() {
+    let hang = Arc::new(AtomicBool::new(false));
+    let web = {
+        let hang = hang.clone();
+        Fake::start(move |_| {
+            if hang.load(Ordering::SeqCst) {
+                Reply::Hang
+            } else {
+                Reply::Status(404)
+            }
+        })
+        .await
+    };
+    let telnet = FakeTelnet::start().await;
+    let avr = started(&web, &telnet).await;
+    {
+        let mut started = avr.start().await.unwrap();
+        let report = started.basic_synced().await;
+        let pages = report.web_interface.as_ref().unwrap();
+        assert_eq!(pages.video_signal, PageStatus::NotFound);
+    }
+    hang.store(true, Ordering::SeqCst);
+    let before = web.requests().len();
+    let mut started = avr.start().await.unwrap();
+    let report = started.basic_synced().await;
+    // The video page is not asked again, so the first page after it decides.
+    assert!(report.web_interface.as_ref().unwrap_err().is_unreachable());
+    assert_eq!(web.requests().len() - before, 1);
+}
+
+#[tokio::test]
+async fn refresh_signal_pages_tells_an_unreachable_receiver_after_a_video_page_404() {
+    let web = Fake::start(|_| Reply::Status(404)).await;
+    let hang = Arc::new(AtomicBool::new(false));
+    let answer = common::appcommand0300_answer("");
+    let receiver = {
+        let hang = hang.clone();
+        // `Avr::update` is not called, so tone control does not matter.
+        common::receiver_with_info_and_signal_answers(
+            AVR_X_OUTPUT_SETTINGS_INFO,
+            false,
+            move |_| {
+                if hang.load(Ordering::SeqCst) {
+                    Reply::Hang
+                } else {
+                    Reply::Body(answer.clone().into_bytes())
+                }
+            },
+        )
+        .await
+    };
+    let avr = builder(&receiver, ReceiverType::AvrX2016)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    hang.store(true, Ordering::SeqCst);
+    let error = avr.refresh_signal_pages().await.unwrap_err();
+    assert!(error.is_unreachable(), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_video_page_that_fails_with_500_is_asked_again() {
+    let web = Fake::start(|seen| match seen.path.as_str() {
+        VIDEO_SIGNAL_PATH => Reply::Status(500),
+        _ => Reply::Status(404),
+    })
+    .await;
+    let answer = common::appcommand0300_answer("");
+    // `Avr::update` is not called, so tone control does not matter.
+    let receiver = common::receiver_with_info_and_signal_answers(
+        AVR_X_OUTPUT_SETTINGS_INFO,
+        false,
+        move |_| Reply::Body(answer.clone().into_bytes()),
+    )
+    .await;
+    let avr = builder(&receiver, ReceiverType::AvrX2016)
+        .web_interface_port(web.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    avr.refresh_signal_pages().await.unwrap();
+    let video = web
+        .requests()
+        .iter()
+        .filter(|seen| seen.path == VIDEO_SIGNAL_PATH)
+        .count();
+    // One more try after each 500.
+    assert_eq!(video, 4);
+    assert_eq!(avr.http_reads(Query::HdrFormat), HttpReads::SIGNAL_PAGES);
 }
 
 #[tokio::test]
