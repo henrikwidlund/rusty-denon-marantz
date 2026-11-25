@@ -9,7 +9,9 @@ mod heos_fake;
 use std::sync::Arc;
 use std::time::Duration;
 
-use common::{Fake as FakeReceiver, avr_x_receiver, avr_x_receiver_with_info, builder, no_heos};
+use common::{
+    Fake as FakeReceiver, LogBuffer, avr_x_receiver, avr_x_receiver_with_info, builder, no_heos,
+};
 use denon_marantz::heos::{Change, Error as HeosError, HeosConfig, HeosStatus, PlayerState};
 use denon_marantz::{
     Avr, Error, HeosFailure, HeosPlayerStatus, HeosStart, ReceiverType, StartOptions,
@@ -101,6 +103,37 @@ async fn the_start_opens_heos_and_finds_the_player() {
     assert_eq!(player.with_state(PlayerState::pid), Some(PID));
     player.play_next().await.unwrap();
     assert_eq!(heos.count("player/play_next"), 1);
+}
+
+/// Checks that the first HEOS connect after line `after` logs in a `heos`
+/// span inside `avr_span`.
+fn assert_heos_in_avr(logs: &LogBuffer, after: usize, avr_span: &str) {
+    assert_eq!(logs.span_of("HEOS connected", after, "avr"), avr_span);
+    // The line has both spans, so `heos` is inside `avr`.
+    let heos_span = logs.span_of("HEOS connected", after, "heos");
+    assert!(heos_span.contains("host=127.0.0.1"), "{heos_span}");
+}
+
+#[tokio::test]
+async fn the_heos_link_logs_in_a_heos_span_inside_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace,denon_marantz_heos=debug");
+    let heos = Fake::start(player_here).await;
+    let (avr, _http) = avr_with(&heos).await;
+    let avr_span = logs.span_of("request", 0, "avr");
+    let mut status = avr.watch_heos_status();
+    // The start connects in a task.
+    avr.start_with(options())
+        .await
+        .unwrap()
+        .basic_synced()
+        .await;
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    assert_heos_in_avr(&logs, 0, &avr_span);
+    avr.heos_disconnect().await;
+    let before = logs.line_count();
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    assert_heos_in_avr(&logs, before, &avr_span);
 }
 
 #[tokio::test]

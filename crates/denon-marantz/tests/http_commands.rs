@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, Fake, Reply,
-    avr_x_receiver_with_pages, bodies_after, builder, config, contains, friendly_name_answer,
-    is_friendly_name_request, output_settings_item, quick_follow_up, update_answer_for, wait_until,
+    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, Fake,
+    LogBuffer, Reply, avr_x_receiver_with_pages, bodies_after, builder, config, contains,
+    friendly_name_answer, is_friendly_name_request, output_settings_item, quick_follow_up,
+    update_answer_for, wait_until,
 };
 use denon_marantz::proto::{HdmiOutput, SoundSettingValue, TUNER_STATUS_PATH, TunerCommand};
 use denon_marantz::{
@@ -366,6 +367,22 @@ async fn a_read_after_a_command_puts_the_values_into_the_state() {
     })
     .await;
     assert_eq!(avr.snapshot().zone(Zone::Main).muted, Some(false));
+}
+
+#[tokio::test]
+async fn the_reads_after_commands_log_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let fake = receiver().await;
+    let avr = connect(&fake, Some(quick_follow_up())).await;
+    avr.zone(Zone::Main).unwrap().volume_up().await.unwrap();
+    wait_until("the read log", || {
+        logs.text().contains("read after commands")
+    })
+    .await;
+    assert_eq!(
+        logs.span_of("read after commands", 0, "avr"),
+        logs.span_of("request", 0, "avr")
+    );
 }
 
 #[tokio::test]

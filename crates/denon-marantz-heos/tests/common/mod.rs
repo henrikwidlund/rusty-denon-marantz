@@ -373,6 +373,12 @@ impl LogBuffer {
     /// set for this thread, so tasks on other threads do not use it.
     pub(crate) fn capture(filter: &str) -> (Self, impl Sized) {
         use tracing_subscriber::util::SubscriberInitExt;
+        // With only one dispatcher, `tracing` asks the dispatcher of the
+        // thread that first logs at a place in the code (a callsite) if that
+        // place is on. A test thread without a dispatcher then turns the place
+        // off for all threads. A second dispatcher that stays alive stops this.
+        static SECOND: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::new()));
         let logs = Self::default();
         let writer = logs.clone();
         let guard = tracing_subscriber::fmt()

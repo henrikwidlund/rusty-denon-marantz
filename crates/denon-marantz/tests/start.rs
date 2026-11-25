@@ -15,10 +15,11 @@ use tokio::time::timeout;
 
 use common::{
     AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_AND_SIGNAL_INFO, AVR_X_SETTINGS_INFO,
-    Fake, FakeTelnet, OLDER_SETTINGS_INFO, Reply, SettingsReplies, appcommand0300_requests,
-    avr_x_receiver, avr_x_receiver_that_can_hang, avr_x_receiver_with_held_settings,
-    avr_x_receiver_with_info, avr_x_receiver_with_settings, builder, config, fake_group_queries,
-    friendly_name_answer, is_friendly_name_request, wait_until,
+    Fake, FakeTelnet, LogBuffer, OLDER_SETTINGS_INFO, Reply, SettingsReplies,
+    appcommand0300_requests, avr_x_receiver, avr_x_receiver_that_can_hang,
+    avr_x_receiver_with_held_settings, avr_x_receiver_with_info, avr_x_receiver_with_settings,
+    builder, config, fake_group_queries, friendly_name_answer, is_friendly_name_request,
+    receiver_with_info_that_refuses_tone_control, wait_until,
 };
 use denon_marantz::TelnetStatus;
 use denon_marantz::{
@@ -1205,6 +1206,40 @@ async fn a_failed_fast_settings_read_skips_the_slow_one() {
     let requests = settings_requests(&http);
     assert_eq!(requests.len(), 1, "{requests:?}");
     assert!(requests[0].contains("GetBTTX"));
+}
+
+#[tokio::test]
+async fn the_start_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let http = receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await;
+    let avr = Arc::new(builder(&http, ReceiverType::AvrX).connect().await.unwrap());
+    // The update of the start tries again without tone control. That log is
+    // not inside an HTTP request, so it is in the span only if the start runs
+    // in it.
+    let mut started = avr
+        .start_with(StartOptions::new().telnet(false).signal_pages(false))
+        .await
+        .unwrap();
+    started.basic_synced().await;
+    assert_eq!(
+        logs.span_of("tone control is left out of the update", 0, "avr"),
+        logs.span_of("request", 0, "avr")
+    );
+}
+
+#[tokio::test]
+async fn the_start_task_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let web = web_interface().await;
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::SlowFails).await;
+    let avr = connect_avr_x(&http, &web).await;
+    // Waits for the slow settings, which the task reads after it sends the
+    // start report.
+    start_without_telnet(&avr).await;
+    assert_eq!(
+        logs.span_of("part=Slow", 0, "avr"),
+        logs.span_of("request", 0, "avr")
+    );
 }
 
 /// The settings are on the same port as the signal, so they would only wait

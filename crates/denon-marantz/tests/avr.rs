@@ -5,11 +5,12 @@
 mod common;
 
 use common::{
-    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, Reply, UPDATE_ANSWER,
-    appcommand0300_answer, appcommand0300_item, appcommand0300_requests, avr_x_receiver,
-    avr_x_receiver_with_info, builder, config, contains, friendly_name_answer,
+    AUDIO_INFO_ONLY_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, Fake, LogBuffer, Reply,
+    UPDATE_ANSWER, appcommand0300_answer, appcommand0300_item, appcommand0300_requests,
+    avr_x_receiver, avr_x_receiver_with_info, builder, config, friendly_name_answer,
     is_friendly_name_request, output_settings_item, receiver_with_audyssey,
-    receiver_with_info_and_signal_answers, receiver_with_signal_answers, web_interface_with_pages,
+    receiver_with_info_and_signal_answers, receiver_with_info_that_refuses_tone_control,
+    receiver_with_signal_answers, web_interface_with_pages,
 };
 use denon_marantz::{Avr, Error, ListedQueries, PageStatus, TypeProof, UpdateMethod};
 use denon_marantz_proto::{
@@ -1308,22 +1309,6 @@ async fn receiver_that_refuses_tone_control() -> Fake {
     receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await
 }
 
-/// Like [`receiver_that_refuses_tone_control`], with this device information.
-async fn receiver_with_info_that_refuses_tone_control(info: &'static [u8]) -> Fake {
-    Fake::start(
-        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
-            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
-            ("POST", _) if is_friendly_name_request(&seen.body) => {
-                Reply::Body(friendly_name_answer("X"))
-            }
-            ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
-            ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
-            _ => Reply::Status(404),
-        },
-    )
-    .await
-}
-
 #[tokio::test]
 async fn an_update_that_is_refused_with_tone_control_drops_it() {
     let fake = receiver_that_refuses_tone_control().await;
@@ -1436,6 +1421,30 @@ async fn known_values_connect_without_a_request() {
     assert_eq!(*avr.info(), info);
     // The receiver gives the same values.
     assert_eq!(avr.verify().await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn verify_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=debug");
+    let fake = avr_x_receiver().await;
+    let info = connect(&fake, ReceiverType::AvrX)
+        .await
+        .unwrap()
+        .info()
+        .clone();
+    let avr = Avr::builder("127.0.0.1")
+        .http_config(config())
+        .known(info)
+        .connect()
+        .await
+        .unwrap();
+    let before = logs.line_count();
+    avr.verify().await.unwrap();
+    // The span of this `Avr`, not the one of the first connect.
+    assert_eq!(
+        logs.span_of("identified", before, "avr"),
+        logs.span_of("connected with known values", 0, "avr")
+    );
 }
 
 #[tokio::test]

@@ -455,6 +455,8 @@ pub(crate) enum SettingsReplies {
     Answer,
     /// The slow part of the settings once the flag is true.
     HeldSlow(Arc<AtomicBool>),
+    /// The slow part of the settings with HTTP 500.
+    SlowFails,
     /// The fast part of the settings with HTTP 500.
     FastFails,
     /// Never the fast part of the settings.
@@ -520,6 +522,7 @@ async fn avr_x_receiver_with(
                     SettingsReplies::HeldSlow(release) => {
                         Reply::Held(Arc::clone(release), SETTINGS_SLOW.to_vec())
                     }
+                    SettingsReplies::SlowFails => Reply::Status(500),
                     _ => Reply::Body(SETTINGS_SLOW.to_vec()),
                 }
             }
@@ -531,6 +534,23 @@ async fn avr_x_receiver_with(
             _ => Reply::Status(404),
         }
     })
+    .await
+}
+
+/// A receiver with this device information that refuses a request with
+/// tone control.
+pub(crate) async fn receiver_with_info_that_refuses_tone_control(info: &'static [u8]) -> Fake {
+    Fake::start(
+        move |seen| match (seen.method.as_str(), seen.path.as_str()) {
+            ("GET", "/goform/Deviceinfo.xml") => Reply::Body(info.to_vec()),
+            ("POST", _) if is_friendly_name_request(&seen.body) => {
+                Reply::Body(friendly_name_answer("X"))
+            }
+            ("POST", _) if contains(&seen.body, "GetToneControl") => Reply::Status(500),
+            ("POST", _) => Reply::Body(UPDATE_ANSWER.to_vec()),
+            _ => Reply::Status(404),
+        },
+    )
     .await
 }
 
@@ -965,6 +985,12 @@ impl LogBuffer {
     /// set for this thread, so tasks on other threads do not use it.
     pub(crate) fn capture(filter: &str) -> (Self, impl Sized) {
         use tracing_subscriber::util::SubscriberInitExt;
+        // With only one dispatcher, `tracing` asks the dispatcher of the
+        // thread that first logs at a place in the code (a callsite) if that
+        // place is on. A test thread without a dispatcher then turns the place
+        // off for all threads. A second dispatcher that stays alive stops this.
+        static SECOND: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+        SECOND.get_or_init(|| tracing::Dispatch::new(tracing::subscriber::NoSubscriber::new()));
         let logs = Self::default();
         let writer = logs.clone();
         let guard = tracing_subscriber::fmt()
