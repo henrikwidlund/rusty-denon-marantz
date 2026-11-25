@@ -111,7 +111,13 @@ async fn a_command_that_cannot_be_built_is_refused_before_a_request() {
         .http_send(Zone::Main, Command::Raw("PW\nOFF"))
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            Error::InvalidCommand(denon_marantz_proto::Error::InvalidCommandText)
+        ),
+        "{error}"
+    );
     assert_eq!(commands(&fake), [] as [String; 0]);
 }
 

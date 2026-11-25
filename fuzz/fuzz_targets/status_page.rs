@@ -1,4 +1,5 @@
-//! The XML status pages of a zone.
+//! The XML status pages of a zone. Names and values that the docs say are
+//! never empty must not be.
 #![no_main]
 
 use denon_marantz_proto::status_page::{Page, extract, friendly_name, sources};
@@ -10,8 +11,10 @@ fuzz_target!(|data: &[u8]| {
     let (first, second) = data.split_at(data.len() / 2);
     let status = Page::parse(first).ok();
     let zone_page = Page::parse(second).ok();
-    if let Some(page) = &status {
-        let _ = friendly_name(page);
+    if let Some(page) = &status
+        && let Some(name) = friendly_name(page)
+    {
+        assert!(!name.is_empty() && name.trim() == name, "{name:?}");
     }
     let mut state = State::new(false);
     for zone in [Zone::Main, Zone::Zone2, Zone::Zone3] {
@@ -20,6 +23,8 @@ fuzz_target!(|data: &[u8]| {
             zone_page.as_ref(),
             zone,
             &mut |field, value| {
+                // An empty value is skipped or gives `None`.
+                assert_ne!(value, Some(""), "{field:?}");
                 state.apply_field(zone, field, value);
             },
         );
@@ -28,6 +33,7 @@ fuzz_target!(|data: &[u8]| {
         status.as_ref(),
         zone_page.as_ref(),
         |name, rename, in_use| {
+            assert_ne!(rename, Some(""));
             state.apply_renamed_source(name, rename);
             if let Some(in_use) = in_use {
                 state.apply_source_in_use(name, in_use);

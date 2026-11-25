@@ -1097,16 +1097,23 @@ mod tests {
         for (value, expected) in cases {
             assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
         }
-        for value in [
-            SoundSettingValue::EffectLevel(0),
-            SoundSettingValue::EffectLevel(16),
-            SoundSettingValue::CenterImage(11),
-            SoundSettingValue::CenterGain(11),
-            SoundSettingValue::StepUp(SoundStep::SubwooferLevel(0)),
-            SoundSettingValue::StepDown(SoundStep::SubwooferLevel(5)),
+        for (value, what) in [
+            (SoundSettingValue::EffectLevel(0), "effect level"),
+            (SoundSettingValue::EffectLevel(16), "effect level"),
+            (SoundSettingValue::CenterImage(11), "center image"),
+            (SoundSettingValue::CenterGain(11), "center gain"),
+            (
+                SoundSettingValue::StepUp(SoundStep::SubwooferLevel(0)),
+                "subwoofer number",
+            ),
+            (
+                SoundSettingValue::StepDown(SoundStep::SubwooferLevel(5)),
+                "subwoofer number",
+            ),
         ] {
-            assert!(
-                matches!(text(value), Err(Error::ValueOutOfRange { .. })),
+            assert_eq!(
+                text(value),
+                Err(Error::ValueOutOfRange { what }),
                 "{value:?}"
             );
         }
@@ -1382,30 +1389,52 @@ mod tests {
     #[test]
     fn setters_reject_numbers_out_of_range() {
         let level = ChannelLevel::from_half_db(0).unwrap();
-        for value in [
-            SoundSettingValue::AuroMaticStrength(17),
-            SoundSettingValue::LfeExternalInput(3),
-            SoundSettingValue::LfeExternalInput(20),
-            SoundSettingValue::Balance(13),
-            SoundSettingValue::Balance(-13),
-            SoundSettingValue::Balance(i8::MIN),
-            SoundSettingValue::ImaxHighPass(65),
-            SoundSettingValue::ImaxLowPass(40),
-            SoundSettingValue::SubwooferLevel { number: 0, level },
-            SoundSettingValue::SubwooferLevel { number: 5, level },
-            SoundSettingValue::LfeLevel(11),
-            SoundSettingValue::TactileLowPass(70),
-            SoundSettingValue::TactileLowPass(0),
-            SoundSettingValue::CenterWidth(8),
-            SoundSettingValue::Dimension(7),
-            SoundSettingValue::BassSync(17),
-            SoundSettingValue::DialogControl(7),
-            SoundSettingValue::DelayTime(301),
-            SoundSettingValue::AudioDelay(501),
+        for (value, what) in [
+            (
+                SoundSettingValue::AuroMaticStrength(17),
+                "Auro-Matic strength",
+            ),
+            (
+                SoundSettingValue::LfeExternalInput(3),
+                "LFE level of a 7.1 input",
+            ),
+            (
+                SoundSettingValue::LfeExternalInput(20),
+                "LFE level of a 7.1 input",
+            ),
+            (SoundSettingValue::Balance(13), "balance"),
+            (SoundSettingValue::Balance(-13), "balance"),
+            (SoundSettingValue::Balance(i8::MIN), "balance"),
+            (SoundSettingValue::ImaxHighPass(65), "IMAX high pass filter"),
+            (SoundSettingValue::ImaxLowPass(40), "IMAX low pass filter"),
+            (
+                SoundSettingValue::SubwooferLevel { number: 0, level },
+                "subwoofer number",
+            ),
+            (
+                SoundSettingValue::SubwooferLevel { number: 5, level },
+                "subwoofer number",
+            ),
+            (SoundSettingValue::LfeLevel(11), "LFE level"),
+            (
+                SoundSettingValue::TactileLowPass(70),
+                "tactile transducer low pass filter",
+            ),
+            (
+                SoundSettingValue::TactileLowPass(0),
+                "tactile transducer low pass filter",
+            ),
+            (SoundSettingValue::CenterWidth(8), "center width"),
+            (SoundSettingValue::Dimension(7), "dimension"),
+            (SoundSettingValue::BassSync(17), "bass sync"),
+            (SoundSettingValue::DialogControl(7), "dialog control"),
+            (SoundSettingValue::DelayTime(301), "delay time"),
+            (SoundSettingValue::AudioDelay(501), "audio delay"),
         ] {
             let mut out = String::new();
-            assert!(
-                matches!(value.write(&mut out), Err(Error::ValueOutOfRange { .. })),
+            assert_eq!(
+                value.write(&mut out),
+                Err(Error::ValueOutOfRange { what }),
                 "{value:?}"
             );
         }
@@ -1480,18 +1509,19 @@ mod tests {
         for (value, expected) in cases {
             assert_eq!(text(value).as_deref(), Ok(expected), "{value:?}");
         }
-        for value in [
-            SoundSettingValue::DialogLevel(-13),
-            SoundSettingValue::DialogLevel(13),
-            SoundSettingValue::DialogLevel(i8::MIN),
-            SoundSettingValue::StageWidth(-11),
-            SoundSettingValue::StageWidth(11),
-            SoundSettingValue::StageHeight(-11),
-            SoundSettingValue::StageHeight(i8::MAX),
+        for (value, what) in [
+            (SoundSettingValue::DialogLevel(-13), "dialog level"),
+            (SoundSettingValue::DialogLevel(13), "dialog level"),
+            (SoundSettingValue::DialogLevel(i8::MIN), "dialog level"),
+            (SoundSettingValue::StageWidth(-11), "stage width"),
+            (SoundSettingValue::StageWidth(11), "stage width"),
+            (SoundSettingValue::StageHeight(-11), "stage height"),
+            (SoundSettingValue::StageHeight(i8::MAX), "stage height"),
         ] {
             let mut out = String::new();
-            assert!(
-                matches!(value.write(&mut out), Err(Error::ValueOutOfRange { .. })),
+            assert_eq!(
+                value.write(&mut out),
+                Err(Error::ValueOutOfRange { what }),
                 "{value:?}"
             );
             assert!(out.is_empty(), "{value:?}");

@@ -192,14 +192,15 @@ mod tests {
 
     #[test]
     fn values_outside_the_range_are_refused() {
-        for value in [
-            PictureSettingValue::Contrast(51),
-            PictureSettingValue::Brightness(-51),
-            PictureSettingValue::Saturation(i8::MAX),
-            PictureSettingValue::Enhancer(13),
+        for (value, what) in [
+            (PictureSettingValue::Contrast(51), "contrast"),
+            (PictureSettingValue::Brightness(-51), "brightness"),
+            (PictureSettingValue::Saturation(i8::MAX), "saturation"),
+            (PictureSettingValue::Enhancer(13), "enhancer"),
         ] {
-            assert!(
-                matches!(text(value), Err(Error::ValueOutOfRange { .. })),
+            assert_eq!(
+                text(value),
+                Err(Error::ValueOutOfRange { what }),
                 "{value:?}"
             );
         }

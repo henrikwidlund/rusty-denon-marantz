@@ -43,14 +43,21 @@ impl<'a> Service<'a> {
 /// The lowest IPv4 address wins, so the choice does not depend on the order of
 /// the answers. A link-local IPv4 address (169.254.x.x) comes after the others.
 /// Without an IPv4 address, the lowest IPv6 address wins. An address that
-/// cannot be reached from a URL is left out: unspecified, multicast, loopback
-/// and IPv6 link-local addresses, which need a scope.
+/// cannot be reached from a URL is left out: unspecified, multicast,
+/// broadcast, loopback and IPv6 link-local addresses, which need a scope. An
+/// IPv4-mapped IPv6 address is used, and returned, as its IPv4 address.
 #[must_use]
 pub fn choose_address(addresses: impl IntoIterator<Item = IpAddr>) -> Option<IpAddr> {
     addresses
         .into_iter()
+        .map(|address| address.to_canonical())
         .filter(|address| match address {
-            IpAddr::V4(v4) => !v4.is_unspecified() && !v4.is_multicast() && !v4.is_loopback(),
+            IpAddr::V4(v4) => {
+                !v4.is_unspecified()
+                    && !v4.is_multicast()
+                    && !v4.is_broadcast()
+                    && !v4.is_loopback()
+            }
             IpAddr::V6(v6) => {
                 !v6.is_unspecified()
                     && !v6.is_multicast()
@@ -112,6 +119,12 @@ mod tests {
     }
 
     #[test]
+    fn a_mapped_ipv6_address_counts_as_ipv4() {
+        let addresses = [ip("fd00::1"), ip("::ffff:192.168.1.5")];
+        assert_eq!(choose_address(addresses), Some(ip("192.168.1.5")));
+    }
+
+    #[test]
     fn ipv6_is_used_without_ipv4() {
         let addresses = [ip("fd00::2"), ip("fd00::1")];
         assert_eq!(choose_address(addresses), Some(ip("fd00::1")));
@@ -122,7 +135,10 @@ mod tests {
         for address in [
             "0.0.0.0",
             "224.0.0.251",
+            "255.255.255.255",
             "127.0.0.1",
+            "::ffff:0.0.0.0",
+            "::ffff:127.0.0.1",
             "::",
             "ff02::fb",
             "::1",

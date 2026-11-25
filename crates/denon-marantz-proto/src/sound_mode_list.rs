@@ -111,10 +111,10 @@ impl SoundModeList {
     /// [`ZoneState::sound_mode`](crate::ZoneState::sound_mode), for example
     /// `MCH STEREO` gives `Multi Ch Stereo`.
     ///
-    /// An entry with the same name comes first, without case. Otherwise the
-    /// first entry of the same [`SoundModeGroup`]. The report does not say the
-    /// category, so a name that is in more than one category gives the first
-    /// one in the list. `None` if no entry fits.
+    /// An entry with the same words comes first, without case and extra white
+    /// space. Otherwise the first entry of the same [`SoundModeGroup`]. The
+    /// report does not say the category, so a name that is in more than one
+    /// category gives the first one in the list. `None` if no entry fits.
     #[must_use]
     pub fn entry_for(&self, raw: &str) -> Option<&SoundModeEntry> {
         if let Some(entry) = self

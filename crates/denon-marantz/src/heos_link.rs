@@ -6,8 +6,8 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use denon_marantz_heos::{
-    BrowseItem, Change, Heos, HeosConfig, HeosStatus, NowPlaying, Page, PlayMode, PlayState,
-    PlayerId, PlayerState, QueueId, QueueItem, QuickSelect,
+    BrowseItem, Change, Command, Heos, HeosConfig, HeosStatus, NowPlaying, Page, PlayMode,
+    PlayState, PlayerId, PlayerState, QueueId, QueueItem, QuickSelect,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedMutexGuard, broadcast, watch};
@@ -86,10 +86,13 @@ const CHANGE_CAPACITY: usize = 256;
 /// [`Avr::heos`](crate::Avr::heos).
 ///
 /// The `Avr` owns the connection: after
-/// [`Avr::heos_disconnect`](crate::Avr::heos_disconnect), or when the `Avr`
-/// is dropped, the calls return [`heos::Error::NotConnected`].
+/// [`Avr::heos_disconnect`](crate::Avr::heos_disconnect), after a shutdown
+/// through a kept [`HeosPlayer::client`], or when the `Avr` is dropped, the
+/// calls return [`heos::Error::NotConnected`]. A bad argument gives
+/// [`heos::Error::InvalidCommand`] also then.
 ///
 /// [`heos::Error::NotConnected`]: denon_marantz_heos::Error::NotConnected
+/// [`heos::Error::InvalidCommand`]: denon_marantz_heos::Error::InvalidCommand
 #[derive(Debug, Clone)]
 pub struct HeosPlayer {
     heos: Weak<Heos>,
@@ -106,30 +109,34 @@ impl HeosPlayer {
     /// The client, for the calls that this type does not have. Its calls
     /// return [`heos::Error::NotConnected`] after
     /// [`Avr::heos_disconnect`](crate::Avr::heos_disconnect). `None` if the
-    /// connection is closed.
+    /// connection is closed or shut down. Its [`Heos::shutdown`] ends the
+    /// connection of the `Avr`: the status becomes
+    /// [`HeosPlayerStatus::Disconnected`], and
+    /// [`Avr::heos_connect`](crate::Avr::heos_connect) opens a new one.
     ///
     /// [`heos::Error::NotConnected`]: denon_marantz_heos::Error::NotConnected
     #[must_use]
     pub fn client(&self) -> Option<Arc<Heos>> {
-        self.heos.upgrade()
+        self.live()
     }
 
     /// The state of the player: play state, what plays, play mode. `None` if
-    /// the connection is closed. It is a copy: [`HeosPlayer::with_state`]
-    /// reads it without one.
+    /// the connection is closed or shut down. It is a copy:
+    /// [`HeosPlayer::with_state`] reads it without one.
     #[must_use]
     pub fn state(&self) -> Option<PlayerState> {
-        self.heos.upgrade()?.player(self.pid)
+        self.live()?.player(self.pid)
     }
 
     /// Runs `read` with the state of the player, without a copy. `None` if
-    /// the connection is closed or the player is not known. The state is
-    /// locked while `read` runs, so keep it short.
+    /// the connection is closed or shut down, or the player is not known. The
+    /// state is locked while `read` runs, so keep it short.
     pub fn with_state<T>(&self, read: impl FnOnce(&PlayerState) -> T) -> Option<T> {
-        self.heos.upgrade()?.with_player(self.pid, read)
+        self.live()?.with_player(self.pid, read)
     }
 
-    /// What plays. `None` if nothing is known or the connection is closed.
+    /// What plays. `None` if nothing is known or the connection is closed or
+    /// shut down.
     #[must_use]
     pub fn now_playing(&self) -> Option<NowPlaying<'static>> {
         self.state()?.current_media().cloned()
@@ -180,7 +187,12 @@ impl HeosPlayer {
         &self,
         range: Option<(u32, u32)>,
     ) -> Result<Page<QueueItem<'static>>, denon_marantz_heos::Error> {
-        self.heos()?.queue(self.pid, range).await
+        self.checked(Command::GetQueue {
+            pid: self.pid,
+            range,
+        })?
+        .queue(self.pid, range)
+        .await
     }
 
     /// Plays an item of the queue.
@@ -189,7 +201,9 @@ impl HeosPlayer {
     ///
     /// The errors of [`Heos::play_queue_item`].
     pub async fn play_queue_item(&self, qid: QueueId) -> Result<(), denon_marantz_heos::Error> {
-        self.heos()?.play_queue_item(self.pid, qid).await
+        self.checked(Command::PlayQueue { pid: self.pid, qid })?
+            .play_queue_item(self.pid, qid)
+            .await
     }
 
     /// Removes items from the queue. `qids` must not be empty.
@@ -201,7 +215,12 @@ impl HeosPlayer {
         &self,
         qids: &[QueueId],
     ) -> Result<(), denon_marantz_heos::Error> {
-        self.heos()?.remove_from_queue(self.pid, qids).await
+        self.checked(Command::RemoveFromQueue {
+            pid: self.pid,
+            qids,
+        })?
+        .remove_from_queue(self.pid, qids)
+        .await
     }
 
     /// Removes all items from the queue.
@@ -222,7 +241,9 @@ impl HeosPlayer {
         &self,
         range: Option<(u32, u32)>,
     ) -> Result<Page<BrowseItem<'static>>, denon_marantz_heos::Error> {
-        self.heos()?.favorites(range).await
+        self.checked(Command::GetFavorites { range })?
+            .favorites(range)
+            .await
     }
 
     /// Plays a HEOS Favorite. `preset` is its position, from 1.
@@ -231,7 +252,12 @@ impl HeosPlayer {
     ///
     /// The errors of [`Heos::play_preset`].
     pub async fn play_preset(&self, preset: u32) -> Result<(), denon_marantz_heos::Error> {
-        self.heos()?.play_preset(self.pid, preset).await
+        self.checked(Command::PlayPreset {
+            pid: self.pid,
+            preset,
+        })?
+        .play_preset(self.pid, preset)
+        .await
     }
 
     /// Reads the names of the quick select slots.
@@ -251,13 +277,29 @@ impl HeosPlayer {
     ///
     /// The errors of [`Heos::play_quick_select`].
     pub async fn play_quick_select(&self, id: u8) -> Result<(), denon_marantz_heos::Error> {
-        self.heos()?.play_quick_select(self.pid, id).await
+        self.checked(Command::PlayQuickSelect { pid: self.pid, id })?
+            .play_quick_select(self.pid, id)
+            .await
+    }
+
+    /// As [`HeosPlayer::heos`]. Without a connection, a bad argument gives
+    /// the same error as with one. `command` must be the one that the
+    /// [`Heos`] method sends.
+    fn checked(&self, command: Command<'_>) -> Result<Arc<Heos>, denon_marantz_heos::Error> {
+        self.heos().map_err(|error| {
+            command
+                .write(&mut String::new())
+                .map_or_else(denon_marantz_heos::Error::InvalidCommand, |()| error)
+        })
     }
 
     fn heos(&self) -> Result<Arc<Heos>, denon_marantz_heos::Error> {
-        self.heos
-            .upgrade()
-            .ok_or(denon_marantz_heos::Error::NotConnected)
+        self.live().ok_or(denon_marantz_heos::Error::NotConnected)
+    }
+
+    /// The client while its connection is not closed or shut down.
+    fn live(&self) -> Option<Arc<Heos>> {
+        self.heos.upgrade().filter(|heos| !heos.is_shut_down())
     }
 }
 
@@ -285,6 +327,16 @@ pub(crate) struct HeosLink {
 struct Running {
     heos: Arc<Heos>,
     watcher: JoinHandle<()>,
+}
+
+impl Running {
+    /// False after a shutdown of the client, for example through a kept
+    /// client, or after the task of the client or the watcher ended.
+    fn is_alive(&self) -> bool {
+        !self.heos.is_shut_down()
+            && !self.watcher.is_finished()
+            && self.heos.watch_players().has_changed().is_ok()
+    }
 }
 
 impl HeosLink {
@@ -321,7 +373,8 @@ impl HeosLink {
     }
 
     /// Opens the connection and starts the task that finds the player.
-    /// Returns false if a connection is open already.
+    /// Returns false if a connection is open already. A connection whose task
+    /// ended counts as closed.
     pub(crate) async fn connect(&self) -> Result<bool, Error> {
         let gate = Arc::clone(&self.gate).lock_owned().await;
         self.open(gate, |error| error).await
@@ -337,9 +390,13 @@ impl HeosLink {
         if !self.supported {
             return Err(failed(Error::HeosNotSupported));
         }
-        if self.lock().is_some() {
-            return Ok(false);
-        }
+        let dead = {
+            let mut running = self.lock();
+            if running.as_ref().is_some_and(Running::is_alive) {
+                return Ok(false);
+            }
+            running.take()
+        };
         *self
             .start_error
             .lock()
@@ -347,6 +404,16 @@ impl HeosLink {
         set_status(&self.status, HeosPlayerStatus::Connecting);
         // Sets the status back if the future is dropped.
         let mut guard = StatusGuard(Some(&self.status));
+        // A connection whose task ended, for example after a shutdown through
+        // a kept client, is replaced. Its watcher must end first, so that it
+        // cannot set the status later.
+        if let Some(Running { heos, watcher }) = dead {
+            watcher.abort();
+            heos.shutdown();
+            let _ = watcher.await;
+            // The watcher can have set it during the wait.
+            set_status(&self.status, HeosPlayerStatus::Connecting);
+        }
         let opened = match self.addresses().await {
             Ok(addresses) => Heos::connect_with(self.host.as_str(), self.config)
                 .await
@@ -368,6 +435,7 @@ impl HeosLink {
         let mut running = self.lock();
         let watcher = tokio::spawn(watch_player(
             Watched {
+                heos: Arc::downgrade(&heos),
                 connection: heos.watch_status(),
                 players: heos.watch_players(),
                 changes: heos.changes(),
@@ -389,16 +457,28 @@ impl HeosLink {
     async fn close(&self) {
         let _gate = self.gate.lock().await;
         let running = self.lock().take();
+        *self
+            .start_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+        // Before the wait, so the status is right in most cases if this future
+        // is dropped. A watcher that runs on another thread can still set it
+        // once.
+        if self.supported {
+            set_status(&self.status, HeosPlayerStatus::Disconnected);
+        }
         if let Some(Running { heos, watcher }) = running {
             watcher.abort();
             heos.shutdown();
+            // The watcher can set the status until it has ended.
+            let _ = watcher.await;
+            if self.supported {
+                set_status(&self.status, HeosPlayerStatus::Disconnected);
+            }
             // Waits for the task if no client is kept.
             if let Some(heos) = Arc::into_inner(heos) {
                 heos.close().await;
             }
-        }
-        if self.supported {
-            set_status(&self.status, HeosPlayerStatus::Disconnected);
         }
     }
 
@@ -420,20 +500,27 @@ impl HeosLink {
         })
     }
 
-    /// The IP addresses of the host. A host name is resolved once per
-    /// connect.
+    /// The IP addresses of the host, an IPv4-mapped IPv6 address as IPv4. A
+    /// host name is resolved once per connect, within the connect timeout.
     async fn addresses(&self) -> Result<Vec<IpAddr>, Error> {
-        if let Ok(ip) = self.host.parse() {
-            return Ok(vec![ip]);
+        if let Ok(ip) = self.host.parse::<IpAddr>() {
+            return Ok(vec![ip.to_canonical()]);
         }
-        let found = tokio::net::lookup_host((self.host.as_str(), 0))
+        let request = || format!("HEOS resolve {}", self.host);
+        let limit = self.config.connect_timeout;
+        let found = tokio::time::timeout(limit, tokio::net::lookup_host((self.host.as_str(), 0)))
             .await
+            .map_err(|_| Error::Timeout {
+                request: request(),
+                limit,
+                sent: false,
+            })?
             .map_err(|source| Error::Network {
-                request: format!("HEOS resolve {}", self.host),
+                request: request(),
                 source: Box::new(source),
                 sent: false,
             })?;
-        Ok(found.map(|address| address.ip()).collect())
+        Ok(found.map(|address| address.ip().to_canonical()).collect())
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Running>> {
@@ -462,14 +549,18 @@ impl HeosOwner {
     /// connection is open or being opened already. A failure is kept for
     /// [`HeosLink::start_error`]. The task does not keep the `Avr`.
     pub(crate) fn connect_in_background(&self) -> bool {
-        if self.link.lock().is_some() {
-            return false;
-        }
         // The task keeps the gate, so that a disconnect cannot run before it.
         let Ok(gate) = Arc::clone(&self.link.gate).try_lock_owned() else {
             return false;
         };
+        // With the gate held, so that a connect cannot end in between.
+        if self.link.lock().as_ref().is_some_and(Running::is_alive) {
+            return false;
+        }
         // At once, so that the status is not `Disconnected` after the start.
+        // Right after a shutdown through a kept client, the old watcher can
+        // still set `Disconnected` once before the task sets `Connecting`
+        // again.
         set_status(&self.link.status, HeosPlayerStatus::Connecting);
         let link = Arc::clone(&self.link);
         // Held until the handle is stored, so that `disconnect` finds it.
@@ -538,6 +629,8 @@ impl Drop for HeosLink {
 
 /// What the task watches on one connection.
 struct Watched {
+    /// To see a shutdown before the task of the client ends.
+    heos: Weak<Heos>,
     connection: watch::Receiver<HeosStatus>,
     players: watch::Receiver<Vec<PlayerState>>,
     changes: broadcast::Receiver<Change>,
@@ -556,7 +649,7 @@ impl Match {
             state
                 .player
                 .ip_addr()
-                .is_some_and(|ip| self.addresses.contains(&ip))
+                .is_some_and(|ip| self.addresses.contains(&ip.to_canonical()))
         });
         by_address
             .or_else(|| {
@@ -581,6 +674,16 @@ async fn watch_player(
     let mut update = true;
     loop {
         if update {
+            // The client was shut down, or its task ended.
+            if watched.players.has_changed().is_err()
+                || watched
+                    .heos
+                    .upgrade()
+                    .is_none_or(|heos| heos.is_shut_down())
+            {
+                set_status(&status, HeosPlayerStatus::Disconnected);
+                return;
+            }
             let new = if *watched.connection.borrow_and_update() == HeosStatus::Connected {
                 found
                     .find(&watched.players.borrow_and_update())
@@ -595,8 +698,16 @@ async fn watch_player(
             // The status first, so that it is set before a change of the
             // players is passed on.
             biased;
-            changed = watched.connection.changed() => if changed.is_err() { return },
-            changed = watched.players.changed() => if changed.is_err() { return },
+            changed = watched.connection.changed() => if changed.is_err() {
+                set_status(&status, HeosPlayerStatus::Disconnected);
+                return;
+            },
+            // The task of the client ended, for example after a shutdown
+            // through a kept client.
+            changed = watched.players.changed() => if changed.is_err() {
+                set_status(&status, HeosPlayerStatus::Disconnected);
+                return;
+            },
             change = watched.changes.recv() => {
                 update = false;
                 match change {
@@ -609,7 +720,10 @@ async fn watch_player(
                             drop(forward.send(change));
                         }
                     }
-                    Err(RecvError::Closed) => return,
+                    Err(RecvError::Closed) => {
+                        set_status(&status, HeosPlayerStatus::Disconnected);
+                        return;
+                    }
                 }
             }
         }
@@ -669,6 +783,7 @@ mod tests {
         let timeout = denon_marantz_heos::Error::Timeout {
             request: "connect".to_owned(),
             limit: Duration::from_secs(5),
+            sent: false,
         };
         let cases = [
             (timeout, HeosFailure::Timeout),
@@ -693,5 +808,16 @@ mod tests {
         for (error, kind) in cases {
             assert_eq!(HeosFailure::of(&error), kind, "{error:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_mapped_ipv6_host_is_used_as_ipv4() {
+        let link = |host: &str| HeosLink::new(host.to_owned(), None, HeosConfig::default(), true);
+        let v4: IpAddr = "192.0.2.5".parse().unwrap();
+        for host in ["::ffff:192.0.2.5", "192.0.2.5"] {
+            assert_eq!(link(host).addresses().await.unwrap(), [v4], "{host}");
+        }
+        let v6: IpAddr = "2001:db8::5".parse().unwrap();
+        assert_eq!(link("2001:db8::5").addresses().await.unwrap(), [v6]);
     }
 }

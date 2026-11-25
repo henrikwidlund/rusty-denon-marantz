@@ -61,7 +61,9 @@ impl AnswerTracker {
     }
 
     /// Checks a line from the receiver. It closes the open query that it
-    /// answers. A list closes on its `END` line.
+    /// answers. A list closes on its `END` line. A line of a longer query
+    /// that was answered since the last [`AnswerTracker::forget_answered`]
+    /// closes nothing.
     pub fn line(&mut self, line: &str) -> AnswerLine {
         let open = self
             .open
@@ -71,7 +73,7 @@ impl AnswerTracker {
             .max_by_key(|(_, open)| answer_prefix(&open.query).len());
         if let Some((index, open)) = open {
             let prefix = answer_prefix(&open.query);
-            if !self.longer_known(line, prefix.len()) {
+            if !self.longer_known(line, prefix.len()) && !self.longer_answered(line, prefix.len()) {
                 if !open.list || line[prefix.len()..].trim() == "END" {
                     let open = self.open.remove(index);
                     self.answered.push(open.query);
@@ -87,6 +89,44 @@ impl AnswerTracker {
             AnswerLine::Related
         } else {
             AnswerLine::Other
+        }
+    }
+
+    /// True if `line` answers `query`, also when the query is not open. The
+    /// line must start with the answer prefix of the query. It must not match
+    /// a known query with a longer answer prefix. It must not match an open
+    /// query, or a query answered since the last
+    /// [`AnswerTracker::forget_answered`], with a longer answer prefix. A
+    /// query without text answers nothing. A list is answered by its `END`
+    /// line only.
+    #[must_use]
+    pub fn answers(&self, query: &str, line: &str) -> bool {
+        let prefix = answer_prefix(query);
+        let Some(rest) = line.strip_prefix(prefix) else {
+            return false;
+        };
+        !prefix.is_empty()
+            && !self.longer_known(line, prefix.len())
+            && !self
+                .open
+                .iter()
+                .map(|open| &open.query)
+                .chain(&self.answered)
+                .any(|other| {
+                    let other = answer_prefix(other);
+                    other.len() > prefix.len() && line.starts_with(other)
+                })
+            && (!is_list_query(query) || rest.trim() == "END")
+    }
+
+    /// Notes that a line answered `query` after it stopped being open. Call
+    /// it before [`AnswerTracker::line`] for the same line. Until
+    /// [`AnswerTracker::forget_answered`], the lines of `query` are
+    /// [`AnswerLine::Related`] and do not answer a shorter query. A query that
+    /// is only `?` is not kept.
+    pub fn late_answer(&mut self, query: Cow<'static, str>) {
+        if !answer_prefix(&query).is_empty() {
+            self.answered.push(query);
         }
     }
 
@@ -124,6 +164,15 @@ impl AnswerTracker {
     pub fn clear(&mut self) {
         self.open.clear();
         self.answered.clear();
+    }
+
+    /// True if a query that was answered, with a longer answer prefix than
+    /// `len`, matches the line.
+    fn longer_answered(&self, line: &str, len: usize) -> bool {
+        self.answered.iter().any(|query| {
+            let prefix = answer_prefix(query);
+            prefix.len() > len && line.starts_with(prefix)
+        })
     }
 
     /// True if a known query with a longer text than `len` matches the line.
@@ -207,6 +256,18 @@ mod tests {
     }
 
     #[test]
+    fn a_late_answer_keeps_its_lines_from_a_shorter_query() {
+        let mut tracker = tracker(&["MS?"]);
+        tracker.late_answer(Cow::Borrowed("MSABC ?"));
+        assert_eq!(tracker.line("MSABC 2"), AnswerLine::Related);
+        assert!(!tracker.answers("MS?", "MSABC 2"));
+        assert!(!tracker.is_idle());
+        tracker.forget_answered();
+        assert_eq!(tracker.line("MSABC 3"), AnswerLine::Answer);
+        assert!(tracker.is_idle());
+    }
+
+    #[test]
     fn a_line_before_the_write_answers_nothing() {
         let mut tracker = tracker(&[]);
         assert_eq!(tracker.line("MNMEN OFF"), AnswerLine::Other);
@@ -251,6 +312,41 @@ mod tests {
         tracker.clear();
         assert!(tracker.is_idle());
         assert_eq!(tracker.line("MV51"), AnswerLine::Other);
+    }
+
+    #[test]
+    fn answers_checks_a_line_without_an_open_query() {
+        let empty = tracker(&[]);
+        for (query, line, expected) in [
+            ("MNMEN?", "MNMEN OFF", true),
+            ("PSIMAXSWM ?", "PSIMAXSWM AUTO", true),
+            ("MS?", "MSDOLBY ATMOS", true),
+            // A longer known query matches the line.
+            ("MS?", "MSQUICK0", false),
+            ("PSIMAX ?", "PSIMAXSWM AUTO", false),
+            ("MNMEN?", "MVMAX 98", false),
+            // A list is answered by its end line only.
+            ("SSQSNZMA ?", "SSQSNZMAQS1 Night", false),
+            ("SSQSNZMA ?", "SSQSNZMA END", true),
+            ("CV?", "CVFL 50", false),
+            ("CV?", "CVEND", true),
+            // A query without text answers nothing.
+            ("?", "MV50", false),
+            (" ?", "MV50", false),
+        ] {
+            assert_eq!(empty.answers(query, line), expected, "{query} {line}");
+        }
+        // It does not close an open query.
+        let open = tracker(&["MNMEN?"]);
+        assert!(open.answers("MNMEN?", "MNMEN OFF"));
+        assert!(!open.is_idle());
+        // A longer open query that is not known matches the line.
+        let mut raw = tracker(&["MSXYZ ?"]);
+        assert!(!raw.answers("MS?", "MSXYZ 1"));
+        assert!(raw.answers("MS?", "MSDOLBY ATMOS"));
+        // Also after it was answered, for its later lines.
+        assert_eq!(raw.line("MSXYZ 1"), AnswerLine::Answer);
+        assert!(!raw.answers("MS?", "MSXYZ 2"));
     }
 
     #[test]

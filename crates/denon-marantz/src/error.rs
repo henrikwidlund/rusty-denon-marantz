@@ -144,6 +144,9 @@ pub enum Error {
     /// write was begun gives [`Error::Network`] instead.
     #[error("the telnet connection is not open")]
     NotConnected,
+    /// Too many telnet lines wait to be sent. Nothing was sent.
+    #[error("too many telnet lines wait to be sent")]
+    QueueFull,
     /// A command cannot be sent, for example because its text has a control
     /// character.
     #[error("invalid command: {0}")]
@@ -217,8 +220,36 @@ pub enum Error {
     HeosNotSupported,
 }
 
+/// Used in place of the HEOS error type when the `heos` feature is off. It
+/// has no values.
+#[cfg(not(feature = "heos"))]
+struct Never(std::convert::Infallible);
+
+#[cfg(not(feature = "heos"))]
+macro_rules! never_checks {
+    ($($name:ident),*) => {
+        impl Never {
+            $(const fn $name(&self) -> bool {
+                match self.0 {}
+            })*
+        }
+    };
+}
+
+#[cfg(not(feature = "heos"))]
+never_checks!(
+    is_invalid_input,
+    is_transient,
+    is_timeout,
+    is_network,
+    is_not_sent,
+    is_rejected,
+    is_invalid_response
+);
+
 impl Error {
-    /// The request that failed, if the error comes from a request.
+    /// The request that failed, if the error comes from a request. For HEOS,
+    /// it is the connect step or the command, for example `player/play_next`.
     #[must_use]
     pub fn request(&self) -> Option<&str> {
         match self {
@@ -234,6 +265,7 @@ impl Error {
             | Self::QueryNeedsTelnet
             | Self::NothingRead
             | Self::NotConnected
+            | Self::QueueFull
             | Self::InvalidCommand(_)
             | Self::NumberOutOfRange { .. }
             | Self::Unsupported(_)
@@ -253,8 +285,34 @@ impl Error {
             | Self::InvalidConfig(_)
             | Self::ResetKeyInvalid => None,
             #[cfg(feature = "heos")]
+            Self::Heos(
+                denon_marantz_heos::Error::Timeout { request, .. }
+                | denon_marantz_heos::Error::Network { request, .. },
+            ) => Some(request),
+            #[cfg(feature = "heos")]
+            Self::Heos(
+                denon_marantz_heos::Error::Disconnected { command }
+                | denon_marantz_heos::Error::Failed { command, .. }
+                | denon_marantz_heos::Error::Protocol { command, .. },
+            ) => Some(command),
+            #[cfg(feature = "heos")]
             Self::Heos(_) | Self::HeosNotSupported => None,
         }
+    }
+
+    /// The HEOS error inside, if this is [`Error::Heos`].
+    #[cfg(feature = "heos")]
+    const fn heos(&self) -> Option<&denon_marantz_heos::Error> {
+        match self {
+            Self::Heos(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(feature = "heos"))]
+    const fn heos(&self) -> Option<&Never> {
+        let _ = self;
+        None
     }
 
     /// Returns true if nothing was sent because the telnet connection is not
@@ -266,22 +324,23 @@ impl Error {
 
     /// Returns true if the caller gave a value that cannot be sent: text with
     /// a control character, a number out of range, an unknown name or a bad
-    /// request. Nothing was sent.
+    /// request, also for HEOS. Nothing was sent.
     #[must_use]
     pub const fn is_invalid_input(&self) -> bool {
-        matches!(
-            self,
-            Self::InvalidCommand(_)
-                | Self::InvalidRequest(_)
-                | Self::NumberOutOfRange { .. }
-                | Self::VolumeOutOfRange(_)
-                | Self::ToneOutOfRange(_)
-                | Self::ContainmentOutOfRange(_)
-                | Self::DiracSlotOutOfRange(_)
-                | Self::UnknownDiracSlot(_)
-                | Self::UnknownSoundMode(_)
-                | Self::ResetKeyInvalid
-        )
+        matches!(self.heos(), Some(error) if error.is_invalid_input())
+            || matches!(
+                self,
+                Self::InvalidCommand(_)
+                    | Self::InvalidRequest(_)
+                    | Self::NumberOutOfRange { .. }
+                    | Self::VolumeOutOfRange(_)
+                    | Self::ToneOutOfRange(_)
+                    | Self::ContainmentOutOfRange(_)
+                    | Self::DiracSlotOutOfRange(_)
+                    | Self::UnknownDiracSlot(_)
+                    | Self::UnknownSoundMode(_)
+                    | Self::ResetKeyInvalid
+            )
     }
 
     /// Returns true if the receiver is in a state that does not allow the
@@ -322,37 +381,45 @@ impl Error {
     }
 
     /// Returns true if another try can work: the receiver could not be
-    /// reached, or the telnet connection is not open now and the task opens
-    /// it again.
+    /// reached, the telnet connection is not open now and the task opens it
+    /// again, or too many lines wait. For HEOS, see
+    /// [`heos::Error::is_transient`](denon_marantz_heos::Error::is_transient).
     #[must_use]
     pub const fn is_transient(&self) -> bool {
-        self.is_unreachable() || self.is_not_connected()
+        self.is_unreachable()
+            || matches!(self, Self::NotConnected | Self::QueueFull)
+            || matches!(self.heos(), Some(error) if error.is_transient())
     }
 
-    /// Returns true if the receiver did not answer in time.
+    /// Returns true if the receiver did not answer in time, also on HEOS.
     #[must_use]
     pub const fn is_timeout(&self) -> bool {
         matches!(self, Self::Timeout { .. })
+            || matches!(self.heos(), Some(error) if error.is_timeout())
     }
 
     /// Returns true if the receiver could not be reached: it did not answer in
-    /// time or the connection failed. Another try can work.
+    /// time or the connection failed, also on HEOS. Another try can work.
     #[must_use]
     pub const fn is_unreachable(&self) -> bool {
         self.is_timeout() || self.is_network()
     }
 
-    /// Returns true if the connection failed. Another try can work.
+    /// Returns true if the connection failed, also on HEOS. Another try can
+    /// work.
     #[must_use]
     pub const fn is_network(&self) -> bool {
         matches!(self, Self::Network { .. })
+            || matches!(self.heos(), Some(error) if error.is_network())
     }
 
     /// Returns true if the request surely did not reach the receiver: the
-    /// connection could not be opened, or telnet is not open. Sending it again
-    /// cannot run a command twice. A reset, a closed connection or a timeout
-    /// after the connection was open gives false. It is only for errors of
-    /// the connection: others, for example invalid input, give false.
+    /// connection could not be opened, telnet is not open, or too many lines
+    /// wait. Sending it again cannot run a command twice. A reset, a closed
+    /// connection or a timeout after the connection was open gives false. It
+    /// is only for errors of the connection: others, for example invalid
+    /// input, give false. For HEOS, see
+    /// [`heos::Error::is_not_sent`](denon_marantz_heos::Error::is_not_sent).
     #[must_use]
     pub const fn is_not_sent(&self) -> bool {
         matches!(
@@ -360,7 +427,15 @@ impl Error {
             Self::Timeout { sent: false, .. }
                 | Self::Network { sent: false, .. }
                 | Self::NotConnected
-        )
+                | Self::QueueFull
+        ) || matches!(self.heos(), Some(error) if error.is_not_sent())
+    }
+
+    /// Returns true if the receiver answered that it did not do the request:
+    /// an HTTP error status, or a HEOS command that failed.
+    #[must_use]
+    pub const fn is_rejected(&self) -> bool {
+        self.is_status() || matches!(self.heos(), Some(error) if error.is_rejected())
     }
 
     /// Returns true if the receiver refused the connection: nothing listens
@@ -396,16 +471,17 @@ impl Error {
     }
 
     /// Returns true if the receiver answered, but not in a way that makes
-    /// sense, or nothing that was asked for could be read.
+    /// sense, or nothing that was asked for could be read, also on HEOS.
     #[must_use]
     pub const fn is_invalid_response(&self) -> bool {
-        matches!(
-            self,
-            Self::InvalidResponse { .. }
-                | Self::Protocol { .. }
-                | Self::ResponseTooLarge { .. }
-                | Self::NothingRead
-        )
+        matches!(self.heos(), Some(error) if error.is_invalid_response())
+            || matches!(
+                self,
+                Self::InvalidResponse { .. }
+                    | Self::Protocol { .. }
+                    | Self::ResponseTooLarge { .. }
+                    | Self::NothingRead
+            )
     }
 
     /// The error for a command that the library refused to build.
@@ -601,5 +677,102 @@ mod tests {
         assert!(timeout.is_transient());
         assert!(!Error::DiracNotSupported.is_transient());
         assert!(Error::NothingRead.is_invalid_response());
+    }
+
+    #[test]
+    fn a_full_queue_is_not_sent_and_transient() {
+        let error = Error::QueueFull;
+        assert!(error.is_not_sent() && error.is_transient());
+        assert!(!error.is_not_connected() && !error.is_network() && !error.is_timeout());
+        assert!(!error.is_rejected() && !error.is_invalid_input());
+        assert_eq!(error.request(), None);
+    }
+
+    #[test]
+    fn only_a_status_is_rejected() {
+        let status = Error::Status {
+            request: "GET http://10.0.0.5/x".to_owned(),
+            status: 403,
+        };
+        assert!(status.is_rejected());
+        assert!(!Error::NotConnected.is_rejected());
+        assert!(!Error::NothingRead.is_rejected());
+    }
+
+    #[cfg(feature = "heos")]
+    #[test]
+    fn checks_look_into_heos_errors() {
+        use denon_marantz_heos::Error as HeosError;
+        use denon_marantz_heos::proto::{Error as HeosProto, Failure};
+        let timeout = |sent| HeosError::Timeout {
+            request: "connect".to_owned(),
+            limit: Duration::from_secs(1),
+            sent,
+        };
+        let inners = [
+            timeout(false),
+            timeout(true),
+            HeosError::Network {
+                request: "connect".to_owned(),
+                source: std::io::Error::from(std::io::ErrorKind::ConnectionRefused),
+            },
+            HeosError::NotConnected,
+            HeosError::Disconnected {
+                command: "player/play_next",
+            },
+            HeosError::QueueFull,
+            HeosError::Failed {
+                command: "player/play_next",
+                failure: Failure {
+                    code: None,
+                    text: "".into(),
+                    system_code: None,
+                },
+            },
+            HeosError::Protocol {
+                command: "player/get_players",
+                source: HeosProto::NoPayload,
+            },
+            HeosError::InvalidCommand(HeosProto::ValueOutOfRange { what: "preset" }),
+        ];
+        let requests = [
+            Some("connect"),
+            Some("connect"),
+            Some("connect"),
+            None,
+            Some("player/play_next"),
+            None,
+            Some("player/play_next"),
+            Some("player/get_players"),
+            None,
+        ];
+        // The HEOS crate tests the values; here each check must pass them on.
+        for (inner, request) in inners.into_iter().zip(requests) {
+            let expected = [
+                inner.is_not_sent(),
+                inner.is_timeout(),
+                inner.is_network(),
+                inner.is_transient(),
+                inner.is_rejected(),
+                inner.is_invalid_response(),
+                inner.is_invalid_input(),
+            ];
+            let error = Error::Heos(inner);
+            assert_eq!(error.request(), request, "{error}");
+            let found = [
+                error.is_not_sent(),
+                error.is_timeout(),
+                error.is_network(),
+                error.is_transient(),
+                error.is_rejected(),
+                error.is_invalid_response(),
+                error.is_invalid_input(),
+            ];
+            assert_eq!(found, expected, "{error}");
+            // The telnet checks stay false for HEOS errors.
+            assert!(!error.is_not_connected() && !error.is_status(), "{error}");
+        }
+        assert!(!Error::HeosNotSupported.is_transient());
+        assert!(Error::HeosNotSupported.is_unsupported());
     }
 }

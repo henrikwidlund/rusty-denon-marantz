@@ -26,6 +26,10 @@ use crate::state::{Change, HeosStatus, Shared};
 
 /// Bytes read at once.
 const READ_BUFFER: usize = 4096;
+/// The most jobs that wait to be sent. A command beyond it gets
+/// [`Error::QueueFull`]. Refreshes and internal reads are not refused, but
+/// they count.
+const MAX_QUEUED: usize = 256;
 
 /// Highest position or length that is used (`i32::MAX`). After `AirPlay`
 /// starts, the device can send a negative position as a 32-bit number without
@@ -223,6 +227,7 @@ impl Worker {
                     .reconnect(first_wait, &mut shutdown, &mut requests)
                     .await
                 else {
+                    refuse_all(&mut requests);
                     return;
                 };
                 // Requests that came while there was no connection are late.
@@ -236,6 +241,7 @@ impl Worker {
                 .await;
             self.shared.set_status(HeosStatus::Disconnected);
             if matches!(end, End::Shutdown) {
+                refuse_all(&mut requests);
                 return;
             }
             reconnected = true;
@@ -346,6 +352,7 @@ impl<'a> Session<'a> {
             End::Timeout { command, limit } => Error::Timeout {
                 request: command.to_owned(),
                 limit,
+                sent: true,
             },
             End::NotRegistered(ref failure) => Error::Failed {
                 command: REGISTER,
@@ -354,15 +361,14 @@ impl<'a> Session<'a> {
             _ => Error::NotConnected,
         };
         if let Some(Pending {
-            reply: Some(reply), ..
+            name,
+            reply: Some(reply),
+            ..
         }) = self.pending.take()
         {
-            // The device may have done the command, so it is not failed.
-            let error = match end {
-                End::NotRegistered(_) => Error::NotConnected,
-                _ => error(),
-            };
-            let _ = reply.send(Err(error));
+            // The device may have done the command, so it is not failed. A
+            // timeout has taken the pending command already.
+            let _ = reply.send(Err(Error::Disconnected { command: name }));
         }
         for job in self.queue.drain(..) {
             job.fail(error);
@@ -425,7 +431,11 @@ impl<'a> Session<'a> {
                 },
                 request = requests.recv() => match request {
                     Some(Request::Send { line, name, reply }) => {
-                        self.queue.push_back(Job::Command { line, name, reply: Some(reply) });
+                        if self.queue.len() >= MAX_QUEUED {
+                            let _ = reply.send(Err(Error::QueueFull));
+                        } else {
+                            self.queue.push_back(Job::Command { line, name, reply: Some(reply) });
+                        }
                     }
                     Some(Request::Refresh(done)) => {
                         self.queue_once(Job::internal(Command::GetPlayers));
@@ -482,7 +492,7 @@ impl<'a> Session<'a> {
             tracing::trace!(command = name, "HEOS command");
             if let Err(end) = self.write(stream, &line, shutdown).await {
                 if let Some(reply) = reply {
-                    let _ = reply.send(Err(Error::NotConnected));
+                    let _ = reply.send(Err(Error::Disconnected { command: name }));
                 }
                 return Err(end);
             }
@@ -540,6 +550,7 @@ impl<'a> Session<'a> {
                 let _ = reply.send(Err(Error::Timeout {
                     request: pending.name.to_owned(),
                     limit,
+                    sent: true,
                 }));
             }
             // A late answer would be taken for the answer to the next command.
@@ -800,6 +811,12 @@ fn drop_requests(requests: &mut mpsc::Receiver<Request>) {
     }
 }
 
+/// Refuses the waiting requests and all that come later, when the task ends.
+fn refuse_all(requests: &mut mpsc::Receiver<Request>) {
+    requests.close();
+    drop_requests(requests);
+}
+
 fn refuse(request: Request) {
     match request {
         Request::Send { reply, .. } => {
@@ -838,6 +855,7 @@ async fn open(host: &str, config: &HeosConfig) -> Result<TcpStream, Error> {
         Err(_) => Err(Error::Timeout {
             request: request(),
             limit: config.connect_timeout,
+            sent: false,
         }),
         Ok(Err(source)) => Err(Error::Network {
             request: request(),

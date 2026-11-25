@@ -4,10 +4,11 @@
 //! datagram that comes back to [`Response::parse`]. The answer has the URL of
 //! the device description.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4};
 use std::str::FromStr;
 
 use http::Uri;
+use http::uri::PathAndQuery;
 
 /// Address that devices listen on for searches.
 pub const MULTICAST_ADDRESS: Ipv4Addr = Ipv4Addr::new(239, 255, 255, 250);
@@ -142,7 +143,8 @@ impl<'a> Response<'a> {
 /// The parts of a location that a client needs to fetch the description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Location {
-    /// Host name or IP address. An IPv6 address has no brackets.
+    /// Host name or IP address. An IPv6 address has no brackets. An
+    /// IPv4-mapped IPv6 address is given as its IPv4 address.
     pub host: String,
     /// Port, 80 if the URL has none.
     pub port: u16,
@@ -152,7 +154,8 @@ pub struct Location {
 
 impl Location {
     /// Reads an `http` URL. Returns `None` for any other kind of URL, for a
-    /// URL with a user name, and for text that is not a URL.
+    /// URL with a user name, port 0, no host or brackets that do not hold an
+    /// IPv6 address, and for text that is not a URL.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let uri = Uri::from_str(text).ok()?;
@@ -164,27 +167,33 @@ impl Location {
             return None;
         }
         let host = authority.host();
-        let host = host
-            .strip_prefix('[')
-            .and_then(|rest| rest.strip_suffix(']'))
-            .unwrap_or(host);
+        let host = match host.strip_prefix('[') {
+            Some(rest) => {
+                let inner = rest.strip_suffix(']')?;
+                let address = inner.parse::<Ipv6Addr>().ok()?;
+                address
+                    .to_ipv4_mapped()
+                    .map_or_else(|| inner.to_owned(), |v4| v4.to_string())
+            }
+            None if host.is_empty() || host.contains(['[', ']']) => return None,
+            None => host.to_owned(),
+        };
         // The `http` crate drops a port that is too large, so read it here.
         let port = match authority.as_str().rsplit_once(':') {
             Some((_, digits))
                 if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) =>
             {
-                digits.parse().ok()?
+                digits.parse().ok().filter(|&port| port != 0)?
             }
             _ => 80,
         };
-        Some(Self {
-            host: host.to_owned(),
-            port,
-            path: uri
-                .path_and_query()
-                .map_or("/", |path| path.as_str())
-                .to_owned(),
-        })
+        let path = match uri.path_and_query().map(PathAndQuery::as_str) {
+            Some(path) if path.starts_with('/') => path.to_owned(),
+            // Only a query, for example `http://host?x`.
+            Some(path) => format!("/{path}"),
+            None => "/".to_owned(),
+        };
+        Some(Self { host, port, path })
     }
 
     /// The host as an IP address, if it is one.
@@ -320,6 +329,14 @@ mod tests {
             location("http://[fe80::1]:8080/d"),
             expected("fe80::1", 8080, "/d")
         );
+        assert_eq!(
+            location("http://192.168.1.10?x=1"),
+            expected("192.168.1.10", 80, "/?x=1")
+        );
+        assert_eq!(
+            location("http://[::ffff:192.168.1.10]:8080/d"),
+            expected("192.168.1.10", 8080, "/d")
+        );
         for bad in [
             "",
             "192.168.1.10/d.xml",
@@ -330,6 +347,11 @@ mod tests {
             "http:///d.xml",
             "/description.xml",
             "http://192.168.1.10:99999/d.xml",
+            "http://192.168.1.10:0/d.xml",
+            "http://://tt/",
+            "http://z[:]",
+            "http://[%(]",
+            "http://[fe80::1%25en0]/d",
             "http://a b/",
         ] {
             assert_eq!(location(bad), None, "{bad:?}");

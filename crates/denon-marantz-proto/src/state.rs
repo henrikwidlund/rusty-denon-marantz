@@ -235,8 +235,8 @@ pub struct ZoneState {
     pub channel_mode: Option<ZoneChannelMode>,
     /// HDMI audio of zone 2 and 3. Telnet reports it when it changes.
     pub hdmi_audio: Option<ZoneHdmiAudio>,
-    /// The quick select of the zone, from 1 to 5, or 0 for none. A Marantz
-    /// receiver calls it smart select. Telnet reports it.
+    /// The quick select of the zone, from 1 to [`MAX_QUICK_SELECT`], or 0 for
+    /// none. A Marantz receiver calls it smart select. Telnet reports it.
     pub quick_select: Option<u8>,
     /// Bass level. Telnet reports it for zone 2 and 3 when it changes, and
     /// `AppCommand0300.xml` gives it.
@@ -342,8 +342,9 @@ pub struct DeviceState {
     /// Brightness of the illumination. Marantz receivers only. Telnet reports
     /// it.
     pub illumination: Option<Illumination>,
-    /// Names of the quick selects. The first is quick select 1. A quick
-    /// select with no name, or that the receiver has not reported, is `None`.
+    /// Names of the quick selects. The first is quick select 1, the last at
+    /// most [`MAX_QUICK_SELECT`]. A quick select with no name, or that the
+    /// receiver has not reported, is `None`.
     /// Telnet reports them.
     pub quick_select_names: Vec<Option<String>>,
     /// Level of each speaker channel that the receiver has reported, in the
@@ -1514,7 +1515,7 @@ impl State {
             None => (parameter.strip_prefix("QS")?, false),
         };
         let digit = *rest.as_bytes().first()?;
-        let index = usize::from(digit.checked_sub(b'1').filter(|n| *n < 9)?);
+        let index = usize::from(digit.checked_sub(b'1').filter(|n| *n < MAX_QUICK_SELECT)?);
         // The first byte is an ASCII digit, so the index is a char boundary.
         let after = &rest[1..];
         let name = if answer_form {
@@ -3652,6 +3653,9 @@ mod tests {
             "SSQSN1 ?",
             "SSQS0QSN x",
             "SSQSQSN x",
+            // Above the highest quick select.
+            "SSQS7QSN x",
+            "SSQSNZMAQS7 x",
         ] {
             assert_eq!(apply(&mut state, line), None, "{line}");
         }

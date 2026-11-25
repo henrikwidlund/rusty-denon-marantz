@@ -1,18 +1,25 @@
 //! Bytes from a HEOS connection in chunks: decoder, lines, events and payloads.
+//! The lines must be the same as when the bytes come in one piece.
 #![no_main]
+
+mod chunks;
 
 use denon_marantz_heos_proto::{BrowseItem, LineDecoder, Player, QueueItem, QuickSelect, Response};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let Some((&first, rest)) = data.split_first() else {
+    let Some((sizes, rest)) = chunks::split_sizes(data) else {
         return;
     };
-    // The first byte sets the size of the chunks, from 1 to 64 bytes.
-    let chunk = usize::from(first % 64) + 1;
+    let mut whole = Vec::new();
+    LineDecoder::new().decode(rest, |line| whole.push(line.to_owned()));
+
     let mut decoder = LineDecoder::new();
-    for part in rest.chunks(chunk) {
+    let mut count = 0;
+    for part in chunks::chunks(sizes, rest) {
         decoder.decode(part, |line| {
+            assert_eq!(whole.get(count).map(String::as_str), Some(line));
+            count += 1;
             let Ok(response) = Response::parse(line) else {
                 return;
             };
@@ -39,4 +46,5 @@ fuzz_target!(|data: &[u8]| {
             let _ = response.count();
         });
     }
+    assert_eq!(count, whole.len());
 });

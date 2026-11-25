@@ -13,6 +13,8 @@ use denon_marantz_heos::{
     Change, Command, Error, Event, Heos, HeosConfig, HeosStatus, PlayState, PlayerId, PlayerState,
     Progress, RepeatMode,
 };
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 #[tokio::test]
 async fn connect_reads_the_players_and_their_state() {
@@ -32,6 +34,8 @@ async fn connect_reads_the_players_and_their_state() {
     assert_eq!(state.current_media(), None);
     assert_eq!(heos.player_by_ip(IP.parse().unwrap()), Some(PID));
     assert_eq!(heos.player_by_ip("192.168.1.21".parse().unwrap()), None);
+    let mapped = format!("::ffff:{IP}");
+    assert_eq!(heos.player_by_ip(mapped.parse().unwrap()), Some(PID));
     assert_eq!(heos.player(PlayerId(1)), None);
     assert_eq!(heos.with_player(PID, PlayerState::pid), Some(PID));
     assert_eq!(heos.with_player(PlayerId(1), PlayerState::pid), None);
@@ -194,6 +198,22 @@ async fn players_changed_reads_the_players_again() {
 }
 
 #[tokio::test]
+async fn a_player_with_a_mapped_ipv6_address_is_found_by_its_ipv4_address() {
+    let fake = Fake::start(|line| match from_data(line) {
+        Reply::Lines(lines) => Reply::Lines(
+            lines
+                .into_iter()
+                .map(|line| line.replace(IP, &format!("::ffff:{IP}")))
+                .collect(),
+        ),
+        reply => reply,
+    })
+    .await;
+    let heos = connect(&fake).await;
+    assert_eq!(heos.player_by_ip(IP.parse().unwrap()), Some(PID));
+}
+
+#[tokio::test]
 async fn commands_give_the_answer_or_the_failure() {
     let fake = Fake::start(|line| match name(line) {
         "player/play_previous" => Reply::Lines(vec![failure(
@@ -263,6 +283,31 @@ async fn a_command_whose_caller_stopped_waiting_is_not_sent() {
 }
 
 #[tokio::test]
+async fn a_command_sent_when_the_connection_closes_may_be_done() {
+    let fake = Fake::start(|line| match name(line) {
+        "player/play_previous" => Reply::Hang,
+        _ => from_data(line),
+    })
+    .await;
+    let heos = connect(&fake).await;
+    let (error, ()) = tokio::join!(heos.play_previous(PID), async {
+        wait_until(|| fake.count("player/play_previous") == 1).await;
+        fake.close_all();
+    });
+    let error = error.unwrap_err();
+    assert!(
+        matches!(
+            error,
+            Error::Disconnected {
+                command: "player/play_previous"
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(!error.is_not_sent() && error.is_network());
+}
+
+#[tokio::test]
 async fn a_command_without_an_answer_times_out_and_connects_again() {
     let fake = Fake::start(|line| match name(line) {
         "player/play_previous" => Reply::Hang,
@@ -277,7 +322,11 @@ async fn a_command_without_an_answer_times_out_and_connects_again() {
         heos.play_next(PID).await
     });
     let error = error.unwrap_err();
-    assert!(matches!(error, Error::Timeout { .. }), "{error:?}");
+    assert!(
+        matches!(error, Error::Timeout { sent: true, .. }),
+        "{error:?}"
+    );
+    assert!(!error.is_not_sent());
     assert!(waiting.unwrap_err().is_not_connected());
     status
         .wait_for(|status| *status == HeosStatus::Connected)
@@ -353,7 +402,7 @@ async fn a_refused_register_opens_the_connections_again() {
 }
 
 #[tokio::test]
-async fn a_command_in_flight_is_not_failed_by_a_refused_register() {
+async fn a_sent_command_is_not_failed_by_a_refused_register() {
     let fake = Fake::start(|line| match name(line) {
         "player/play_next" => Reply::Hang,
         _ => from_data(line),
@@ -384,7 +433,16 @@ async fn a_command_in_flight_is_not_failed_by_a_refused_register() {
         .unwrap();
     let error = heos.play_next(PID).await.unwrap_err();
     // The device may have done the command, so it is not `Failed`.
-    assert!(error.is_not_connected(), "{error:?}");
+    assert!(
+        matches!(
+            error,
+            Error::Disconnected {
+                command: "player/play_next"
+            }
+        ),
+        "{error:?}"
+    );
+    assert!(!error.is_not_sent());
     assert_eq!(fake.count("player/play_next"), 1);
 }
 
@@ -485,6 +543,67 @@ async fn shutdown_closes_the_connections_for_all_references() {
     // It does not connect again.
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(fake.connections(), 2);
+}
+
+/// Waits until the watch closes. Values that come before are skipped.
+async fn until_watch_closed<T: Send + Sync>(receiver: &mut tokio::sync::watch::Receiver<T>) {
+    let closed = async { while receiver.changed().await.is_ok() {} };
+    tokio::time::timeout(Duration::from_secs(2), closed)
+        .await
+        .expect("not closed");
+}
+
+/// Waits until the receiver closes. Values sent before are skipped.
+async fn until_closed<T: Clone>(receiver: &mut broadcast::Receiver<T>) {
+    let closed = async {
+        loop {
+            match receiver.recv().await {
+                Err(RecvError::Closed) => break,
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(2), closed)
+        .await
+        .expect("not closed");
+}
+
+#[tokio::test]
+async fn receivers_close_when_the_task_ends() {
+    let fake = Fake::start(from_data).await;
+    let heos = connect(&fake).await;
+    let mut changes = heos.changes();
+    let mut events = heos.events();
+    let mut players = heos.watch_players();
+    assert!(!heos.is_shut_down());
+    heos.shutdown();
+    assert!(heos.is_shut_down());
+    until_closed(&mut changes).await;
+    until_closed(&mut events).await;
+    until_watch_closed(&mut players).await;
+    // New receivers are closed at once.
+    assert_eq!(heos.changes().try_recv(), Err(TryRecvError::Closed));
+    assert!(matches!(
+        heos.events().try_recv(),
+        Err(TryRecvError::Closed)
+    ));
+    assert!(heos.watch_players().has_changed().is_err());
+    // The last state can still be read.
+    assert_eq!(heos.status(), HeosStatus::Disconnected);
+    assert_eq!(heos.players().len(), 1);
+}
+
+#[tokio::test]
+async fn receivers_close_after_close() {
+    let fake = Fake::start(from_data).await;
+    let heos = connect(&fake).await;
+    let mut changes = heos.changes();
+    let mut events = heos.events();
+    let mut players = heos.watch_players();
+    heos.close().await;
+    until_closed(&mut changes).await;
+    until_closed(&mut events).await;
+    until_watch_closed(&mut players).await;
 }
 
 #[tokio::test]

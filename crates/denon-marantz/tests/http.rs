@@ -204,14 +204,20 @@ async fn requests_are_spaced_by_the_pacer() {
 async fn invalid_host_and_path_are_errors() {
     assert!(matches!(
         HttpClient::new("bad host", 80, config()),
-        Err(Error::InvalidRequest(_))
+        Err(Error::InvalidRequest(text)) if text.starts_with(r#"host "bad host": "#)
     ));
     let fake = Fake::start(|_| Reply::Body(Vec::new())).await;
     let error = client(&fake, config())
         .get("no slash \n")
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::InvalidRequest(_)), "{error:?}");
+    assert!(
+        matches!(
+            &error,
+            Error::InvalidRequest(text) if text.starts_with(r#"path "no slash \n": "#)
+        ),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

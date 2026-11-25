@@ -172,29 +172,20 @@ impl Shared {
         }
     }
 
+    /// What a client reads. It does not keep the senders of the players,
+    /// changes and events, so their receivers close when the task ends.
+    pub(crate) fn view(&self) -> View {
+        View {
+            players: self.players.subscribe(),
+            changes: self.changes.downgrade(),
+            events: self.events.downgrade(),
+            status: self.status.clone(),
+        }
+    }
+
     /// Reads the players without a copy.
     pub(crate) fn read<T>(&self, read: impl FnOnce(&[PlayerState]) -> T) -> T {
         read(&self.players.borrow())
-    }
-
-    pub(crate) fn watch_players(&self) -> watch::Receiver<Vec<PlayerState>> {
-        self.players.subscribe()
-    }
-
-    pub(crate) fn subscribe_changes(&self) -> broadcast::Receiver<Change> {
-        self.changes.subscribe()
-    }
-
-    pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<Event<'static>> {
-        self.events.subscribe()
-    }
-
-    pub(crate) fn status(&self) -> HeosStatus {
-        *self.status.borrow()
-    }
-
-    pub(crate) fn watch_status(&self) -> watch::Receiver<HeosStatus> {
-        self.status.subscribe()
     }
 
     /// Sets the status. Watchers are told only if it changed.
@@ -322,6 +313,55 @@ impl Shared {
     }
 }
 
+/// The side of [`Shared`] that a client keeps. The status stays readable
+/// after the task ends.
+#[derive(Debug)]
+pub(crate) struct View {
+    players: watch::Receiver<Vec<PlayerState>>,
+    changes: broadcast::WeakSender<Change>,
+    events: broadcast::WeakSender<Event<'static>>,
+    status: watch::Sender<HeosStatus>,
+}
+
+impl View {
+    /// Reads the players without a copy.
+    pub(crate) fn read<T>(&self, read: impl FnOnce(&[PlayerState]) -> T) -> T {
+        read(&self.players.borrow())
+    }
+
+    /// Closes when the task ends.
+    pub(crate) fn watch_players(&self) -> watch::Receiver<Vec<PlayerState>> {
+        let mut players = self.players.clone();
+        players.mark_unchanged();
+        players
+    }
+
+    /// Closes when the task ends. Closed at once after it.
+    pub(crate) fn subscribe_changes(&self) -> broadcast::Receiver<Change> {
+        subscribe(&self.changes)
+    }
+
+    /// Closes when the task ends. Closed at once after it.
+    pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<Event<'static>> {
+        subscribe(&self.events)
+    }
+
+    pub(crate) fn status(&self) -> HeosStatus {
+        *self.status.borrow()
+    }
+
+    pub(crate) fn watch_status(&self) -> watch::Receiver<HeosStatus> {
+        self.status.subscribe()
+    }
+}
+
+/// A receiver of `sender`, or a closed one if the sender is gone.
+fn subscribe<T: Clone>(sender: &broadcast::WeakSender<T>) -> broadcast::Receiver<T> {
+    sender
+        .upgrade()
+        .map_or_else(|| broadcast::channel(1).1, |sender| sender.subscribe())
+}
+
 /// Keeps the first player of each id, in order.
 fn first_of_each_pid(mut list: Vec<Player<'_>>) -> Vec<Player<'_>> {
     let mut kept = 0;
@@ -391,7 +431,7 @@ mod tests {
     #[test]
     fn players_keep_their_state() {
         let shared = Shared::new();
-        let mut receiver = shared.subscribe_changes();
+        let mut receiver = shared.view().subscribe_changes();
         shared.set_players(vec![player(1, "A"), player(2, "B")]);
         shared.set_play_state(PlayerId(2), Some(PlayState::Play));
         shared.set_players(vec![player(2, "B"), player(1, "A")]);
@@ -418,7 +458,7 @@ mod tests {
         let shared = Shared::new();
         let pid = PlayerId(1);
         shared.set_players(vec![player(1, "A")]);
-        let mut receiver = shared.subscribe_changes();
+        let mut receiver = shared.view().subscribe_changes();
         let progress = Progress {
             position_ms: 1000,
             duration_ms: 0,
@@ -451,7 +491,7 @@ mod tests {
     #[test]
     fn only_the_first_player_of_an_id_is_kept() {
         let shared = Shared::new();
-        let mut receiver = shared.subscribe_changes();
+        let mut receiver = shared.view().subscribe_changes();
         let list = || {
             vec![
                 player(1, "A"),
@@ -481,7 +521,7 @@ mod tests {
         shared.set_progress(pid, progress);
         shared.set_play_state(pid, Some(PlayState::Pause));
         shared.read(|states| assert_eq!(states[0].progress, Some(progress)));
-        let mut receiver = shared.subscribe_changes();
+        let mut receiver = shared.view().subscribe_changes();
         shared.set_play_state(pid, Some(PlayState::Stop));
         shared.read(|states| assert_eq!(states[0].progress, None));
         assert_eq!(
@@ -528,7 +568,7 @@ mod tests {
         let shared = Shared::new();
         let pid = PlayerId(1);
         shared.set_players(vec![player(1, "A")]);
-        let mut receiver = shared.subscribe_changes();
+        let mut receiver = shared.view().subscribe_changes();
         shared.set_play_mode(pid, Some(RepeatMode::OnAll), None);
         shared.read(|states| assert_eq!(states[0].play_mode(), None));
         shared.set_play_mode(pid, None, Some(true));

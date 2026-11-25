@@ -107,8 +107,11 @@ impl TunerFrequency {
         if whole.is_empty() || fraction.len() != 2 || !digits(whole) || !digits(fraction) {
             return None;
         }
-        let hundredths =
-            whole.parse::<u32>().ok()?.checked_mul(100)? + fraction.parse::<u32>().ok()?;
+        let hundredths = whole
+            .parse::<u32>()
+            .ok()?
+            .checked_mul(100)?
+            .checked_add(fraction.parse::<u32>().ok()?)?;
         (hundredths > 0).then_some(Self { hundredths })
     }
 }
@@ -708,7 +711,19 @@ mod tests {
         let hundredths = |text| TunerFrequency::from_page(text).map(TunerFrequency::hundredths);
         assert_eq!(hundredths(" 87.50"), Some(8750));
         assert_eq!(hundredths("1050.00"), Some(105_000));
-        for text in ["", " 0.00", "87.5", "87", "a.50", ".50", "87.5x", "-1.00"] {
+        assert_eq!(hundredths("42949672.95"), Some(u32::MAX));
+        for text in [
+            "",
+            " 0.00",
+            "87.5",
+            "87",
+            "a.50",
+            ".50",
+            "87.5x",
+            "-1.00",
+            "42949672.96",
+            "42949673.00",
+        ] {
             assert_eq!(hundredths(text), None, "{text:?}");
         }
     }
@@ -1025,9 +1040,16 @@ mod tests {
 
     #[test]
     fn a_failed_command_leaves_the_text_unchanged() {
-        for command in [TunerCommand::Preset(0), TunerCommand::HdMulticast(9)] {
+        for (command, what) in [
+            (TunerCommand::Preset(0), "tuner preset"),
+            (TunerCommand::HdMulticast(9), "HD Radio multicast channel"),
+        ] {
             let mut out = String::from("x");
-            assert!(command.write(&mut out).is_err());
+            assert_eq!(
+                command.write(&mut out),
+                Err(Error::ValueOutOfRange { what }),
+                "{command:?}"
+            );
             assert_eq!(out, "x");
         }
     }

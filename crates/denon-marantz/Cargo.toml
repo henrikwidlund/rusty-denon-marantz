@@ -47,7 +47,7 @@ socket2 = { workspace = true, optional = true }
 [dev-dependencies]
 serde_json.workspace = true
 tracing-subscriber.workspace = true
-tokio = { workspace = true, features = ["io-util", "macros", "rt", "signal", "test-util"] }
+tokio = { workspace = true, features = ["io-util", "macros", "rt", "rt-multi-thread", "signal", "test-util"] }
 
 [[example]]
 name = "discover"

@@ -13,7 +13,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use crate::error::Error;
-use crate::state::{Change, HeosStatus, PlayerState, Shared};
+use crate::state::{Change, HeosStatus, PlayerState, Shared, View};
 use crate::worker::{Connections, Request, Worker};
 
 /// Requests that wait for the task. A caller that sends more waits.
@@ -72,7 +72,12 @@ impl Default for HeosConfig {
 }
 
 impl HeosConfig {
-    fn check(&self) -> Result<(), Error> {
+    /// Checks the settings. [`Heos::connect_with`] does this too.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] if a setting is not valid.
+    pub fn check(&self) -> Result<(), Error> {
         let times = [
             self.connect_timeout,
             self.write_timeout,
@@ -140,7 +145,7 @@ pub struct Page<T> {
 #[derive(Debug)]
 pub struct Heos {
     host: String,
-    shared: Shared,
+    view: View,
     requests: mpsc::Sender<Request>,
     shutdown: watch::Sender<bool>,
     task: Option<JoinHandle<()>>,
@@ -165,20 +170,21 @@ impl Heos {
         let host = crate::host::into_bare(host.into());
         let connections = Connections::open(&host, &config).await?;
         let shared = Shared::new();
+        let view = shared.view();
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let (requests, request_receiver) = mpsc::channel(REQUEST_CAPACITY);
         let (synced, first_read) = oneshot::channel();
         let worker = Worker {
             host: host.clone(),
             config,
-            shared: shared.clone(),
+            shared,
         };
         let task =
             tokio::spawn(worker.run(connections, synced, request_receiver, shutdown_receiver));
         // Dropping the value on an error stops the task.
         let heos = Self {
             host,
-            shared,
+            view,
             requests,
             shutdown,
             task: Some(task),
@@ -196,40 +202,46 @@ impl Heos {
     /// State of the connections.
     #[must_use]
     pub fn status(&self) -> HeosStatus {
-        self.shared.status()
+        self.view.status()
     }
 
-    /// Watches the state of the connections.
+    /// Watches the state of the connections. It stays open while the value
+    /// exists: the last status stays readable after the task ends.
     #[must_use]
     pub fn watch_status(&self) -> watch::Receiver<HeosStatus> {
-        self.shared.watch_status()
+        self.view.watch_status()
     }
 
     /// Subscribes to the changes of the state. Read the new values with
-    /// [`Heos::players`] or [`Heos::player`].
+    /// [`Heos::players`] or [`Heos::player`]. It closes after
+    /// [`Heos::shutdown`] or [`Heos::close`], or when the value is dropped.
     #[must_use]
     pub fn changes(&self) -> broadcast::Receiver<Change> {
-        self.shared.subscribe_changes()
+        self.view.subscribe_changes()
     }
 
-    /// Subscribes to the events as the device sends them.
+    /// Subscribes to the events as the device sends them. It closes after
+    /// [`Heos::shutdown`] or [`Heos::close`], or when the value is dropped.
     ///
     /// [`Event::UserChanged`] has the name of the HEOS account.
     #[must_use]
     pub fn events(&self) -> broadcast::Receiver<Event<'static>> {
-        self.shared.subscribe_events()
+        self.view.subscribe_events()
     }
 
-    /// Watches the state of all players.
+    /// Watches the state of all players. If the device lists a player id
+    /// twice, the first entry is kept. It closes after
+    /// [`Heos::shutdown`] or [`Heos::close`], or when the value is dropped.
     #[must_use]
     pub fn watch_players(&self) -> watch::Receiver<Vec<PlayerState>> {
-        self.shared.watch_players()
+        self.view.watch_players()
     }
 
-    /// The state of all players.
+    /// The state of all players. If the device lists a player id twice, the
+    /// first entry is kept.
     #[must_use]
     pub fn players(&self) -> Vec<PlayerState> {
-        self.shared.read(<[PlayerState]>::to_vec)
+        self.view.read(<[PlayerState]>::to_vec)
     }
 
     /// The state of one player.
@@ -242,22 +254,28 @@ impl Heos {
     /// the player is not known. The state is locked while `read` runs, so
     /// keep it short.
     pub fn with_player<T>(&self, pid: PlayerId, read: impl FnOnce(&PlayerState) -> T) -> Option<T> {
-        self.shared
+        self.view
             .read(|states| states.iter().find(|state| state.pid() == pid).map(read))
     }
 
-    /// The player with this IP address. The AVC-A10H has one player for all
-    /// its zones.
+    /// The player with this IP address. An IPv4-mapped IPv6 address matches
+    /// its IPv4 address. The AVC-A10H has one player for all its zones.
     ///
     /// After the device wakes up, it can take some time to find its players.
     /// A player that is not known yet comes later with
     /// [`Change::Players`].
     #[must_use]
     pub fn player_by_ip(&self, ip: IpAddr) -> Option<PlayerId> {
-        self.shared.read(|states| {
+        let ip = ip.to_canonical();
+        self.view.read(|states| {
             states
                 .iter()
-                .find(|state| state.player.ip_addr() == Some(ip))
+                .find(|state| {
+                    state
+                        .player
+                        .ip_addr()
+                        .is_some_and(|own| own.to_canonical() == ip)
+                })
                 .map(PlayerState::pid)
         })
     }
@@ -268,17 +286,26 @@ impl Heos {
     ///
     /// Answers to reads of the state, for example `get_now_playing_media`,
     /// and to `set_play_mode` also change the state.
+    ///
+    /// # Errors
+    ///
+    /// The other commands give the same errors.
+    /// - Not sent: [`Error::InvalidCommand`] for a bad argument,
+    ///   [`Error::NotConnected`], [`Error::QueueFull`].
+    /// - Maybe sent: [`Error::Disconnected`], [`Error::Timeout`] with `sent`
+    ///   true.
+    /// - Answered: [`Error::Failed`] if the device says the command failed,
+    ///   [`Error::Protocol`] for an answer that cannot be read.
     pub async fn send(&self, command: Command<'_>) -> Result<Answer, Error> {
         let mut line = String::new();
         command.write(&mut line).map_err(Error::InvalidCommand)?;
+        let name = command.name();
         let (reply, answer) = oneshot::channel();
-        self.request(Request::Send {
-            line,
-            name: command.name(),
-            reply,
-        })
-        .await?;
-        answer.await.unwrap_or(Err(Error::NotConnected))
+        self.request(Request::Send { line, name, reply }).await?;
+        // The task ended: the command may have been written.
+        answer
+            .await
+            .unwrap_or(Err(Error::Disconnected { command: name }))
     }
 
     /// Plays, pauses or stops.
@@ -413,12 +440,19 @@ impl Heos {
     /// [`Error::NotConnected`] at once. It does not wait for the task to end,
     /// see [`Heos::close`].
     pub fn shutdown(&self) {
-        let _ = self.shutdown.send(true);
+        self.shutdown.send_replace(true);
+    }
+
+    /// True after [`Heos::shutdown`]. The task can still run for a short
+    /// time.
+    #[must_use]
+    pub fn is_shut_down(&self) -> bool {
+        *self.shutdown.borrow()
     }
 
     /// Stops the task and closes the connections.
     pub async fn close(mut self) {
-        let _ = self.shutdown.send(true);
+        self.shutdown.send_replace(true);
         if let Some(task) = self.task.take() {
             let _ = task.await;
         }

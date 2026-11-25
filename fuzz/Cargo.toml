@@ -72,6 +72,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "mdns_address"
+path = "fuzz_targets/mdns_address.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "now_playing"
 path = "fuzz_targets/now_playing.rs"
 test = false

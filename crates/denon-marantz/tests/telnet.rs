@@ -50,6 +50,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         // Tests that need it turn it on.
         signal_check: None,
         query_groups: QueryGroup::DEFAULT_ORDER,
+        // Tests that need it turn it on.
+        power_on_hold: Duration::ZERO,
     }
 }
 
@@ -80,6 +82,28 @@ async fn status_is(avr: &Avr, wanted: TelnetStatus) {
     .await
     .unwrap_or_else(|_| panic!("timed out waiting for {wanted:?}"))
     .unwrap();
+}
+
+/// Checks that `error` is [`Error::NumberOutOfRange`] for `what`.
+#[track_caller]
+fn assert_out_of_range(error: &Error, what: &str) {
+    assert!(
+        matches!(error, Error::NumberOutOfRange { what: named } if *named == what),
+        "{error:?}"
+    );
+}
+
+/// Checks that `error` is [`Error::InvalidCommand`] for text that is empty or
+/// has a control character.
+#[track_caller]
+fn assert_invalid_text(error: &Error) {
+    assert!(
+        matches!(
+            error,
+            Error::InvalidCommand(denon_marantz_proto::Error::InvalidCommandText)
+        ),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]
@@ -528,16 +552,38 @@ async fn a_failed_first_connection_is_an_error() {
 #[tokio::test]
 async fn invalid_settings_are_refused() {
     let http = avr_x_receiver().await;
-    let config = TelnetConfig {
-        keep_alive: Duration::ZERO,
-        ..TelnetConfig::default()
-    };
-    let error = builder(&http, ReceiverType::AvrX)
-        .telnet_config(config)
-        .connect()
-        .await
-        .unwrap_err();
-    assert!(matches!(error, Error::InvalidConfig(_)), "{error:?}");
+    let invalid = [
+        (
+            TelnetConfig {
+                keep_alive: Duration::ZERO,
+                // So that only the rule of this case is broken.
+                power_on_hold: Duration::ZERO,
+                ..TelnetConfig::default()
+            },
+            "connect_timeout, write_timeout, keep_alive, reconnect_min and answer_quiet must be above 0",
+        ),
+        (
+            TelnetConfig {
+                power_on_hold: TelnetConfig::default().keep_alive + Duration::from_millis(1),
+                ..TelnetConfig::default()
+            },
+            "power_on_hold must not be above keep_alive",
+        ),
+    ];
+    for (config, message) in invalid {
+        let error = builder(&http, ReceiverType::AvrX)
+            .telnet_config(config)
+            .connect()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::InvalidConfig(text) if *text == message
+            ),
+            "{error:?}"
+        );
+    }
 }
 
 /// The queries of the default order that the 0301 fake receiver gets: the
@@ -626,10 +672,15 @@ async fn a_group_that_was_left_out_can_be_fetched_later() {
 
 /// A connection that fetched nothing at connect, and what it sent so far.
 async fn connected_without_queries(telnet: &FakeTelnet) -> Avr {
+    connected_without_queries_with(telnet, telnet_config(telnet.port)).await
+}
+
+/// As [`connected_without_queries`], with `config` for the other settings.
+async fn connected_without_queries_with(telnet: &FakeTelnet, config: TelnetConfig) -> Avr {
     static NONE: [QueryGroup; 0] = [];
     let config = TelnetConfig {
         query_groups: &NONE,
-        ..telnet_config(telnet.port)
+        ..config
     };
     let (avr, _http) = connected(config).await;
     avr.telnet_connect().await.unwrap();
@@ -667,21 +718,39 @@ async fn ask_sends_nothing_if_one_entry_is_not_valid() {
         .telnet_ask(&[Query::DynamicEq.into(), Query::Mdax.into()])
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    assert!(
+        matches!(
+            &error,
+            Error::InvalidRequest(text) if text == "Mdax has no query for Denon"
+        ),
+        "{error}"
+    );
     // A raw text that is not a query.
     let error = avr.telnet_ask(&[Ask::Raw("PWON")]).await.unwrap_err();
-    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    assert!(
+        matches!(
+            &error,
+            Error::InvalidRequest(text) if text == r#"query "PWON" does not end with ?"#
+        ),
+        "{error}"
+    );
     // A carriage return would start a new command.
     let error = avr
         .telnet_ask(&[Ask::Raw("MV?\rPWSTANDBY?")])
         .await
         .unwrap_err();
-    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    assert_invalid_text(&error);
     // Nothing may follow the question mark.
     let error = avr.telnet_ask(&[Ask::Raw("PW? ")]).await.unwrap_err();
-    assert!(matches!(error, Error::InvalidRequest(_)), "{error}");
+    assert!(
+        matches!(
+            &error,
+            Error::InvalidRequest(text) if text == r#"query "PW? " does not end with ?"#
+        ),
+        "{error}"
+    );
     let error = avr.telnet_ask(&[Ask::Raw("")]).await.unwrap_err();
-    assert!(matches!(error, Error::InvalidCommand(_)), "{error}");
+    assert_invalid_text(&error);
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(sent(&telnet).len(), before);
 }
@@ -718,6 +787,47 @@ async fn repeated_asks_do_not_grow_the_queue() {
     let count = |query: &str| lines.iter().filter(|line| line.as_str() == query).count();
     assert_eq!(count("PSDYNEQ ?"), 1, "{lines:?}");
     assert_eq!(count("XYZ ?"), 1, "{lines:?}");
+}
+
+#[tokio::test]
+async fn a_late_answer_is_not_reported_as_missed() {
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    // The second query is written long after the first one is missed, so the
+    // wait goes on. The unit test in `telnet.rs` checks the late answer step
+    // by step; this test checks the whole path.
+    let config = TelnetConfig {
+        query_groups: &[],
+        query_interval: Duration::from_millis(1200),
+        ..telnet_config(telnet.port)
+    };
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(config)
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    wait_until("the power query", || count_sent(&telnet, "ZM?") == 1).await;
+    telnet.send(b"ZMON\r");
+    avr.telnet_ask(&[Ask::Raw("PSIMAXSWM ?"), Ask::Raw("PSDYNEQ ?")])
+        .await
+        .unwrap();
+    let sync = avr.telnet_sync();
+    let answers = async {
+        wait_until("the first query", || {
+            count_sent(&telnet, "PSIMAXSWM ?") == 1
+        })
+        .await;
+        // After the quiet time of 200 ms the first query counts as missed.
+        // The answer comes long after that.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        telnet.send(b"PSIMAXSWM AUTO\r");
+        wait_until("the second query", || count_sent(&telnet, "PSDYNEQ ?") == 1).await;
+        telnet.send(b"PSDYNEQ ON\r");
+    };
+    let (missed, ()) = tokio::join!(sync, answers);
+    let missed = missed.unwrap();
+    assert!(missed.is_empty(), "{missed:?}");
 }
 
 #[tokio::test]
@@ -837,6 +947,50 @@ async fn send_writes_the_command_for_the_zone() {
 }
 
 #[tokio::test]
+async fn too_many_waiting_commands_are_refused() {
+    let telnet = FakeTelnet::start().await;
+    // The first line waits for a long time, so the other lines stay in the
+    // queue.
+    let config = TelnetConfig {
+        command_interval: Duration::from_secs(60),
+        ..telnet_config(telnet.port)
+    };
+    let (avr, _http) = connected(config).await;
+    let avr = std::sync::Arc::new(avr);
+    let mut sends = tokio::task::JoinSet::new();
+    for _ in 0..300 {
+        let avr = avr.clone();
+        sends.spawn(async move { avr.telnet_send(Zone::Main, Command::VolumeUp).await });
+    }
+    // Only the refused sends end, and at most one line is written. The
+    // others wait for their write. At least 300 - 256 end; after them, a
+    // gap of 1 s ends the wait.
+    let (mut full, mut written) = (0, 0);
+    loop {
+        let gap = if full + written < 300 - 256 {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(1)
+        };
+        let Ok(Some(result)) = timeout(gap, sends.join_next()).await else {
+            break;
+        };
+        match result.unwrap() {
+            Ok(()) => written += 1,
+            Err(error) => {
+                assert!(matches!(error, Error::QueueFull), "{error}");
+                assert!(error.is_not_sent() && error.is_transient());
+                full += 1;
+            }
+        }
+    }
+    assert!(written <= 1, "{written} written");
+    // 256 wait at most.
+    assert!(full >= 300 - 256 - written, "{full} refused");
+    assert_eq!(sends.len(), 300 - full - written);
+}
+
+#[tokio::test]
 async fn commands_go_before_the_remaining_queries() {
     let telnet = FakeTelnet::start().await;
     let config = TelnetConfig {
@@ -914,6 +1068,91 @@ async fn writes_keep_the_spacing() {
     );
 }
 
+/// Power lines that say that no zone is on.
+const ALL_OFF: &[u8] = b"ZMOFF\rZ2OFF\rZ3OFF\r";
+
+/// The time from the start of `command` to the end of the next send.
+/// `power` has the power lines that the receiver sends first, or is `None`
+/// to keep the power state unknown. The state keeps the zone 3 power also on
+/// a receiver with two zones.
+async fn wait_after_power_on(power: Option<&[u8]>, zone: Zone, command: Command<'_>) -> Duration {
+    let telnet = FakeTelnet::start().await;
+    let config = TelnetConfig {
+        power_on_hold: Duration::from_millis(400),
+        ..telnet_config(telnet.port)
+    };
+    let avr = connected_without_queries_with(&telnet, config).await;
+    if let Some(lines) = power {
+        telnet.send(lines);
+        let zones: Vec<Zone> = lines
+            .split(|&byte| byte == b'\r')
+            .filter_map(|line| match line.get(..2) {
+                Some(b"ZM") => Some(Zone::Main),
+                Some(b"Z2") => Some(Zone::Zone2),
+                Some(b"Z3") => Some(Zone::Zone3),
+                _ => None,
+            })
+            .collect();
+        wait_until("the power lines", || {
+            let state = avr.snapshot();
+            zones.iter().all(|&each| state.zone(each).power.is_some())
+        })
+        .await;
+    } else {
+        let state = avr.snapshot();
+        assert!(
+            Zone::ALL
+                .iter()
+                .all(|&each| state.zone(each).power.is_none())
+        );
+    }
+    let start = tokio::time::Instant::now();
+    avr.telnet_send(zone, command).await.unwrap();
+    avr.telnet_send(zone, Command::VolumeUp).await.unwrap();
+    start.elapsed()
+}
+
+#[tokio::test]
+async fn a_power_on_while_no_zone_is_on_holds_the_next_line() {
+    let off = Some(ALL_OFF);
+    for (power, zone, command) in [
+        (off, Zone::Zone2, Command::PowerOn),
+        (off, Zone::Main, Command::DevicePowerOn),
+        (None, Zone::Zone2, Command::PowerOn),
+    ] {
+        let waited = wait_after_power_on(power, zone, command).await;
+        assert!(
+            waited >= Duration::from_millis(400),
+            "{command:?} {power:?}: {waited:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn other_lines_and_a_power_on_while_a_zone_is_on_do_not_hold() {
+    for (power, zone, command) in [
+        (b"ZMON\rZ2OFF\r".as_slice(), Zone::Zone2, Command::PowerOn),
+        (
+            b"ZMOFF\rZ2ON\r".as_slice(),
+            Zone::Main,
+            Command::DevicePowerOn,
+        ),
+        (
+            b"ZMOFF\rZ2OFF\rZ3ON\r".as_slice(),
+            Zone::Main,
+            Command::PowerOn,
+        ),
+        (ALL_OFF, Zone::Main, Command::VolumeUp),
+        (ALL_OFF, Zone::Main, Command::Raw("PWON")),
+    ] {
+        let waited = wait_after_power_on(Some(power), zone, command).await;
+        assert!(
+            waited < Duration::from_millis(400),
+            "{command:?} {power:?}: {waited:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn nothing_is_sent_while_the_connection_is_not_open() {
     let telnet = FakeTelnet::start().await;
@@ -965,7 +1204,7 @@ async fn invalid_commands_are_refused_before_anything_is_sent() {
             .telnet_send(Zone::Main, Command::Raw(text))
             .await
             .unwrap_err();
-        assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
+        assert_invalid_text(&error);
         assert!(error.is_invalid_input());
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1061,11 +1300,15 @@ async fn zone_methods_refuse_what_cannot_work() {
     );
     for db in [18.5, f32::NAN] {
         let error = zone2.set_volume_db(db).await.unwrap_err();
-        assert!(matches!(error, Error::VolumeOutOfRange(_)), "{error:?}");
+        // Bits, so that NaN is equal too.
+        assert!(
+            matches!(error, Error::VolumeOutOfRange(value) if value.to_bits() == db.to_bits()),
+            "{error:?}"
+        );
         assert!(error.is_invalid_input());
     }
     let error = zone2.select_source("").await.unwrap_err();
-    assert!(matches!(error, Error::InvalidCommand(_)), "{error:?}");
+    assert_invalid_text(&error);
     // Only the queries after the connect went out.
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
@@ -1733,7 +1976,10 @@ async fn a_tone_level_out_of_range_is_refused() {
         );
         assert!(error.is_invalid_input());
         let error = avr.tone().set_treble_db(db).await.unwrap_err();
-        assert!(matches!(error, Error::ToneOutOfRange(_)), "{error:?}");
+        assert!(
+            matches!(error, Error::ToneOutOfRange(value) if value == db),
+            "{error:?}"
+        );
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(commands_sent(&telnet).is_empty(), "{:?}", sent(&telnet));
@@ -1819,13 +2065,19 @@ async fn sound_methods_refuse_numbers_out_of_range() {
     let sound = avr.sound();
     let level = ChannelLevel::from_half_db(0).unwrap();
     let errors = [
-        sound.set_audio_delay(501).await.unwrap_err(),
-        sound.set_center_width(8).await.unwrap_err(),
-        sound.set_imax_high_pass(65).await.unwrap_err(),
-        sound.set_subwoofer_level(5, level).await.unwrap_err(),
+        (sound.set_audio_delay(501).await.unwrap_err(), "audio delay"),
+        (sound.set_center_width(8).await.unwrap_err(), "center width"),
+        (
+            sound.set_imax_high_pass(65).await.unwrap_err(),
+            "IMAX high pass filter",
+        ),
+        (
+            sound.set_subwoofer_level(5, level).await.unwrap_err(),
+            "subwoofer number",
+        ),
     ];
-    for error in errors {
-        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+    for (error, what) in errors {
+        assert_out_of_range(&error, what);
         assert!(error.is_invalid_input());
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -3262,20 +3514,29 @@ async fn setters_refuse_values_outside_the_ranges_of_the_receiver() {
     let sound = avr.sound();
     let zone2 = avr.zone(Zone::Zone2).unwrap();
     let errors = [
-        sound.set_auro_matic_strength(16).await.unwrap_err(),
-        sound.set_lfe_level(6).await.unwrap_err(),
-        zone2
-            .set_bass(ToneLevel::from_db(7).unwrap())
-            .await
-            .unwrap_err(),
+        (
+            sound.set_auro_matic_strength(16).await.unwrap_err(),
+            "Auro-Matic strength",
+        ),
+        (sound.set_lfe_level(6).await.unwrap_err(), "LFE level"),
+        (
+            zone2
+                .set_bass(ToneLevel::from_db(7).unwrap())
+                .await
+                .unwrap_err(),
+            "bass",
+        ),
         // Between two steps.
-        zone2
-            .set_treble(ToneLevel::from_db(13).unwrap())
-            .await
-            .unwrap_err(),
+        (
+            zone2
+                .set_treble(ToneLevel::from_db(13).unwrap())
+                .await
+                .unwrap_err(),
+            "treble",
+        ),
     ];
-    for error in errors {
-        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+    for (error, what) in errors {
+        assert_out_of_range(&error, what);
     }
     sound.set_auro_matic_strength(15).await.unwrap();
     sound.set_lfe_level(5).await.unwrap();
@@ -3342,12 +3603,18 @@ async fn balance_lfe_input_tactile_bluetooth_and_dab_setters_send_their_text() {
         .set_dab_station_order(DabStationOrder::Alphanumeric)
         .await
         .unwrap();
-    for error in [
-        sound.set_balance(13).await.unwrap_err(),
-        sound.set_lfe_external_input(4).await.unwrap_err(),
-        avr.device().set_bluetooth_level(91).await.unwrap_err(),
+    for (error, what) in [
+        (sound.set_balance(13).await.unwrap_err(), "balance"),
+        (
+            sound.set_lfe_external_input(4).await.unwrap_err(),
+            "LFE level of a 7.1 input",
+        ),
+        (
+            avr.device().set_bluetooth_level(91).await.unwrap_err(),
+            "Bluetooth level",
+        ),
     ] {
-        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+        assert_out_of_range(&error, what);
     }
     wait_until("the commands", || commands_sent(&telnet).len() >= 10).await;
     // The state queries do not ask for these.
@@ -3426,11 +3693,11 @@ async fn zone_levels_refuse_values_outside_the_ranges_of_the_receiver() {
     })
     .await;
     let zone2 = avr.zone(Zone::Zone2).unwrap();
-    for error in [
-        zone2.set_left_level(7).await.unwrap_err(),
-        zone2.set_right_level(-7).await.unwrap_err(),
+    for (error, what) in [
+        (zone2.set_left_level(7).await.unwrap_err(), "left level"),
+        (zone2.set_right_level(-7).await.unwrap_err(), "right level"),
     ] {
-        assert!(matches!(error, Error::NumberOutOfRange { .. }), "{error:?}");
+        assert_out_of_range(&error, what);
     }
     zone2.set_left_level(6).await.unwrap();
     zone2.set_right_level(-6).await.unwrap();

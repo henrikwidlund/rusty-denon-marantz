@@ -844,19 +844,34 @@ mod tests {
         });
         let volume = |db| Command::SetVolume(Volume::from_db_rounded(db).unwrap());
         assert!(ranges.check(Zone::Zone2, &volume(-20.0)).is_ok());
-        assert!(ranges.check(Zone::Zone2, &volume(-19.5)).is_err());
+        assert_eq!(
+            ranges.check(Zone::Zone2, &volume(-19.5)),
+            Err(Error::ValueOutOfRange { what: "volume" })
+        );
         assert!(ranges.check(Zone::Main, &volume(18.0)).is_ok());
         let zone2 = |setting| ranges.check(Zone::Zone2, &Command::SetZoneSetting(setting));
         let db = |db| Volume::from_db_rounded(db).unwrap();
         assert!(zone2(ZoneSettingValue::VolumeLimit(Some(db(-20.0)))).is_ok());
-        assert!(zone2(ZoneSettingValue::VolumeLimit(Some(db(-10.0)))).is_err());
-        assert!(
+        assert_eq!(
+            zone2(ZoneSettingValue::VolumeLimit(Some(db(-10.0)))),
+            Err(Error::ValueOutOfRange {
+                what: "volume limit"
+            })
+        );
+        assert_eq!(
             zone2(ZoneSettingValue::PowerOnVolume(PowerOnVolume::Level(db(
                 -19.0
-            ))))
-            .is_err()
+            )))),
+            Err(Error::ValueOutOfRange {
+                what: "power on volume"
+            })
         );
-        assert!(zone2(ZoneSettingValue::VolumeMode(VolumeMode::Fixed(db(-19.0)))).is_err());
+        assert_eq!(
+            zone2(ZoneSettingValue::VolumeMode(VolumeMode::Fixed(db(-19.0)))),
+            Err(Error::ValueOutOfRange {
+                what: "fixed volume"
+            })
+        );
         assert!(zone2(ZoneSettingValue::VolumeLimit(None)).is_ok());
         let sound = |value| Command::SetSoundSetting(SoundSettingValue::DelayTime(value));
         assert!(ranges.check(Zone::Main, &sound(300)).is_ok());

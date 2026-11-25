@@ -590,23 +590,34 @@ mod tests {
 
     #[test]
     fn values_the_receiver_does_not_take() {
-        for value in [
-            ZoneSettingValue::LeftLevel(13),
-            ZoneSettingValue::RightLevel(-13),
-            ZoneSettingValue::VolumeLimit(Some(volume(-9.5))),
-            ZoneSettingValue::PowerOnVolume(PowerOnVolume::Level(volume(-39.5))),
-            ZoneSettingValue::VolumeMode(VolumeMode::Fixed(volume(-69.5))),
+        for (value, what) in [
+            (ZoneSettingValue::LeftLevel(13), "channel level"),
+            (ZoneSettingValue::RightLevel(-13), "channel level"),
+            (
+                ZoneSettingValue::VolumeLimit(Some(volume(-9.5))),
+                "volume limit",
+            ),
+            (
+                ZoneSettingValue::PowerOnVolume(PowerOnVolume::Level(volume(-39.5))),
+                "power on volume",
+            ),
+            (
+                ZoneSettingValue::VolumeMode(VolumeMode::Fixed(volume(-69.5))),
+                "fixed volume",
+            ),
         ] {
-            assert!(
-                matches!(text(value, Zone::Zone2), Err(Error::ValueOutOfRange { .. })),
+            assert_eq!(
+                text(value, Zone::Zone2),
+                Err(Error::ValueOutOfRange { what }),
                 "{value:?}"
             );
         }
         let mut out = String::from("x");
-        assert!(
-            ZoneSettingValue::LeftLevel(13)
-                .write(Brand::Denon, Zone::Zone2, &mut out)
-                .is_err()
+        assert_eq!(
+            ZoneSettingValue::LeftLevel(13).write(Brand::Denon, Zone::Zone2, &mut out),
+            Err(Error::ValueOutOfRange {
+                what: "channel level"
+            })
         );
         assert_eq!(out, "x");
     }

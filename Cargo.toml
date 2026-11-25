@@ -29,7 +29,7 @@ if-addrs = "0.15"
 http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
-tokio = { version = "1", default-features = false }
+tokio = { version = "1.44", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["ansi", "env-filter", "fmt"] }
 mdns-sd = { version = "0.22", default-features = false, features = ["async"] }

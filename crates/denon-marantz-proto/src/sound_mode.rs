@@ -298,9 +298,9 @@ impl SoundModeGroup {
     }
 }
 
-/// Compares ignoring ASCII case and treating runs of white space as one space.
+/// Compares the words, ignoring ASCII case and the white space around them.
 pub(crate) fn words_eq_ignore_case(expected: &str, actual: &str) -> bool {
-    let mut expected = expected.split(' ');
+    let mut expected = expected.split_ascii_whitespace();
     let mut actual = actual.split_ascii_whitespace();
     loop {
         match (expected.next(), actual.next()) {
@@ -314,6 +314,14 @@ pub(crate) fn words_eq_ignore_case(expected: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn words_compare_without_case_and_extra_space() {
+        assert!(words_eq_ignore_case("Dolby Atmos", "DOLBY  ATMOS"));
+        assert!(words_eq_ignore_case("Dolby  Atmos", "dolby\tatmos "));
+        assert!(!words_eq_ignore_case("Dolby Atmos", "Dolby"));
+        assert!(!words_eq_ignore_case("Dolby", "Dolby Atmos"));
+    }
 
     #[test]
     fn groups_round_trip() {

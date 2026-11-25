@@ -42,7 +42,9 @@
 //!
 //! # What the device does
 //!
-//! - The AVC-A10H has one player for all its zones.
+//! - The AVC-A10H has one player for all its zones. Its HEOS volume events
+//!   come from the main zone and from zone 2, and it sends no HEOS event for
+//!   mute.
 //! - A stopped player keeps its last item, also after the receiver changed to
 //!   a source that is not HEOS. [`PlayerState::current_media`] hides it.
 //! - The device can report the play state as not known. The state is then

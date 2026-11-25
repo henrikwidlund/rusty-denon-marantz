@@ -70,6 +70,8 @@ const fn telnet_config(port: u16) -> TelnetConfig {
         signal_wait_max: Duration::from_millis(1200),
         signal_check: None,
         query_groups: QueryGroup::START_ORDER,
+        // Off, so that power-on commands do not slow down the tests.
+        power_on_hold: Duration::ZERO,
     }
 }
 

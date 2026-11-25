@@ -32,6 +32,9 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          workspaces: |
+            . -> target
+            fuzz -> target
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
@@ -55,6 +58,12 @@ jobs:
         run: cargo doc --locked --workspace --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
+
+      # The fuzz crate is its own workspace. A check builds on stable, cargo-fuzz is not needed.
+      - name: Fuzz targets
+        run: |
+          cargo fmt --manifest-path fuzz/Cargo.toml --check
+          cargo clippy --locked --manifest-path fuzz/Cargo.toml --all-targets
 
   test:
     name: Test (${{ matrix.name }})

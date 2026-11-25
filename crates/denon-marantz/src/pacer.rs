@@ -210,6 +210,9 @@ impl Pacer {
 mod tests {
     use super::*;
 
+    /// Changes one setting of the adaptive pacing.
+    type Change = fn(&mut Adaptive);
+
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
     }
@@ -334,34 +337,28 @@ mod tests {
             change(&mut settings);
             Pacer::new(Pacing::Adaptive(settings)).unwrap_err()
         };
-        assert!(matches!(
-            adaptive(|a| a.initial_rate = 0.0),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(adaptive(|a| a.k = -1.0), Error::InvalidConfig(_)));
-        assert!(matches!(
-            adaptive(|a| a.min_rate = 200.0),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(
-            adaptive(|a| a.alpha = 0.0),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(
-            adaptive(|a| a.alpha = 1.5),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(
-            adaptive(|a| a.threshold = 0.0),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(
-            adaptive(|a| a.adjust_interval = Duration::ZERO),
-            Error::InvalidConfig(_)
-        ));
-        assert!(matches!(
-            adaptive(|a| a.initial_rate = f64::NAN),
-            Error::InvalidConfig(_)
-        ));
+        let rates = "rates and k must be above 0";
+        let alpha = "alpha must be above 0 and up to 1";
+        let times = "threshold and adjust_interval must be above 0";
+        let cases: [(Change, &str); 8] = [
+            (|a| a.initial_rate = 0.0, rates),
+            (|a| a.k = -1.0, rates),
+            (
+                |a| a.min_rate = 200.0,
+                "min_rate must not be above max_rate",
+            ),
+            (|a| a.alpha = 0.0, alpha),
+            (|a| a.alpha = 1.5, alpha),
+            (|a| a.threshold = 0.0, times),
+            (|a| a.adjust_interval = Duration::ZERO, times),
+            (|a| a.initial_rate = f64::NAN, rates),
+        ];
+        for (change, what) in cases {
+            let error = adaptive(change);
+            assert!(
+                matches!(error, Error::InvalidConfig(text) if text == what),
+                "{error:?}"
+            );
+        }
     }
 }

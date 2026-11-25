@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use common::{
     Fake, PID, Reply, answer, config, connect, echo, event, from_data, name, next_change,
-    under_process,
+    under_process, wait_until,
 };
 use denon_marantz_heos::{
     Change, Error, Heos, HeosConfig, MediaType, PlayMode, PlayerId, QueueId, RepeatMode,
@@ -224,9 +224,54 @@ async fn under_process_has_a_limit() {
     .await;
     let heos = connect(&fake).await;
     let error = heos.favorites(None).await.unwrap_err();
-    let Error::Timeout { request, limit } = error else {
+    let Error::Timeout {
+        request,
+        limit,
+        sent,
+    } = error
+    else {
         panic!("not a timeout: {error:?}");
     };
+    assert!(sent);
     assert_eq!(request, "browse/browse");
     assert_eq!(limit, Duration::from_millis(1200));
+}
+
+#[tokio::test]
+async fn too_many_waiting_commands_are_refused() {
+    // The slow command keeps the others in the queue for about 800 ms.
+    let fake = Fake::start(|line| match name(line) {
+        "browse/browse" => Reply::Paced(
+            Duration::from_millis(400),
+            vec![under_process("browse/browse"), answer("browse/browse")],
+        ),
+        _ => device(line),
+    })
+    .await;
+    let heos = std::sync::Arc::new(connect(&fake).await);
+    let slow = tokio::spawn({
+        let heos = heos.clone();
+        async move { heos.favorites(None).await.map(|_| ()) }
+    });
+    wait_until(|| fake.count("browse/browse") == 1).await;
+    let mut sends = tokio::task::JoinSet::new();
+    for _ in 0..300 {
+        let heos = heos.clone();
+        sends.spawn(async move { heos.play_quick_select(PID, 1).await });
+    }
+    let mut full = 0;
+    while let Some(result) = sends.join_next().await {
+        match result.unwrap() {
+            Ok(()) => {}
+            Err(error) => {
+                assert!(matches!(error, Error::QueueFull), "{error:?}");
+                assert!(error.is_not_sent() && error.is_transient());
+                full += 1;
+            }
+        }
+    }
+    slow.await.unwrap().unwrap();
+    // 256 wait at most, so at least 44 of 300 are refused.
+    assert!(full >= 300 - 256, "{full} refused");
+    assert_eq!(fake.count("player/play_quickselect"), 300 - full);
 }

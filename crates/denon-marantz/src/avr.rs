@@ -1536,14 +1536,17 @@ impl Avr {
     /// HEOS player of the receiver: see [`Avr::heos`]. Volume and mute stay on
     /// telnet and HTTP. If the connection is lost, a task connects again.
     /// Does nothing while the connection is open. Waits for a connect that
-    /// runs, also the one of the start. Dropping the `Avr` closes it.
+    /// runs, also the one of the start. Dropping the `Avr` closes it. After a
+    /// shutdown through a kept [`HeosPlayer::client`], it opens a new one.
     ///
     /// # Errors
     ///
     /// [`Error::HeosNotSupported`] if [`Info::has_heos`] is false. If the
-    /// first connection fails, [`Error::Heos`], or [`Error::Network`] if the
-    /// host name could not be resolved, and the status is
-    /// [`HeosPlayerStatus::Failed`]. Nothing keeps trying then.
+    /// first connection fails, [`Error::Heos`], or [`Error::Network`] or
+    /// [`Error::Timeout`] if the host name could not be resolved, and the
+    /// status is [`HeosPlayerStatus::Failed`]. Nothing keeps trying then. The
+    /// resolve and the connect each get
+    /// [`HeosConfig::connect_timeout`](denon_marantz_heos::HeosConfig::connect_timeout).
     #[cfg(feature = "heos")]
     pub async fn heos_connect(&self) -> Result<(), Error> {
         self.heos.connect().await.map(|_| ())
@@ -1552,8 +1555,8 @@ impl Avr {
     /// The error of the HEOS connect that the start ran in the background,
     /// if it failed, see [`StartOptions::heos`](crate::StartOptions::heos).
     /// The status is [`HeosPlayerStatus::Failed`] then. It is cleared when a
-    /// new connect begins. A failed [`Avr::heos_connect`] returns its error
-    /// instead.
+    /// new connect begins and by [`Avr::heos_disconnect`]. A failed
+    /// [`Avr::heos_connect`] returns its error instead.
     #[cfg(feature = "heos")]
     #[must_use]
     pub fn heos_start_error(&self) -> Option<Arc<Error>> {
@@ -1628,21 +1631,25 @@ impl Avr {
     ///
     /// Returns [`Error::NotConnected`] if the telnet connection is not open.
     /// Nothing is queued then, so a command is never sent late. Returns
+    /// [`Error::QueueFull`] if too many lines wait to be sent. Returns
     /// [`Error::InvalidCommand`] if the command has text that cannot be sent,
     /// and [`Error::NumberOutOfRange`] for a value outside a range in
     /// [`Info::ranges`] or between its steps. If the connection ends while
-    /// the command is being written, this also returns
-    /// [`Error::NotConnected`], and the receiver may have got the line.
+    /// the command is being written, this returns [`Error::Network`] with
+    /// `sent` set to true: the receiver may have got the line.
+    ///
+    /// After a power-on command while the state shows no zone on, the next
+    /// line waits, see [`TelnetConfig::power_on_hold`].
     #[cfg(feature = "telnet")]
     pub async fn telnet_send(&self, zone: Zone, command: Command<'_>) -> Result<(), Error> {
-        self.telnet
-            .send(command::encode_checked(
-                self.info.brand,
-                &self.info.ranges,
-                zone,
-                &command,
-            )?)
-            .await
+        let line = command::encode_checked(self.info.brand, &self.info.ranges, zone, &command)?;
+        let hold = matches!(command, Command::DevicePowerOn | Command::PowerOn)
+            && self.channels.read(|state| {
+                Zone::ALL
+                    .iter()
+                    .all(|&each| state.zone(each).power != Some(denon_marantz_proto::Power::On))
+            });
+        self.telnet.send(line, hold).await
     }
 
     /// Asks the receiver on telnet what it plays. The answer comes as events
@@ -1826,7 +1833,8 @@ impl Avr {
     /// `END` line. A query without an answer for
     /// [`TelnetConfig::answer_quiet`] counts as not answered: some receivers
     /// never answer some queries. Gives the queries that were not answered,
-    /// each once.
+    /// each once. A query whose answer comes late, but before this returns,
+    /// is not given.
     /// Queries that are added while this waits are covered too. Queries that
     /// the connection asks by itself, for example after a signal hint or for
     /// a signal check, are not given; their answers still change the state
@@ -1879,7 +1887,9 @@ impl Avr {
     /// repeat the last value are shown again.
     ///
     /// A [`Query`](crate::Query) gives the query of the brand of the receiver. [`Ask::Raw`]
-    /// asks a query as text.
+    /// asks a query as text. Send only queries from the protocol
+    /// specification: the receiver can read unknown text that ends with `?`
+    /// as a setter and change a setting.
     ///
     /// # Errors
     ///
@@ -1887,7 +1897,8 @@ impl Avr {
     /// of the receiver, or if a raw query does not end with `?`. Returns
     /// [`Error::InvalidCommand`] if the text of a raw query is empty or has a
     /// control character. Returns [`Error::NotConnected`] if the telnet
-    /// connection is not open. Nothing is asked if there is an error.
+    /// connection is not open. Nothing is asked if there is an error. The
+    /// queue limit of [`Avr::telnet_send`] does not apply here.
     #[cfg(feature = "telnet")]
     pub async fn telnet_ask(&self, what: &[Ask<'_>]) -> Result<(), Error> {
         let brand = self.info.brand;
@@ -2516,13 +2527,19 @@ impl AvrBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the receiver cannot be reached. A missing or
-    /// unusable device description is not an error: the brand is then the one
-    /// from the device information, [`AvrBuilder::brand`] or [`Brand::Denon`],
-    /// and the model is not known.
+    /// Returns an error if the receiver cannot be reached, and
+    /// [`Error::InvalidConfig`] if the telnet or HEOS settings are not valid.
+    /// A missing or unusable device description is not an error: the brand is
+    /// then the one from the device information, [`AvrBuilder::brand`] or
+    /// [`Brand::Denon`], and the model is not known.
     pub async fn connect(mut self) -> Result<Avr, Error> {
         #[cfg(feature = "telnet")]
         self.telnet.check()?;
+        #[cfg(feature = "heos")]
+        self.heos.check().map_err(|error| match error {
+            denon_marantz_heos::Error::InvalidConfig(text) => Error::InvalidConfig(text),
+            other => Error::Heos(other),
+        })?;
         let priority = Arc::new(Priority::new(self.background_pause));
         if self.known.is_none() && self.missing != MissingSources::default() {
             tracing::debug!(host = %self.host, "missing sources are not used without known values");

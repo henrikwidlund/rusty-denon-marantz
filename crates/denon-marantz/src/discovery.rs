@@ -58,8 +58,9 @@ impl LocationPolicy {
     }
 }
 
+/// An IPv4-mapped IPv6 address counts as its IPv4 address.
 const fn is_local(address: IpAddr) -> bool {
-    match address {
+    match address.to_canonical() {
         IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_link_local(),
         IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
     }
@@ -268,9 +269,23 @@ async fn search(
     let deadline = Instant::now() + wait;
     let mut buffer = [0_u8; DATAGRAM_BYTES];
     let mut answers = Vec::new();
+    // Windows reports an ICMP "port unreachable" for an earlier send as a
+    // reset. A few of them are skipped.
+    let mut resets = 0_u8;
     while let Ok(received) = tokio::time::timeout_at(deadline, socket.recv_from(&mut buffer)).await
     {
-        let (length, sender) = received?;
+        let (length, sender) = match received {
+            Ok(received) => received,
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset && resets < 8 => {
+                resets += 1;
+                continue;
+            }
+            // Keeps the answers that came before the error.
+            Err(error) => {
+                tracing::debug!(%local, %error, "SSDP receive failed on this address");
+                break;
+            }
+        };
         if let Some(response) = Response::parse(&buffer[..length]) {
             answers.push((sender.ip(), response.location.to_owned()));
         }
@@ -356,6 +371,7 @@ mod tests {
         let name = location("http://receiver.local/d.xml");
         let ipv6 = location("http://[fd00::1]/d.xml");
         let link_local = location("http://169.254.1.5/d.xml");
+        let mapped = location("http://[::ffff:192.168.1.1]/d.xml");
 
         // A relay answers from the router. The local network is accepted.
         let local = LocationPolicy::LocalNetwork;
@@ -363,12 +379,14 @@ mod tests {
         assert!(local.allows(sender, &from_sender));
         assert!(local.allows(sender, &ipv6));
         assert!(local.allows(sender, &link_local));
+        assert!(local.allows(sender, &mapped));
         assert!(!local.allows(sender, &public));
         // A name needs a lookup, and the answer could point anywhere.
         assert!(!local.allows(sender, &name));
 
         let strict = LocationPolicy::SameHost;
         assert!(strict.allows(sender, &from_sender));
+        assert!(strict.allows(sender, &mapped));
         assert!(!strict.allows(sender, &from_receiver));
         assert!(!strict.allows(sender, &name));
     }
@@ -422,6 +440,7 @@ mod tests {
             "::1",
             "fe80::1",
             "fc00::1",
+            "::ffff:192.168.1.5",
         ] {
             assert!(is_local(local.parse().unwrap()), "{local}");
         }
@@ -431,6 +450,7 @@ mod tests {
             "192.169.0.1",
             "2001:db8::1",
             "0.0.0.0",
+            "::ffff:8.8.8.8",
         ] {
             assert!(!is_local(public.parse().unwrap()), "{public}");
         }

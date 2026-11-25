@@ -242,6 +242,7 @@ pub struct StartReport {
     /// as sent, without the carriage return, so it can be passed to
     /// [`Avr::telnet_ask`] as [`Ask::Raw`](crate::Ask::Raw). Queries that the
     /// connection asks by itself, for example for a signal check, are not in
+    /// it. A query whose answer comes late, but before the report, is not in
     /// it.
     pub telnet_not_answered: Vec<Cow<'static, str>>,
     /// What the start did with the HEOS connection. Neither wait waits for

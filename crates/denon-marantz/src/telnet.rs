@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use denon_marantz_proto::telnet::{
     AnswerLine, AnswerTracker, DEVICE_POWER_QUERY, DuplicateFilter, Event, EventZone, LineDecoder,
-    MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, group_queries, queries,
-    signal_queries,
+    MAIN_ZONE_POWER_QUERY, Message, Query, QueryGroup, SignalPart, answer_prefix, group_queries,
+    queries, signal_queries,
 };
 use denon_marantz_proto::{Brand, DAB_QUERIES, HD_RADIO_QUERIES, Power, TUNER_QUERIES, Zone};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -41,6 +41,10 @@ const REQUEST_CAPACITY: usize = 64;
 
 /// Bytes read at once.
 const READ_BUFFER: usize = 2048;
+
+/// The most lines from callers that wait to be sent. A line beyond it gets
+/// [`Error::QueueFull`]. A waiting keep-alive query counts too.
+const MAX_QUEUED: usize = 256;
 
 /// Settings of the telnet connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +128,15 @@ pub struct TelnetConfig {
     /// asks its own list first, and then the groups here that are not in
     /// [`QueryGroup::START_ORDER`].
     pub query_groups: &'static [QueryGroup],
+    /// Time after a power-on command in which no other line is written. A
+    /// receiver that wakes up from standby ignores lines that come too soon.
+    /// It applies to [`Command::DevicePowerOn`](crate::Command::DevicePowerOn)
+    /// and [`Command::PowerOn`](crate::Command::PowerOn) when the state does
+    /// not say that a zone is on. HTTP requests and
+    /// [`Command::Raw`](crate::Command::Raw) are not held. The hold ends when
+    /// the connection ends. The protocol asks for 1 s. Zero turns it off. It
+    /// must not be above [`TelnetConfig::keep_alive`]. The default is 0.5 s.
+    pub power_on_hold: Duration,
 }
 
 impl Default for TelnetConfig {
@@ -143,6 +156,7 @@ impl Default for TelnetConfig {
             signal_wait_max: Duration::from_millis(1200),
             signal_check: Some(Duration::from_secs(5)),
             query_groups: QueryGroup::START_ORDER,
+            power_on_hold: Duration::from_millis(500),
         }
     }
 }
@@ -164,6 +178,11 @@ impl TelnetConfig {
         if self.reconnect_min > self.reconnect_max {
             return Err(Error::InvalidConfig(
                 "reconnect_min must not be above reconnect_max",
+            ));
+        }
+        if self.power_on_hold > self.keep_alive {
+            return Err(Error::InvalidConfig(
+                "power_on_hold must not be above keep_alive",
             ));
         }
         if self.signal_wait_min > self.signal_wait_max {
@@ -245,9 +264,21 @@ fn maybe_written(request: String) -> Error {
 struct Outgoing {
     line: String,
     done: Option<oneshot::Sender<Result<(), Error>>>,
+    /// A power-on command: the next write waits for
+    /// [`TelnetConfig::power_on_hold`].
+    hold: bool,
 }
 
 impl Outgoing {
+    /// A line with no waiter and no hold, for example the keep-alive query.
+    const fn internal(line: String) -> Self {
+        Self {
+            line,
+            done: None,
+            hold: false,
+        }
+    }
+
     /// Tells the caller that the line was not sent.
     fn fail(self) {
         if let Some(done) = self.done {
@@ -461,11 +492,13 @@ impl Telnet {
     }
 
     /// Sends one line. Returns when it is written, or when it cannot be sent.
-    pub(crate) async fn send(&self, line: String) -> Result<(), Error> {
+    /// With `hold`, the next write waits for [`TelnetConfig::power_on_hold`].
+    pub(crate) async fn send(&self, line: String, hold: bool) -> Result<(), Error> {
         let (done, written) = oneshot::channel();
         self.request(Request::Send(Outgoing {
             line,
             done: Some(done),
+            hold,
         }))
         .await?;
         // The task ended while the line waited or was written.
@@ -636,6 +669,24 @@ struct Worker {
     forget: Arc<AtomicBool>,
 }
 
+/// Removes the queries with an answer prefix of `len` that `line` answers
+/// from `missed`, and notes them as answered.
+fn forget_late_answer(
+    answers: &mut AnswerTracker,
+    missed: &mut Vec<Cow<'static, str>>,
+    line: &str,
+    len: usize,
+) {
+    let mut index = 0;
+    while let Some(query) = missed.get(index) {
+        if answer_prefix(query).len() == len && answers.answers(query, line) {
+            answers.late_answer(missed.remove(index));
+        } else {
+            index += 1;
+        }
+    }
+}
+
 /// Longest time a query waits after the last write for the receiver to be quiet.
 const MAX_QUERY_WAIT: Duration = Duration::from_secs(1);
 
@@ -649,6 +700,8 @@ struct Queue {
     last_write: Option<Instant>,
     /// When the last line from the caller was written.
     last_user_write: Option<Instant>,
+    /// No line is written before this, see [`TelnetConfig::power_on_hold`].
+    held_until: Option<Instant>,
     /// When data came from the receiver.
     last_read: Option<Instant>,
     /// When a query started to wait while nothing else waited.
@@ -665,7 +718,7 @@ struct Queue {
     /// Queries that were not answered while no wait of the start waited,
     /// since the connection opened or since the last such wait began. The
     /// start begins its wait after its pages, so a query can count as not
-    /// answered before.
+    /// answered before. A late answer removes its query.
     start_missed: Vec<Cow<'static, str>>,
     /// For each query of [`SIGNAL_CHECK`], how often in a row it was not
     /// answered, up to [`SIGNAL_CHECK_MISSES`].
@@ -679,7 +732,8 @@ struct Queue {
 /// A caller that waits until the queries are answered.
 struct Waiter {
     done: oneshot::Sender<Result<SyncResult, Error>>,
-    /// Queries that were not answered while it waited.
+    /// Queries that were not answered while it waited, and got no late
+    /// answer.
     missed: Vec<Cow<'static, str>>,
     /// When it stops waiting and gets the open queries.
     deadline: Instant,
@@ -926,6 +980,7 @@ impl Queue {
             background,
             last_write: None,
             last_user_write: None,
+            held_until: None,
             last_read: None,
             answers: AnswerTracker::new(brand),
             last_answer: now,
@@ -975,8 +1030,19 @@ impl Queue {
     /// write. A query waits for the query interval, and for the pause after
     /// the last line from the caller. It also waits until the receiver is quiet,
     /// but not longer than [`MAX_QUERY_WAIT`] after the last write or, if that
-    /// is later, after the query started to wait.
+    /// is later, after the query started to wait. No line is written before
+    /// the hold after a power-on command ends.
     fn write_time(&self, config: &TelnetConfig, background_pause: Duration) -> Option<Instant> {
+        let time = self.unheld_write_time(config, background_pause)?;
+        Some(self.held_until.map_or(time, |held| time.max(held)))
+    }
+
+    /// [`Queue::write_time`] without the hold after a power-on command.
+    fn unheld_write_time(
+        &self,
+        config: &TelnetConfig,
+        background_pause: Duration,
+    ) -> Option<Instant> {
         let after_last = |interval: Duration| {
             self.last_write
                 .map_or_else(Instant::now, |written| written + interval)
@@ -1001,9 +1067,23 @@ impl Queue {
         }
     }
 
-    /// Notes what a line from the receiver means for the written queries.
+    /// Notes what a line from the receiver means for the written queries. The
+    /// line of a late answer counts as an answer for the timing. Unless it also
+    /// answers an open query, it is given as [`AnswerLine::Other`]: a missed
+    /// query can stay in the lists for a long time, so the line may be one
+    /// the receiver sent by itself, and it may be a hint.
     fn answer_line(&mut self, line: &str, now: Instant) -> AnswerLine {
-        let kind = self.answers.line(line);
+        // First, so that `line` sees the late query as answered and does not
+        // take its line as the answer of a shorter open query.
+        let late = self.forget_late_answers(line);
+        let mut kind = self.answers.line(line);
+        if late {
+            self.last_answer = now;
+            self.last_activity = now;
+            if kind == AnswerLine::Related {
+                kind = AnswerLine::Other;
+            }
+        }
         match kind {
             AnswerLine::Answer => {
                 self.last_answer = now;
@@ -1021,6 +1101,29 @@ impl Queue {
             self.check_misses[index] = 0;
         }
         kind
+    }
+
+    /// A late answer fills the value, so its query does not count as not
+    /// answered. When several missed queries match, in any list, only those
+    /// with the longest answer prefix are answered: `MSXYZ 1` answers
+    /// `MSXYZ ?`, not `MS?`. True if `line` was a late answer.
+    fn forget_late_answers(&mut self, line: &str) -> bool {
+        let answers = &self.answers;
+        let Some(len) = self
+            .start_missed
+            .iter()
+            .chain(self.waiters.iter().flat_map(|waiter| &waiter.missed))
+            .filter(|query| answers.answers(query, line))
+            .map(|query| answer_prefix(query).len())
+            .max()
+        else {
+            return false;
+        };
+        forget_late_answer(&mut self.answers, &mut self.start_missed, line, len);
+        for waiter in &mut self.waiters {
+            forget_late_answer(&mut self.answers, &mut waiter.missed, line, len);
+        }
+        true
     }
 
     /// When [`Queue::check_answers`] has work. `None` if there is none. A
@@ -1088,6 +1191,15 @@ impl Queue {
         }
         for waiter in self.waiters.drain(..) {
             let _ = waiter.done.send(Ok(SyncResult::Done(waiter.missed)));
+        }
+    }
+
+    /// Adds a line from the caller, or refuses it if too many wait.
+    fn push_user(&mut self, outgoing: Outgoing) {
+        if self.user.len() < MAX_QUEUED {
+            self.user.push_back(outgoing);
+        } else if let Some(done) = outgoing.done {
+            let _ = done.send(Err(Error::QueueFull));
         }
     }
 
@@ -1285,7 +1397,7 @@ impl Worker {
                     Err(error) => break End::Failed(error),
                 },
                 request = requests.recv() => match request {
-                    Some(Request::Send(outgoing)) => queue.user.push_back(outgoing),
+                    Some(Request::Send(outgoing)) => queue.push_user(outgoing),
                     Some(Request::Refresh) => {
                         filter.clear();
                         let all = self.queries.all();
@@ -1319,7 +1431,7 @@ impl Worker {
                     // Wait the same time again for the answer.
                     idle_since = Instant::now();
                     tracing::trace!(host = %self.host, "telnet idle, sending a query");
-                    queue.user.push_back(Outgoing { line: keep_alive.clone(), done: None });
+                    queue.user.push_back(Outgoing::internal(keep_alive.clone()));
                 }
                 () = tokio::time::sleep_until(signal.due.unwrap_or_else(Instant::now)), if signal.due.is_some() => {
                     self.add_signal_queries(&mut queue, signal.take_due());
@@ -1351,15 +1463,15 @@ impl Worker {
         line: &mut String,
         shutdown: &mut watch::Receiver<bool>,
     ) -> Result<(), End> {
-        let (text, done, from_user) = if let Some(outgoing) = queue.user.pop_front() {
-            (outgoing.line, outgoing.done, true)
+        let (text, done, from_user, hold) = if let Some(outgoing) = queue.user.pop_front() {
+            (outgoing.line, outgoing.done, true, outgoing.hold)
         } else if let Some(query) = queue.background.pop_front() {
             tracing::trace!(query = %query, "telnet query");
             line.clear();
             line.push_str(&query);
             line.push('\r');
             queue.answers.written(query);
-            (std::mem::take(line), None, false)
+            (std::mem::take(line), None, false, false)
         } else {
             return Ok(());
         };
@@ -1374,6 +1486,9 @@ impl Worker {
         let result = result.unwrap_or_else(|_| Err(std::io::ErrorKind::TimedOut.into()));
         let now = Instant::now();
         queue.last_write = Some(now);
+        if hold && result.is_ok() {
+            queue.held_until = Some(now + self.config.power_on_hold);
+        }
         if from_user {
             queue.last_user_write = Some(now);
         } else {
@@ -1607,6 +1722,11 @@ mod tests {
             },
             TelnetConfig {
                 keep_alive: Duration::ZERO,
+                power_on_hold: Duration::ZERO,
+                ..default
+            },
+            TelnetConfig {
+                power_on_hold: default.keep_alive + Duration::from_millis(1),
                 ..default
             },
             TelnetConfig {
@@ -1640,9 +1760,10 @@ mod tests {
                 "{config:?}"
             );
         }
-        // No spacing is allowed, for tests and fast receivers.
+        // No spacing and no hold are allowed, for tests and fast receivers.
         let none = TelnetConfig {
             command_interval: Duration::ZERO,
+            power_on_hold: Duration::ZERO,
             ..default
         };
         assert!(none.check().is_ok());
@@ -2059,6 +2180,7 @@ mod tests {
         let outgoing = Outgoing {
             line: "MVUP\r".to_owned(),
             done: Some(done),
+            hold: false,
         };
         sender.send(Request::Send(outgoing)).await.unwrap();
         sender.send(Request::Refresh).await.unwrap();
@@ -2356,6 +2478,91 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
+    async fn a_late_answer_removes_the_query_from_the_misses() {
+        let quiet = Duration::from_millis(2000);
+        let mut queue = Queue::new(VecDeque::from([Cow::Borrowed("MV?")]), Brand::Denon);
+        let start = Instant::now();
+        queue.answers.written(Cow::Borrowed("PSIMAXSWM ?"));
+        queue.answers.written(Cow::Borrowed("MS?"));
+        // Missed before the wait of the start.
+        queue.check_answers(start + quiet, quiet);
+        queue.answer_line("PSIMAXSWM AUTO", start + quiet);
+        // A line of a longer known query is not the late answer of `MS?`.
+        queue.answer_line("MSQUICK0", start + quiet);
+        assert_eq!(queue.start_missed, ["MS?"]);
+        // Nor is the answer of a longer raw query, also its later lines.
+        queue.answers.written(Cow::Borrowed("MSXYZ ?"));
+        queue.answer_line("MSXYZ 1", start + quiet);
+        queue.answer_line("MSXYZ 2", start + quiet);
+        assert_eq!(queue.start_missed, ["MS?"]);
+        // Two missed queries where one starts the other: the line of the
+        // longer one does not answer the shorter one.
+        queue.answers.written(Cow::Borrowed("MSABC ?"));
+        queue.check_answers(start + quiet * 2, quiet);
+        assert_eq!(
+            queue.answer_line("MSABC 1", start + quiet * 2),
+            AnswerLine::Other
+        );
+        // Also not by its later lines, also after a check.
+        queue.check_answers(start + quiet * 2, quiet);
+        queue.answer_line("MSABC 2", start + quiet * 2);
+        assert_eq!(queue.start_missed, ["MS?"]);
+        // The longest answer prefix wins, not the longest query text.
+        queue.answers.written(Cow::Borrowed("MSX   ?"));
+        queue.answers.written(Cow::Borrowed("MSXY?"));
+        queue.check_answers(start + quiet * 3, quiet);
+        queue.answer_line("MSXY 1", start + quiet * 3);
+        assert_eq!(queue.start_missed, ["MS?", "MSX   ?"]);
+        // Missed while a caller waits: `MV?` still waits, so the wait goes on.
+        let mut waiting = waiter(&mut queue);
+        queue.answers.written(Cow::Borrowed("PSDYNEQ ?"));
+        queue.check_answers(start + quiet * 5, quiet);
+        assert_eq!(queue.waiters[0].missed, ["PSDYNEQ ?"]);
+        assert!(waiting.try_recv().is_err());
+        queue.answer_line("PSDYNEQ ON", start + quiet * 5);
+        write_next(&mut queue);
+        queue.answer_line("MV50", start + quiet * 5);
+        queue.check_answers(start + quiet * 6, quiet);
+        assert_eq!(waiting.try_recv().unwrap().unwrap(), done(&[]));
+        let mut start_wait = start_waiter(&mut queue);
+        queue.check_answers(start + quiet * 6, quiet);
+        assert_eq!(
+            start_wait.try_recv().unwrap().unwrap(),
+            done(&["MS?", "MSX   ?"])
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_longest_late_answer_counts_over_all_lists() {
+        let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
+        let _waiting = waiter(&mut queue);
+        queue.start_missed.push(Cow::Borrowed("MS?"));
+        queue.waiters[0].missed.push(Cow::Borrowed("MSXYZ ?"));
+        assert_eq!(
+            queue.answer_line("MSXYZ 1", Instant::now()),
+            AnswerLine::Other
+        );
+        assert_eq!(queue.start_missed, ["MS?"]);
+        assert_eq!(queue.waiters[0].missed, Vec::<Cow<'static, str>>::new());
+        // A late line of a signal check query resets its misses.
+        queue.check_misses[2] = SIGNAL_CHECK_MISSES;
+        queue.start_missed.push(Cow::Borrowed(SIGNAL_CHECK[2].0));
+        assert_eq!(
+            queue.answer_line("SSINFAISFSV 480", Instant::now()),
+            AnswerLine::Other
+        );
+        assert_eq!(queue.check_misses[2], 0);
+        // A late line that also answers the open query stays an answer.
+        queue.answers.written(Cow::Borrowed("MS?"));
+        assert_eq!(
+            queue.answer_line("MSSTEREO", Instant::now()),
+            AnswerLine::Answer
+        );
+        assert_eq!(queue.start_missed, Vec::<Cow<'static, str>>::new());
+        assert!(queue.answers.is_idle());
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn open_queries_expire_without_a_waiter() {
         let quiet = Duration::from_millis(2000);
         let mut queue = Queue::new(VecDeque::new(), Brand::Denon);
@@ -2384,10 +2591,9 @@ mod tests {
         // The first write is due at once.
         assert_eq!(queue.write_time(&config, pause), Some(start));
         // A line from the caller goes first. It waits for the command interval.
-        queue.user.push_back(Outgoing {
-            line: "MVUP\r".to_owned(),
-            done: None,
-        });
+        queue
+            .user
+            .push_back(Outgoing::internal("MVUP\r".to_owned()));
         queue.last_write = Some(start);
         assert_eq!(queue.write_time(&config, pause), Some(start + ms(50)));
         // A query waits for the longer query interval.
@@ -2406,6 +2612,15 @@ mod tests {
         assert_eq!(queue.write_time(&config, pause), Some(start + ms(1400)));
         queue.background.clear();
         assert_eq!(queue.write_time(&config, pause), None);
+        // After a power-on command, nothing is written until the hold ends.
+        queue.held_until = Some(start + ms(2000));
+        queue
+            .user
+            .push_back(Outgoing::internal("MVUP\r".to_owned()));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(2000)));
+        queue.user.clear();
+        queue.background.push_back(Cow::Borrowed("SI?"));
+        assert_eq!(queue.write_time(&config, pause), Some(start + ms(2000)));
     }
 
     #[tokio::test(start_paused = true)]

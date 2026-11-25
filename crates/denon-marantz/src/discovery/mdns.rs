@@ -380,6 +380,13 @@ mod tests {
     }
 
     #[test]
+    fn a_mapped_ipv6_address_is_used_as_ipv4() {
+        let mapped = ["::ffff:192.168.1.9".parse::<IpAddr>().unwrap()];
+        let announced = Announced::from_parts(mapped, |_| None).unwrap();
+        assert_eq!(announced.address, "192.168.1.9".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
     fn a_service_without_a_usable_address_is_left_out() {
         let addresses = ["fe80::1".parse::<IpAddr>().unwrap()];
         assert_eq!(Announced::from_parts(addresses, |_| None), None);

@@ -40,12 +40,15 @@ fn player_here_lines(line: &str) -> Vec<String> {
 /// Answers from the recorded data, with a player that has neither the
 /// address nor the serial number of the receiver.
 fn other_player(line: &str) -> Reply {
-    Reply::Lines(
-        answer_lines(name(line))
-            .into_iter()
-            .map(|line| line.replace(r#""serial": "XXX""#, r#""serial": "YYY""#))
-            .collect(),
-    )
+    Reply::Lines(other_player_lines(line))
+}
+
+/// The lines of [`other_player`].
+fn other_player_lines(line: &str) -> Vec<String> {
+    answer_lines(name(line))
+        .into_iter()
+        .map(|line| line.replace(r#""serial": "XXX""#, r#""serial": "YYY""#))
+        .collect()
 }
 
 /// An `Avr` for a receiver with HEOS, with `heos` as its HEOS device.
@@ -122,6 +125,23 @@ async fn the_player_is_found_when_the_list_has_it() {
 }
 
 #[tokio::test]
+async fn a_player_with_a_mapped_ipv6_address_is_found_by_address() {
+    let heos = Fake::start(|line| {
+        Reply::Lines(
+            other_player_lines(line)
+                .into_iter()
+                .map(|line| line.replace(IP, "::ffff:127.0.0.1"))
+                .collect(),
+        )
+    })
+    .await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut status = avr.watch_heos_status();
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+}
+
+#[tokio::test]
 async fn the_player_is_found_by_the_serial_number() {
     // The recorded player has another address but the same serial number.
     let heos = Fake::start(from_data).await;
@@ -176,6 +196,46 @@ async fn a_disconnect_also_closes_a_kept_client() {
         .unwrap();
 }
 
+// Several threads, so that the watcher can still run when the status changes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_shutdown_through_a_kept_client_allows_a_new_connect() {
+    let heos = Fake::start(player_here).await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut status = avr.watch_heos_status();
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    let player = avr.heos().unwrap();
+    let client = player.client().unwrap();
+    client.shutdown();
+    status_is(&mut status, HeosPlayerStatus::Disconnected).await;
+    // A shut down client is not given out, nor its old state.
+    assert!(player.client().is_none() && player.state().is_none());
+    drop(client);
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    // Two connections each time: commands and events.
+    assert_eq!(heos.connections(), 4);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_connect_right_after_a_kept_client_shutdown_stays_ready() {
+    let heos = Fake::start(player_here).await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut status = avr.watch_heos_status();
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    let client = avr.heos().unwrap().client().unwrap();
+    client.shutdown();
+    drop(client);
+    // No wait for the old watcher.
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    // The old watcher cannot change it later.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(*status.borrow(), HeosPlayerStatus::Ready(PID));
+    assert!(avr.heos().is_some());
+}
+
 #[tokio::test]
 async fn a_lost_connection_is_opened_again() {
     let heos = Fake::start(player_here).await;
@@ -221,6 +281,25 @@ async fn the_start_can_leave_heos_closed() {
         *avr.watch_heos_status().borrow(),
         HeosPlayerStatus::Disconnected
     );
+}
+
+#[tokio::test]
+async fn invalid_heos_settings_are_refused_by_the_builder() {
+    let http = avr_x_receiver().await;
+    let config = HeosConfig {
+        keep_alive: Duration::ZERO,
+        ..HeosConfig::default()
+    };
+    let error = builder(&http, ReceiverType::AvrX)
+        .heos_config(config)
+        .connect()
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, Error::InvalidConfig(text) if text.contains("keep_alive")),
+        "{error:?}"
+    );
+    assert!(error.is_invalid_config() && !error.is_invalid_input());
 }
 
 #[tokio::test]
@@ -462,6 +541,56 @@ async fn a_disconnect_closes_heos_for_the_player_too() {
     // It can be opened again.
     avr.heos_connect().await.unwrap();
     status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+}
+
+#[tokio::test]
+async fn a_bad_argument_is_invalid_also_without_a_connection() {
+    let heos = Fake::start(player_here).await;
+    let (avr, _http) = avr_with(&heos).await;
+    let mut status = avr.watch_heos_status();
+    avr.heos_connect().await.unwrap();
+    status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
+    let player = avr.heos().unwrap();
+    avr.heos_disconnect().await;
+    let invalid = |result: Result<(), HeosError>| {
+        let error = result.unwrap_err();
+        assert!(matches!(error, HeosError::InvalidCommand(_)), "{error:?}");
+        assert!(error.is_invalid_input() && !error.is_not_sent());
+    };
+    invalid(player.remove_from_queue(&[]).await);
+    invalid(player.play_quick_select(0).await);
+    invalid(player.play_quick_select(7).await);
+    invalid(player.play_preset(0).await);
+    let error = player.queue(Some((5, 2))).await.unwrap_err();
+    assert!(matches!(error, HeosError::InvalidCommand(_)), "{error:?}");
+    let error = player.favorites(Some((5, 2))).await.unwrap_err();
+    assert!(matches!(error, HeosError::InvalidCommand(_)), "{error:?}");
+    // A good argument shows the closed connection.
+    assert!(matches!(
+        player.play_quick_select(1).await,
+        Err(HeosError::NotConnected)
+    ));
+}
+
+#[tokio::test]
+async fn a_disconnect_clears_the_error_of_the_start() {
+    // No fake listens on the HEOS port.
+    let http = avr_x_receiver().await;
+    let avr = Arc::new(
+        builder(&http, ReceiverType::AvrX)
+            .heos_config(refusing_heos())
+            .connect()
+            .await
+            .unwrap(),
+    );
+    let mut status = avr.watch_heos_status();
+    let mut started = avr.start_with(options()).await.unwrap();
+    assert_eq!(started.basic_synced().await.heos, HeosStart::Started);
+    status_is(&mut status, HeosPlayerStatus::Failed(HeosFailure::Refused)).await;
+    assert!(avr.heos_start_error().is_some());
+    avr.heos_disconnect().await;
+    assert!(avr.heos_start_error().is_none());
+    assert_eq!(*status.borrow(), HeosPlayerStatus::Disconnected);
 }
 
 #[tokio::test]

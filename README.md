@@ -115,7 +115,8 @@ reads and the pages are done. `all_synced()` also waits until the receiver has
 answered the telnet queries of the start, and each list answer has its `END`
 line, so the values that only telnet gives are in the state. A query without an
 answer for `TelnetConfig::answer_quiet` (2 s) counts as not answered, and the
-report lists it in `telnet_not_answered`. If `StartOptions::telnet_wait` ends
+report lists it in `telnet_not_answered`. A query whose answer comes late, but
+before the report, is not listed. If `StartOptions::telnet_wait` ends
 first, the list has all queries that were still open then. Queries that the
 library asks by itself, for example for a signal check, are not listed. Both
 are optional: values that arrive later come as events.
@@ -404,7 +405,8 @@ the `denon-marantz-heos` crate.
 
 Notes about HEOS:
 
-- The AVC-A10H has one player for all its zones.
+- The AVC-A10H has one player for all its zones. Its HEOS volume events come
+  from the main zone and from zone 2, and it sends no HEOS event for mute.
 - A stopped player keeps its last item, also after the receiver changed to a
   source that is not HEOS. `PlayerState::current_media` hides it.
 - The device can report the play state as not known. The state is then
@@ -539,6 +541,12 @@ have not run on a receiver:
 - Some changes made in the receiver menu or with its remote are pushed on
   telnet, some are not. Changes from the web interface and the apps are.
 - Telnet answers in standby when network control is `Always`.
+- The protocol specification says to wait 1 second after `PWON` before the next
+  command (4 seconds for older models). A receiver that wakes up ignores
+  commands that come too soon. After a power-on command while the state shows
+  no zone on, the library holds the next telnet line for
+  `TelnetConfig::power_on_hold` (0.5 seconds by default). A slower model may
+  need a longer time.
 - `PWON` (the whole receiver) also switches on zone 2 and zone 3, and `ZMON` only
   the main zone. When the receiver comes on, it sets the volume to its power-on
   level, so the volume after a power on is not the one before.
