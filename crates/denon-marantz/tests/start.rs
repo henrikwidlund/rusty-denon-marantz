@@ -1221,10 +1221,29 @@ async fn the_start_logs_in_the_avr_span() {
         .await
         .unwrap();
     started.basic_synced().await;
+    let span = logs.span_of("request", 0, "avr");
     assert_eq!(
         logs.span_of("tone control is left out of the update", 0, "avr"),
-        logs.span_of("request", 0, "avr")
+        span
     );
+    logs.assert_all_in(0, &[&span]);
+}
+
+#[tokio::test]
+async fn update_and_refresh_log_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let http = receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await;
+    let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
+    let span = logs.span_of("request", 0, "avr");
+    // The update tries again without tone control. That log is not inside an
+    // HTTP request, so it is in the span only if `update` runs in it.
+    avr.update().await.unwrap();
+    assert_eq!(
+        logs.span_of("tone control is left out of the update", 0, "avr"),
+        span
+    );
+    avr.refresh().await.unwrap();
+    logs.assert_all_in(0, &[&span]);
 }
 
 #[tokio::test]
@@ -1236,10 +1255,12 @@ async fn the_start_task_logs_in_the_avr_span() {
     // Waits for the slow settings, which the task reads after it sends the
     // start report.
     start_without_telnet(&avr).await;
+    let span = logs.span_of("request", 0, "avr");
     assert_eq!(
-        logs.span_of("part=Slow", 0, "avr"),
-        logs.span_of("request", 0, "avr")
+        logs.span_of("settings not read host=127.0.0.1 part=Slow", 0, "avr"),
+        span
     );
+    logs.assert_all_in(0, &[&span]);
 }
 
 /// The settings are on the same port as the signal, so they would only wait

@@ -1016,6 +1016,11 @@ impl Avr {
     /// An `AvrX` whose answer fails with tone control and works without it is
     /// read without tone control from then on.
     pub async fn update(&self) -> Result<(), Error> {
+        self.update_in().instrument(self.http.span().clone()).await
+    }
+
+    /// Does the work of [`Avr::update`].
+    async fn update_in(&self) -> Result<(), Error> {
         match self.info.update_method {
             UpdateMethod::AppCommand => self.update_with_appcommand().await,
             UpdateMethod::StatusPages => self.update_with_status_pages().await,
@@ -1045,6 +1050,11 @@ impl Avr {
     /// a timeout or a network error is returned; other errors are only
     /// logged.
     pub async fn refresh(&self) -> Result<(), Error> {
+        self.refresh_in().instrument(self.http.span().clone()).await
+    }
+
+    /// Does the work of [`Avr::refresh`].
+    async fn refresh_in(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if self.telnet_connected() {
             let http = self.update_http_only().await;
@@ -1089,6 +1099,13 @@ impl Avr {
     /// after the connect time of [`AvrBuilder::web_interface_config`], one second by
     /// default, on each call.
     pub async fn update_speaker_details(&self) -> Result<SpeakerDetails, Error> {
+        self.update_speaker_details_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_speaker_details`].
+    async fn update_speaker_details_in(&self) -> Result<SpeakerDetails, Error> {
         let distances = self
             .read_web_interface(
                 DISTANCES_PATH,
@@ -1154,6 +1171,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_source_details(&self) -> Result<SourceDetails, Error> {
+        self.update_source_details_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_source_details`].
+    async fn update_source_details_in(&self) -> Result<SourceDetails, Error> {
         let assignments = self
             .read_web_interface(INPUT_ASSIGN_PATH, InputAssignment::parse, |state, list| {
                 state.apply_input_assignments(&list)
@@ -1194,6 +1218,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_settings_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
+        self.update_settings_availability_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_settings_availability`].
+    async fn update_settings_availability_in(&self) -> Result<SettingsAvailabilityDetails, Error> {
         self.read_availability(&SettingsGroup::ALL).await
     }
 
@@ -1217,6 +1248,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_detailed_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
+        self.update_detailed_availability_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_detailed_availability`].
+    async fn update_detailed_availability_in(&self) -> Result<SettingsAvailabilityDetails, Error> {
         self.read_availability(&SettingsGroup::DETAILS).await
     }
 
@@ -1249,6 +1287,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_video_details(&self) -> Result<VideoMenuDetails, Error> {
+        self.update_video_details_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_video_details`].
+    async fn update_video_details_in(&self) -> Result<VideoMenuDetails, Error> {
         self.read_page_list(
             &VideoMenuPage::ALL,
             VideoMenuPage::path,
@@ -1272,6 +1317,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_general_settings(&self) -> Result<GeneralDetails, Error> {
+        self.update_general_settings_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_general_settings`].
+    async fn update_general_settings_in(&self) -> Result<GeneralDetails, Error> {
         self.read_page_list(
             &GeneralPage::ALL,
             GeneralPage::path,
@@ -1317,6 +1369,13 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_system_settings(&self) -> Result<PageStatus, Error> {
+        self.update_system_settings_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_system_settings`].
+    async fn update_system_settings_in(&self) -> Result<PageStatus, Error> {
         self.read_web_interface(
             SYSTEM_SETTINGS_PATH,
             SystemSettings::parse,
@@ -1342,6 +1401,13 @@ impl Avr {
     /// Returns an error if the receiver cannot be reached, see
     /// [`Error::is_unreachable`].
     pub async fn update_now_playing(&self) -> Result<PageStatus, Error> {
+        self.update_now_playing_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_now_playing`].
+    async fn update_now_playing_in(&self) -> Result<PageStatus, Error> {
         let result = self.read_now_playing_page().await;
         self.forget_telnet_values(&result);
         result
@@ -1405,6 +1471,13 @@ impl Avr {
     ///
     /// The errors of the way that was used.
     pub async fn refresh_now_playing(&self) -> Result<(), Error> {
+        self.refresh_now_playing_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::refresh_now_playing`].
+    async fn refresh_now_playing_in(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if self.telnet_connected() {
             return self.telnet_refresh_now_playing().await;
@@ -2037,6 +2110,13 @@ impl Avr {
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
     pub async fn update_signal_and_settings(&self) -> Result<PageStatus, Error> {
+        self.update_signal_and_settings_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::update_signal_and_settings`].
+    async fn update_signal_and_settings_in(&self) -> Result<PageStatus, Error> {
         self.update_signal_and_settings_with_channels()
             .await
             .map(|(status, _)| status)

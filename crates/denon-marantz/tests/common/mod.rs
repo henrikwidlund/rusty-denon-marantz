@@ -996,9 +996,14 @@ impl LogBuffer {
         let guard = tracing_subscriber::fmt()
             .with_env_filter(filter)
             .with_ansi(false)
+            .without_time()
             .with_writer(move || writer.clone())
             .finish()
             .set_default();
+        // A thread that starts to register a callsite before the first fmt
+        // dispatcher exists can store "off" after the rebuild that the new
+        // dispatcher runs. A second rebuild turns such callsites on again.
+        tracing::callsite::rebuild_interest_cache();
         (logs, guard)
     }
 
@@ -1006,23 +1011,77 @@ impl LogBuffer {
         String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
     }
 
-    /// The span `name{...}` in the first line, after line `after`, that
-    /// contains `what`.
-    pub(crate) fn span_of(&self, what: &str, after: usize, name: &str) -> String {
+    /// The span `name{...}` of the first line, after line `after`, with the
+    /// message `message`. `message` can end with fields. A message with more
+    /// words after `message` does not match.
+    pub(crate) fn span_of(&self, message: &str, after: usize, name: &str) -> String {
         let text = self.text();
         let line = text
             .lines()
             .skip(after)
-            .find(|line| line.contains(what))
-            .unwrap_or_else(|| panic!("no line with {what:?} in:\n{text}"));
-        let open = format!("{name}{{");
-        let start = line
-            .find(&open)
-            .unwrap_or_else(|| panic!("no {name} span in: {line}"));
-        line[start..].split('}').next().unwrap().to_owned()
+            .find(|line| has_message(line, message))
+            .unwrap_or_else(|| panic!("no line with message {message:?} in:\n{text}"));
+        span_in(line, name)
+            .unwrap_or_else(|| panic!("no {name} span in: {line}"))
+            .to_owned()
+    }
+
+    /// Checks that each line after line `after` is in one of `spans`
+    /// (values from [`Self::span_of`]).
+    pub(crate) fn assert_all_in(&self, after: usize, spans: &[&str]) {
+        let text = self.text();
+        for line in text.lines().skip(after) {
+            assert!(
+                spans.iter().any(|span| line.contains(span)),
+                "line not in {spans:?}: {line}"
+            );
+        }
     }
 
     pub(crate) fn line_count(&self) -> usize {
         self.text().lines().count()
     }
+}
+
+/// Splits a log line into its level with spans, and its message with fields.
+/// The line is `LEVEL spans: target: message fields`, or
+/// `LEVEL target: message fields` without a span. Spans must have fields: a
+/// span without fields is not found. `None` if the line has another layout.
+fn split_line(line: &str) -> Option<(Option<&str>, &str)> {
+    let (spans, after) = match line.find("}: ") {
+        Some(end) if !line[..end].contains(": ") => (Some(&line[..=end]), &line[end + 3..]),
+        _ => (None, line.trim_start().split_once(' ')?.1),
+    };
+    let (_, message) = after.split_once(": ")?;
+    Some((spans, message))
+}
+
+/// Whether the message of a log line is `message`, maybe followed by fields.
+fn has_message(line: &str, message: &str) -> bool {
+    split_line(line).is_some_and(|(_, line_message)| {
+        line_message.strip_prefix(message).is_some_and(|rest| {
+            rest.is_empty()
+                || rest.strip_prefix(' ').is_some_and(|rest| {
+                    rest.split(' ')
+                        .next()
+                        .is_some_and(|field| field.contains('='))
+                })
+        })
+    })
+}
+
+/// The `name{...}` span of a log line. With nested spans of the same name,
+/// the outer one.
+fn span_in<'a>(line: &'a str, name: &str) -> Option<&'a str> {
+    let spans = split_line(line)?.0?;
+    let open = format!("{name}{{");
+    // The name starts after the level or after the span before it.
+    let (start, _) = spans.match_indices(&open).find(|&(start, _)| {
+        matches!(
+            spans.as_bytes().get(start.wrapping_sub(1)),
+            Some(b' ' | b':')
+        )
+    })?;
+    let end = start + spans[start..].find('}')?;
+    Some(&spans[start..=end])
 }

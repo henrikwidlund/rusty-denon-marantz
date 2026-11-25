@@ -763,4 +763,5 @@ async fn the_worker_logs_in_the_heos_span() {
     wait_until(|| logs.text().contains("HEOS connected")).await;
     let span = logs.span_of("HEOS connected", 0, "heos");
     assert!(span.contains("host=127.0.0.1"), "{span}");
+    logs.assert_all_in(0, &[&span]);
 }

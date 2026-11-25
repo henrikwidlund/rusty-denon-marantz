@@ -379,10 +379,12 @@ async fn the_reads_after_commands_log_in_the_avr_span() {
         logs.text().contains("read after commands")
     })
     .await;
+    let span = logs.span_of("request", 0, "avr");
     assert_eq!(
-        logs.span_of("read after commands", 0, "avr"),
-        logs.span_of("request", 0, "avr")
+        logs.span_of("read after commands over HTTP", 0, "avr"),
+        span
     );
+    logs.assert_all_in(0, &[&span]);
 }
 
 #[tokio::test]

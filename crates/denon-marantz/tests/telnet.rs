@@ -3727,4 +3727,5 @@ async fn telnet_task_and_http_requests_log_in_the_avr_span() {
     let before = logs.line_count();
     avr.update().await.unwrap();
     assert_eq!(logs.span_of("request", before, "avr"), telnet_span);
+    logs.assert_all_in(0, &[&telnet_span]);
 }

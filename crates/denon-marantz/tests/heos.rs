@@ -134,6 +134,7 @@ async fn the_heos_link_logs_in_a_heos_span_inside_the_avr_span() {
     avr.heos_connect().await.unwrap();
     status_is(&mut status, HeosPlayerStatus::Ready(PID)).await;
     assert_heos_in_avr(&logs, before, &avr_span);
+    logs.assert_all_in(0, &[&avr_span]);
 }
 
 #[tokio::test]

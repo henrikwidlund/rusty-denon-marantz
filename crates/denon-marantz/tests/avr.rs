@@ -1441,10 +1441,12 @@ async fn verify_logs_in_the_avr_span() {
     let before = logs.line_count();
     avr.verify().await.unwrap();
     // The span of this `Avr`, not the one of the first connect.
+    let span = logs.span_of("connected with known values", 0, "avr");
     assert_eq!(
-        logs.span_of("identified", before, "avr"),
-        logs.span_of("connected with known values", 0, "avr")
+        logs.span_of("identified avr-x receiver", before, "avr"),
+        span
     );
+    logs.assert_all_in(before, &[&span]);
 }
 
 #[tokio::test]

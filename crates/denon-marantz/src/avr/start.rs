@@ -865,6 +865,13 @@ impl Avr {
     /// [`Error::NothingRead`] when no page was asked, because all answered 404
     /// before.
     pub async fn refresh_signal(&self) -> Result<(), Error> {
+        self.refresh_signal_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::refresh_signal`].
+    async fn refresh_signal_in(&self) -> Result<(), Error> {
         #[cfg(feature = "telnet")]
         if self.telnet_connected() {
             // The group asks BT.2020 last, so that its answer comes after the
@@ -898,6 +905,13 @@ impl Avr {
     /// nothing that can be read, or if no page was asked because all answered
     /// 404 before.
     pub async fn refresh_signal_pages(&self) -> Result<(), Error> {
+        self.refresh_signal_pages_in()
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::refresh_signal_pages`].
+    async fn refresh_signal_pages_in(&self) -> Result<(), Error> {
         // When the answer of `AppCommand0300.xml` has the channels, the
         // channels page is not read: the answer is more complete than the
         // page. A busy receiver can leave them out of one answer; the page has
