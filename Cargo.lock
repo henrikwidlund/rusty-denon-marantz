@@ -286,6 +286,7 @@ version = "0.1.0"
 dependencies = [
  "denon-marantz-heos-proto",
  "serde",
+ "socket2",
  "thiserror",
  "tokio",
  "tracing",

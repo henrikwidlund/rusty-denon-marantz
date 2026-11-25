@@ -11,6 +11,7 @@ use denon_marantz_heos_proto::{
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+use tracing::Instrument;
 
 use crate::error::Error;
 use crate::state::{Change, HeosStatus, PlayerState, Shared, View};
@@ -43,6 +44,8 @@ pub struct HeosConfig {
     /// On the event connection, if there is still nothing after the same time
     /// again, the connections count as lost. On the command connection, the
     /// heartbeat is a command, so [`HeosConfig::command_timeout`] applies.
+    /// On most systems, TCP keepalive finds a device that is gone in about
+    /// 25 s, often before this.
     pub keep_alive: Duration,
     /// Time to wait before the first try to connect again. It doubles with
     /// each failed try up to [`HeosConfig::reconnect_max`]. After a refused
@@ -168,7 +171,10 @@ impl Heos {
     pub async fn connect_with(host: impl Into<String>, config: HeosConfig) -> Result<Self, Error> {
         config.check()?;
         let host = crate::host::into_bare(host.into());
-        let connections = Connections::open(&host, &config).await?;
+        let span = crate::log::session(&host);
+        let connections = Connections::open(&host, &config)
+            .instrument(span.clone())
+            .await?;
         let shared = Shared::new();
         let view = shared.view();
         let (shutdown, shutdown_receiver) = watch::channel(false);
@@ -179,8 +185,11 @@ impl Heos {
             config,
             shared,
         };
-        let task =
-            tokio::spawn(worker.run(connections, synced, request_receiver, shutdown_receiver));
+        let task = tokio::spawn(
+            worker
+                .run(connections, synced, request_receiver, shutdown_receiver)
+                .instrument(span),
+        );
         // Dropping the value on an error stops the task.
         let heos = Self {
             host,

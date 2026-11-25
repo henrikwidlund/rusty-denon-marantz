@@ -862,8 +862,7 @@ async fn open(host: &str, config: &HeosConfig) -> Result<TcpStream, Error> {
             source,
         }),
         Ok(Ok(stream)) => {
-            // Commands are short. Do not wait to fill a packet.
-            let _ = stream.set_nodelay(true);
+            crate::tcp::configure(&stream);
             Ok(stream)
         }
     }

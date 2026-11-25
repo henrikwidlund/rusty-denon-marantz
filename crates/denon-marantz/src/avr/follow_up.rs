@@ -15,6 +15,7 @@ use denon_marantz_proto::{Brand, PlayingKind, TUNER_STATUS_PATH, TunerPage, Zone
 use tokio::sync::watch;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{Instant, timeout, timeout_at};
+use tracing::Instrument;
 
 use super::{
     Info, Missing, UpdateMethod, definitions_body, playing_kind, read_appcommand,
@@ -265,7 +266,8 @@ impl FollowUp {
             UpdateMethod::StatusPages => Vec::new(),
         };
         let (wanted, queue) = mpsc::unbounded_channel();
-        tokio::spawn(run(config, reader, requests, queue));
+        let span = reader.http.span().clone();
+        tokio::spawn(run(config, reader, requests, queue).instrument(span));
         Ok(Self { wanted })
     }
 

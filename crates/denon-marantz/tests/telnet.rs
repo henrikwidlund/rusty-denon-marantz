@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use common::{
     AVR_X_DIRAC_INFO, AVR_X_INFO, AVR_X_OUTPUT_SETTINGS_INFO, AVR_X_SETTINGS_INFO, FakeTelnet,
-    LOOPBACK_V6, Reply, appcommand0300_answer, avr_x_receiver, avr_x_receiver_on,
+    LOOPBACK_V6, LogBuffer, Reply, appcommand0300_answer, avr_x_receiver, avr_x_receiver_on,
     avr_x_receiver_with_info, avr_x_receiver_with_pages, builder, contains, fake_group_queries,
     fake_receiver_gets, output_settings_item, quick_follow_up, receiver_with_audyssey,
     receiver_with_info_and_signal_answers, wait_until,
@@ -3703,4 +3703,28 @@ async fn zone_levels_refuse_values_outside_the_ranges_of_the_receiver() {
     zone2.set_right_level(-6).await.unwrap();
     wait_until("the commands", || commands_sent(&telnet).len() >= 2).await;
     assert_eq!(commands_sent(&telnet), ["Z2CVFL 56", "Z2CVFR 44"]);
+}
+
+#[tokio::test]
+async fn telnet_task_and_http_requests_log_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let telnet = FakeTelnet::start().await;
+    let http = avr_x_receiver().await;
+    let avr = builder(&http, ReceiverType::AvrX)
+        .telnet_config(telnet_config(telnet.port))
+        .connect()
+        .await
+        .unwrap();
+    avr.telnet_connect().await.unwrap();
+    wait_until("the telnet log", || {
+        logs.text().contains("telnet connected")
+    })
+    .await;
+    let telnet_span = logs.span_of("telnet connected", 0, "avr");
+    assert!(telnet_span.contains("host=127.0.0.1"), "{telnet_span}");
+    // `update` does not run in the span, so this checks the span of the HTTP
+    // client.
+    let before = logs.line_count();
+    avr.update().await.unwrap();
+    assert_eq!(logs.span_of("request", before, "avr"), telnet_span);
 }

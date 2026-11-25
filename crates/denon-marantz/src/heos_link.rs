@@ -12,6 +12,7 @@ use denon_marantz_heos::{
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{OwnedMutexGuard, broadcast, watch};
 use tokio::task::{AbortHandle, JoinHandle};
+use tracing::{Instrument, Span};
 
 use crate::error::Error;
 
@@ -320,6 +321,8 @@ pub(crate) struct HeosLink {
     running: Mutex<Option<Running>>,
     /// The error of the last connect that the start ran in the background.
     start_error: Mutex<Option<Arc<Error>>>,
+    /// Span of the connection and task logs.
+    span: Span,
 }
 
 /// An open connection and the task that finds the player.
@@ -345,6 +348,7 @@ impl HeosLink {
         serial: Option<String>,
         config: HeosConfig,
         supported: bool,
+        span: Span,
     ) -> Self {
         let first = if supported {
             HeosPlayerStatus::Disconnected
@@ -361,6 +365,7 @@ impl HeosLink {
             gate: Arc::new(tokio::sync::Mutex::new(())),
             running: Mutex::new(None),
             start_error: Mutex::new(None),
+            span,
         }
     }
 
@@ -377,7 +382,9 @@ impl HeosLink {
     /// ended counts as closed.
     pub(crate) async fn connect(&self) -> Result<bool, Error> {
         let gate = Arc::clone(&self.gate).lock_owned().await;
-        self.open(gate, |error| error).await
+        self.open(gate, |error| error)
+            .instrument(self.span.clone())
+            .await
     }
 
     /// As [`HeosLink::connect`], with `gate` held. `failed` takes the error
@@ -433,20 +440,23 @@ impl HeosLink {
         // The lock is held until the connection is stored, so that
         // `player` finds it when the status is ready.
         let mut running = self.lock();
-        let watcher = tokio::spawn(watch_player(
-            Watched {
-                heos: Arc::downgrade(&heos),
-                connection: heos.watch_status(),
-                players: heos.watch_players(),
-                changes: heos.changes(),
-            },
-            Match {
-                addresses,
-                serial: self.serial.clone(),
-            },
-            Arc::clone(&self.status),
-            self.changes.clone(),
-        ));
+        let watcher = tokio::spawn(
+            watch_player(
+                Watched {
+                    heos: Arc::downgrade(&heos),
+                    connection: heos.watch_status(),
+                    players: heos.watch_players(),
+                    changes: heos.changes(),
+                },
+                Match {
+                    addresses,
+                    serial: self.serial.clone(),
+                },
+                Arc::clone(&self.status),
+                self.changes.clone(),
+            )
+            .instrument(self.span.clone()),
+        );
         *running = Some(Running { heos, watcher });
         drop(running);
         guard.0 = None;
@@ -565,17 +575,21 @@ impl HeosOwner {
         let link = Arc::clone(&self.link);
         // Held until the handle is stored, so that `disconnect` finds it.
         let mut start_task = self.start_task();
-        let task = tokio::spawn(async move {
-            // The error is kept before the status says that it failed.
-            let _ = link
-                .open(gate, |error| {
-                    *link
-                        .start_error
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(error));
-                })
-                .await;
-        });
+        let span = link.span.clone();
+        let task = tokio::spawn(
+            async move {
+                // The error is kept before the status says that it failed.
+                let _ = link
+                    .open(gate, |error| {
+                        *link
+                            .start_error
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(error));
+                    })
+                    .await;
+            }
+            .instrument(span),
+        );
         *start_task = Some(task.abort_handle());
         true
     }
@@ -812,7 +826,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_mapped_ipv6_host_is_used_as_ipv4() {
-        let link = |host: &str| HeosLink::new(host.to_owned(), None, HeosConfig::default(), true);
+        let link = |host: &str| {
+            HeosLink::new(
+                host.to_owned(),
+                None,
+                HeosConfig::default(),
+                true,
+                Span::none(),
+            )
+        };
         let v4: IpAddr = "192.0.2.5".parse().unwrap();
         for host in ["::ffff:192.0.2.5", "192.0.2.5"] {
             assert_eq!(link(host).addresses().await.unwrap(), [v4], "{host}");

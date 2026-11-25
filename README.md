@@ -535,6 +535,8 @@ have not run on a receiver:
   tested with unit tests only.
 - HEOS: connecting again after a lost connection, and the heartbeat. They are
   tested with a fake device.
+- TCP keepalive on the telnet and HEOS connections. A test checks that the
+  options are set. Finding a receiver that loses power was not tested.
 
 ## Notes about receivers
 
@@ -612,6 +614,17 @@ The crates use `tracing`. Set `RUST_LOG=denon_marantz=debug` to see the
 connect steps and the pages that could not be read. `trace` shows each
 message. The `sensitive-logs` feature adds full message text.
 For HEOS, use `RUST_LOG=denon_marantz_heos=debug`.
+
+Logs of one `Avr` are in an `avr` span with the host and an `id` that is
+unique among the `avr` spans of the process: the connect, its HTTP requests,
+the telnet task, the HEOS connection, the start, the check of stored values and
+the reads after commands. A HEOS client logs in a `heos` span with the same
+fields. The span of a HEOS client that an `Avr` opens is in the `avr` span, if
+logs of `denon_marantz` are on. The spans have the error level and the crate
+name as target, so a filter for the whole crate turns them on at every level. A
+filter for one module only, for example `denon_marantz::telnet`, does not. Log
+lines of `Avr` methods outside these parts are not in the span. Most of them
+have a `host` field.
 
 ## Development
 

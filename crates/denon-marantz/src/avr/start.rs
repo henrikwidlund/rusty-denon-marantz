@@ -18,6 +18,7 @@ use denon_marantz_proto::{
 };
 use tokio::sync::oneshot;
 use tokio::task::{AbortHandle, JoinHandle};
+use tracing::Instrument;
 
 #[cfg(feature = "telnet")]
 use super::UpdateMethod;
@@ -530,6 +531,13 @@ impl Avr {
     /// If the future is dropped before it returns, for example by a timeout,
     /// no connection stays open.
     pub async fn start_with(self: &Arc<Self>, options: StartOptions) -> Result<Started, Error> {
+        self.start_in(options)
+            .instrument(self.http.span().clone())
+            .await
+    }
+
+    /// Does the work of [`Avr::start_with`].
+    async fn start_in(self: &Arc<Self>, options: StartOptions) -> Result<Started, Error> {
         let running = StartGuard::new(self)?;
         self.update().await?;
         #[cfg(feature = "telnet")]
@@ -556,20 +564,24 @@ impl Avr {
         };
         let (report_sender, report_receiver) = oneshot::channel();
         let (slow_sender, slow_settings) = oneshot::channel();
+        let span = self.http.span().clone();
         Ok(Started {
-            handle: tokio::spawn(async move {
-                let (report, read_slow) = task.finish_reads(options, telnet, info_sender).await;
-                drop(running);
-                // Fails only if the caller dropped `Started`.
-                let _ = report_sender.send(StartReport { heos, ..report });
-                // The slow settings come after the report, so that waiting
-                // for it does not take longer. The same task reads them, so
-                // that `Started::stop` stops them too.
-                if read_slow {
-                    let _ = task.read_settings(SettingsPart::Slow).await;
-                    let _ = slow_sender.send(());
+            handle: tokio::spawn(
+                async move {
+                    let (report, read_slow) = task.finish_reads(options, telnet, info_sender).await;
+                    drop(running);
+                    // Fails only if the caller dropped `Started`.
+                    let _ = report_sender.send(StartReport { heos, ..report });
+                    // The slow settings come after the report, so that waiting
+                    // for it does not take longer. The same task reads them, so
+                    // that `Started::stop` stops them too.
+                    if read_slow {
+                        let _ = task.read_settings(SettingsPart::Slow).await;
+                        let _ = slow_sender.send(());
+                    }
                 }
-            }),
+                .instrument(span),
+            ),
             report_receiver: Some(report_receiver),
             join_pending: false,
             report: None,

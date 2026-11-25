@@ -17,6 +17,7 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::{Client, Error as ClientError};
 use hyper_util::rt::TokioExecutor;
 use tokio::time::Instant;
+use tracing::{Instrument, Span};
 
 use crate::error::Error;
 use crate::host::{UrlHost, bare};
@@ -91,6 +92,8 @@ pub struct HttpClient {
     priority: Option<Arc<Priority>>,
     /// The requests also wait for the pause after the last command.
     pause: bool,
+    /// Span of the request logs.
+    span: Span,
 }
 
 impl HttpClient {
@@ -119,6 +122,7 @@ impl HttpClient {
             pacer: Arc::new(Pacer::new(config.pacing)?),
             priority: None,
             pause: true,
+            span: Span::none(),
         })
     }
 
@@ -127,6 +131,17 @@ impl HttpClient {
     pub(crate) fn with_priority(mut self, priority: Arc<Priority>) -> Self {
         self.priority = Some(priority);
         self
+    }
+
+    /// The request logs are in `span`.
+    pub(crate) fn with_span(mut self, span: Span) -> Self {
+        self.span = span;
+        self
+    }
+
+    /// The span of the request logs.
+    pub(crate) const fn span(&self) -> &Span {
+        &self.span
     }
 
     /// The settings of this client.
@@ -145,6 +160,7 @@ impl HttpClient {
             pacer: Arc::clone(&self.pacer),
             priority: self.priority.clone(),
             pause: false,
+            span: self.span.clone(),
         }
     }
 
@@ -239,8 +255,15 @@ impl HttpClient {
         }
     }
 
-    /// Sends a request with the time limit, after the wait.
+    /// As [`HttpClient::limited`], in the span of the client.
     async fn timed(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
+        self.limited(method, path, body)
+            .instrument(self.span.clone())
+            .await
+    }
+
+    /// Sends a request with the time limit.
+    async fn limited(&self, method: Method, path: &str, body: Bytes) -> Result<Bytes, Error> {
         tracing::trace!(host = self.authority(), %method, path, "request");
         let result = tokio::time::timeout(
             self.config.request_timeout,

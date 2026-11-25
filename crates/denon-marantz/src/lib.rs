@@ -99,11 +99,15 @@ mod http;
 #[cfg(feature = "http")]
 mod identify;
 #[cfg(feature = "http")]
+mod log;
+#[cfg(feature = "http")]
 mod priority;
 #[cfg(feature = "http")]
 mod sound_control;
 #[cfg(feature = "http")]
 mod status;
+#[cfg(feature = "telnet")]
+mod tcp;
 #[cfg(feature = "telnet")]
 mod telnet;
 #[cfg(feature = "http")]

@@ -943,3 +943,60 @@ pub(crate) const CLOSED_PORT: u16 = 1;
 
 /// A second port like [`CLOSED_PORT`], for tests that need two of them.
 pub(crate) const OTHER_CLOSED_PORT: u16 = 2;
+
+/// Collects the log output of a test.
+#[derive(Clone, Default)]
+pub(crate) struct LogBuffer(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl LogBuffer {
+    /// Collects the logs that `filter` lets through, until the guard is
+    /// dropped. Only for a test runtime with one thread: the subscriber is
+    /// set for this thread, so tasks on other threads do not use it.
+    pub(crate) fn capture(filter: &str) -> (Self, impl Sized) {
+        use tracing_subscriber::util::SubscriberInitExt;
+        let logs = Self::default();
+        let writer = logs.clone();
+        let guard = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish()
+            .set_default();
+        (logs, guard)
+    }
+
+    pub(crate) fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().unwrap()).into_owned()
+    }
+
+    /// The span `name{...}` in the first line, after line `after`, that
+    /// contains `what`.
+    pub(crate) fn span_of(&self, what: &str, after: usize, name: &str) -> String {
+        let text = self.text();
+        let line = text
+            .lines()
+            .skip(after)
+            .find(|line| line.contains(what))
+            .unwrap_or_else(|| panic!("no line with {what:?} in:\n{text}"));
+        let open = format!("{name}{{");
+        let start = line
+            .find(&open)
+            .unwrap_or_else(|| panic!("no {name} span in: {line}"));
+        line[start..].split('}').next().unwrap().to_owned()
+    }
+
+    pub(crate) fn line_count(&self) -> usize {
+        self.text().lines().count()
+    }
+}

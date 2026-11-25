@@ -5,8 +5,9 @@ mod common;
 use std::time::{Duration, Instant};
 
 use common::{
-    Fake, IP, LOOPBACK_V6, PID, REGISTER, Reply, answer, answer_lines, config, connect, counter,
-    event, failure, from_data, name, next_change, now_playing, wait_for_registers, wait_until,
+    Fake, IP, LOOPBACK_V6, LogBuffer, PID, REGISTER, Reply, answer, answer_lines, config, connect,
+    counter, event, failure, from_data, name, next_change, now_playing, wait_for_registers,
+    wait_until,
 };
 use denon_marantz_heos::proto::ErrorCode;
 use denon_marantz_heos::{
@@ -752,4 +753,14 @@ async fn a_negative_position_or_length_is_skipped() {
         })
         .collect();
     assert_eq!(positions, [2_000, 4_294_937_296, 3_000, 7_000]);
+}
+
+#[tokio::test]
+async fn the_worker_logs_in_the_heos_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz_heos=debug");
+    let fake = Fake::start(from_data).await;
+    let _heos = connect(&fake).await;
+    wait_until(|| logs.text().contains("HEOS connected")).await;
+    let span = logs.span_of("HEOS connected", 0, "heos");
+    assert!(span.contains("host=127.0.0.1"), "{span}");
 }

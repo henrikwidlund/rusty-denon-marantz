@@ -20,7 +20,7 @@ quick-xml = "0.42"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 proptest = "1"
-socket2 = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
 allocation-counter = "0.8"
 criterion = { version = "0.8", default-features = false }
 bytes = "1"

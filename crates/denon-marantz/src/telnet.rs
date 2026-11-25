@@ -27,6 +27,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
+use tracing::{Instrument, Span};
 
 use crate::avr::{Info, Offered};
 use crate::channels::Channels;
@@ -57,7 +58,8 @@ pub struct TelnetConfig {
     pub write_timeout: Duration,
     /// Time without data after which a query is sent to keep the connection
     /// alive. If there is still nothing after the same time again, the
-    /// connection counts as lost.
+    /// connection counts as lost. On most systems, TCP keepalive finds a
+    /// receiver that is gone in about 25 s, often before this.
     pub keep_alive: Duration,
     /// Time to wait before the first try to connect again. It doubles with
     /// each failed try up to [`TelnetConfig::reconnect_max`].
@@ -332,6 +334,8 @@ pub(crate) struct Telnet {
     forget: Arc<AtomicBool>,
     /// The running task. The lock also stops two calls from connecting at once.
     task: Mutex<Option<Task>>,
+    /// Span of the task logs.
+    span: Span,
 }
 
 /// A running task.
@@ -393,7 +397,13 @@ impl Queries {
 }
 
 impl Telnet {
-    pub(crate) fn new(config: TelnetConfig, background_pause: Duration, info: &Info) -> Self {
+    /// The task logs in `span`.
+    pub(crate) fn new(
+        config: TelnetConfig,
+        background_pause: Duration,
+        info: &Info,
+        span: Span,
+    ) -> Self {
         Self {
             config,
             background_pause,
@@ -402,6 +412,7 @@ impl Telnet {
             status: watch::Sender::new(TelnetStatus::Disconnected),
             forget: Arc::new(AtomicBool::new(false)),
             task: Mutex::new(None),
+            span,
         }
     }
 
@@ -473,7 +484,11 @@ impl Telnet {
         // The task owns the guard from the start, so the status is reset also
         // if the task is stopped before it runs.
         let guard = StatusGuard(self.status.clone());
-        let handle = tokio::spawn(worker.run(stream, request_receiver, shutdown_receiver, guard));
+        let handle = tokio::spawn(
+            worker
+                .run(stream, request_receiver, shutdown_receiver, guard)
+                .instrument(self.span.clone()),
+        );
         *task = Some(Task {
             shutdown,
             requests,
@@ -1677,8 +1692,7 @@ async fn open(host: &str, config: &TelnetConfig) -> Result<TcpStream, Error> {
             sent: false,
         }),
         Ok(Ok(stream)) => {
-            // Commands are short. Do not wait to fill a packet.
-            let _ = stream.set_nodelay(true);
+            crate::tcp::configure(&stream);
             Ok(stream)
         }
     }

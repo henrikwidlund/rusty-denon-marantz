@@ -26,6 +26,7 @@ use denon_marantz_proto::{
     MAX_QUICK_SELECT, NetworkAudioCommand, SpecFeature, SpecGeneration, ZoneSettingValue,
 };
 use tokio::sync::{broadcast, watch};
+use tracing::{Instrument, Span};
 
 use crate::audyssey::Audyssey;
 use crate::channels::Channels;
@@ -946,6 +947,11 @@ impl Avr {
     /// device information is not readable now. That can be a short failure,
     /// so it is not reported as a change.
     pub async fn verify(&self) -> Result<Option<Info>, Error> {
+        self.verify_in().instrument(self.http.span().clone()).await
+    }
+
+    /// Does the work of [`Avr::verify`].
+    async fn verify_in(&self) -> Result<Option<Info>, Error> {
         let stored = &self.info;
         let config = self.http.config();
         let identified =
@@ -2532,7 +2538,14 @@ impl AvrBuilder {
     /// A missing or unusable device description is not an error: the brand is
     /// then the one from the device information, [`AvrBuilder::brand`] or
     /// [`Brand::Denon`], and the model is not known.
-    pub async fn connect(mut self) -> Result<Avr, Error> {
+    pub async fn connect(self) -> Result<Avr, Error> {
+        let span = crate::log::session(&self.host);
+        self.connect_in(span.clone()).instrument(span).await
+    }
+
+    /// Does the work of [`AvrBuilder::connect`]. The clients and tasks of the
+    /// receiver log in `span`.
+    async fn connect_in(mut self, span: Span) -> Result<Avr, Error> {
         #[cfg(feature = "telnet")]
         self.telnet.check()?;
         #[cfg(feature = "heos")]
@@ -2546,8 +2559,9 @@ impl AvrBuilder {
         }
         if let Some(mut info) = self.known.take() {
             info.host.clone_from(&self.host);
-            let http =
-                HttpClient::new(&self.host, info.port, self.http)?.with_priority(priority.clone());
+            let http = HttpClient::new(&self.host, info.port, self.http)?
+                .with_priority(priority.clone())
+                .with_span(span);
             tracing::info!(host = %info.host, name = %info.friendly_name, method = ?info.update_method, "connected with known values");
             return self.assemble(info, http, priority, true);
         }
@@ -2556,7 +2570,8 @@ impl AvrBuilder {
             None => identify(&self.host, self.http).await?,
         };
         let http = HttpClient::new(&self.host, identified.port, self.http)?
-            .with_priority(priority.clone());
+            .with_priority(priority.clone())
+            .with_span(span);
         // The brand from the receiver wins over the given one.
         let brand = identified.device_info.brand.or(self.brand);
         let description = self.description(identified.receiver_type, brand).await?;
@@ -2609,7 +2624,12 @@ impl AvrBuilder {
         };
         let appcommand0300_parts = [part(true)?, part(false)?];
         #[cfg(feature = "telnet")]
-        let telnet = Telnet::new(self.telnet, self.background_pause, &info);
+        let telnet = Telnet::new(
+            self.telnet,
+            self.background_pause,
+            &info,
+            http.span().clone(),
+        );
         let follow_up = FollowUp::start(
             self.follow_up_read,
             &http,
@@ -2626,15 +2646,15 @@ impl AvrBuilder {
             info.serial_number.clone(),
             self.heos,
             info.has_heos(),
+            http.span().clone(),
         ));
+        let web_interface =
+            HttpClient::new(&info.host, self.web_interface_port, self.web_interface)?
+                .with_priority(priority.clone())
+                .with_span(http.span().clone());
         Ok(Avr {
             http,
-            web_interface: HttpClient::new(
-                &info.host,
-                self.web_interface_port,
-                self.web_interface,
-            )?
-            .with_priority(priority.clone()),
+            web_interface,
             info,
             update_body: request_body(&update_cmds)?,
             update_body_without_tone: request_body(
@@ -2856,7 +2876,7 @@ async fn page(http: &HttpClient, path: &str) -> Result<Option<Bytes>, Error> {
         Ok(body) => Ok(Some(body)),
         Err(error) if error.is_unreachable() => Err(error),
         Err(error) => {
-            tracing::debug!(%error, "status page not available");
+            tracing::debug!(host = http.authority(), %error, "status page not available");
             Ok(None)
         }
     }
