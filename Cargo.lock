@@ -258,6 +258,7 @@ dependencies = [
  "denon-marantz-discovery",
  "denon-marantz-heos",
  "denon-marantz-proto",
+ "denon-marantz-shared",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -285,8 +286,8 @@ name = "denon-marantz-heos"
 version = "0.1.0"
 dependencies = [
  "denon-marantz-heos-proto",
+ "denon-marantz-shared",
  "serde",
- "socket2",
  "thiserror",
  "tokio",
  "tracing",
@@ -313,6 +314,15 @@ dependencies = [
  "quick-xml",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "denon-marantz-shared"
+version = "0.1.0"
+dependencies = [
+ "socket2",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

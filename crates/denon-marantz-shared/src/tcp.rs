@@ -1,9 +1,31 @@
-//! Socket options of TCP connections.
+//! TCP connections and their socket options.
 
+use std::io;
 use std::time::Duration;
 
 use socket2::{SockRef, TcpKeepalive};
 use tokio::net::TcpStream;
+
+/// Why a connection could not be opened.
+#[derive(Debug, thiserror::Error)]
+pub enum ConnectError {
+    /// The connection was not open within the time limit.
+    #[error("connect timed out")]
+    Timeout,
+    /// Opening the connection failed.
+    #[error(transparent)]
+    Io(#[from] io::Error),
+}
+
+/// Opens a TCP connection to `host`. Turns off Nagle's algorithm and turns on
+/// keepalive.
+pub async fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, ConnectError> {
+    let stream = tokio::time::timeout(timeout, TcpStream::connect((host, port)))
+        .await
+        .map_err(|_| ConnectError::Timeout)??;
+    configure(&stream);
+    Ok(stream)
+}
 
 /// Idle time before the first keepalive probe.
 const KEEPALIVE_TIME: Duration = Duration::from_secs(10);
@@ -16,7 +38,7 @@ const USER_TIMEOUT: Duration = Duration::from_secs(25);
 /// keepalive finds a device that is gone without closing the connection, for
 /// example after a power loss, in about 25 s. Options that the system refuses
 /// are skipped.
-pub(crate) fn configure(stream: &TcpStream) {
+fn configure(stream: &TcpStream) {
     // Commands are short. Do not wait to fill a packet.
     let _ = stream.set_nodelay(true);
     let socket = SockRef::from(stream);
@@ -71,6 +93,21 @@ const fn with_probes(keepalive: TcpKeepalive) -> TcpKeepalive {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn connect_sets_options_and_gives_the_io_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let stream = connect("127.0.0.1", port, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(stream.nodelay().unwrap());
+        // Port 0 cannot be connected to.
+        let error = connect("127.0.0.1", 0, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ConnectError::Io(_)), "{error:?}");
+    }
 
     #[tokio::test]
     async fn sets_options() {

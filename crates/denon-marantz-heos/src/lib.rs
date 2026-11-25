@@ -66,10 +66,8 @@
 
 mod client;
 mod error;
-mod host;
 mod log;
 mod state;
-mod tcp;
 mod worker;
 
 pub use client::{Answer, Heos, HeosConfig, Page};

@@ -1,0 +1,22 @@
+[package]
+name = "denon-marantz-shared"
+description = "Internal helpers of denon-marantz and denon-marantz-heos, no stable API"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "README.md"
+keywords = ["denon", "marantz", "heos"]
+categories = ["network-programming"]
+
+[dependencies]
+socket2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
+[lints]
+workspace = true

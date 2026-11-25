@@ -882,7 +882,7 @@ impl Avr {
     #[must_use]
     pub fn builder(host: impl Into<String>) -> AvrBuilder {
         AvrBuilder {
-            host: crate::host::into_bare(host.into()),
+            host: denon_marantz_shared::host::into_bare(host.into()),
             http: HttpConfig::default(),
             web_interface: WEB_INTERFACE_CONFIG,
             web_interface_port: WEB_INTERFACE_PORT,
@@ -1423,7 +1423,7 @@ impl Avr {
     pub fn artwork_url(&self) -> Option<String> {
         use std::hash::{Hash, Hasher};
 
-        let host = crate::host::UrlHost(&self.info.host);
+        let host = denon_marantz_shared::host::UrlHost(&self.info.host);
         let port = self.info.port;
         match self.playing_kind()? {
             PlayingKind::NetAudio => {

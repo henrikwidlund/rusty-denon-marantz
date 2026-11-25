@@ -11,7 +11,6 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -22,6 +21,9 @@ use denon_marantz_proto::telnet::{
     queries, signal_queries,
 };
 use denon_marantz_proto::{Brand, DAB_QUERIES, HD_RADIO_QUERIES, Power, TUNER_QUERIES, Zone};
+use denon_marantz_shared::host::UrlHost;
+use denon_marantz_shared::task::{Refuse, drop_requests, refusing_requests, until_stopped};
+use denon_marantz_shared::tcp::{self, ConnectError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, broadcast, mpsc, oneshot, watch};
@@ -32,7 +34,6 @@ use tracing::{Instrument, Span};
 use crate::avr::{Info, Offered};
 use crate::channels::Channels;
 use crate::error::Error;
-use crate::host::UrlHost;
 
 /// Events that a slow subscriber can fall behind before it loses some.
 const EVENT_CAPACITY: usize = 256;
@@ -306,6 +307,15 @@ enum Request {
         deadline: Instant,
         start: bool,
     },
+}
+
+impl Refuse for Request {
+    /// Fails only a [`Request::Send`]. The other requests are dropped.
+    fn refuse(self) {
+        if let Self::Send(outgoing) = self {
+            outgoing.fail();
+        }
+    }
 }
 
 /// How a wait for the answers ended.
@@ -1644,70 +1654,25 @@ impl Worker {
     }
 }
 
-/// Tells the callers of waiting requests that nothing was sent.
-fn drop_requests(requests: &mut mpsc::Receiver<Request>) {
-    while let Ok(request) = requests.try_recv() {
-        if let Request::Send(outgoing) = request {
-            outgoing.fail();
-        }
-    }
-}
-
-/// Runs `work`. Requests that come in meanwhile are refused, because there is
-/// no connection to send them on.
-async fn refusing_requests<T>(
-    requests: &mut mpsc::Receiver<Request>,
-    work: impl Future<Output = T>,
-) -> T {
-    tokio::pin!(work);
-    loop {
-        tokio::select! {
-            output = &mut work => return output,
-            Some(request) = requests.recv() => {
-                if let Request::Send(outgoing) = request {
-                    outgoing.fail();
-                }
-            }
-        }
-    }
-}
-
 /// Opens a connection to the receiver.
 async fn open(host: &str, config: &TelnetConfig) -> Result<TcpStream, Error> {
-    let request = || format!("telnet connect {}:{}", UrlHost(host), config.port);
-    match tokio::time::timeout(
-        config.connect_timeout,
-        TcpStream::connect((host, config.port)),
-    )
-    .await
-    {
-        Err(_) => Err(Error::Timeout {
-            request: request(),
-            limit: config.connect_timeout,
-            sent: false,
-        }),
-        Ok(Err(source)) => Err(Error::Network {
-            request: request(),
-            source: Box::new(source),
-            sent: false,
-        }),
-        Ok(Ok(stream)) => {
-            crate::tcp::configure(&stream);
-            Ok(stream)
-        }
-    }
-}
-
-/// Runs `work`. `None` if the task is stopped first.
-async fn until_stopped<T>(
-    shutdown: &mut watch::Receiver<bool>,
-    work: impl Future<Output = T>,
-) -> Option<T> {
-    tokio::select! {
-        biased;
-        _ = shutdown.changed() => None,
-        output = work => Some(output),
-    }
+    tcp::connect(host, config.port, config.connect_timeout)
+        .await
+        .map_err(|error| {
+            let request = format!("telnet connect {}:{}", UrlHost(host), config.port);
+            match error {
+                ConnectError::Timeout => Error::Timeout {
+                    request,
+                    limit: config.connect_timeout,
+                    sent: false,
+                },
+                ConnectError::Io(source) => Error::Network {
+                    request,
+                    source: Box::new(source),
+                    sent: false,
+                },
+            }
+        })
 }
 
 #[cfg(test)]

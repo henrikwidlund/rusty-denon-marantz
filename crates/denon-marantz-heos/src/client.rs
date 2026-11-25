@@ -170,7 +170,7 @@ impl Heos {
     /// `fe80::1%en0`, are not supported.
     pub async fn connect_with(host: impl Into<String>, config: HeosConfig) -> Result<Self, Error> {
         config.check()?;
-        let host = crate::host::into_bare(host.into());
+        let host = denon_marantz_shared::host::into_bare(host.into());
         let span = crate::log::session(&host);
         let connections = Connections::open(&host, &config)
             .instrument(span.clone())

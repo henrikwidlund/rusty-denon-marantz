@@ -574,6 +574,7 @@ have not run on a receiver:
 | `denon-marantz-discovery` | SSDP messages and mDNS service records, without IO. |
 | `denon-marantz-heos` | Async HEOS client (tokio). |
 | `denon-marantz-heos-proto` | HEOS protocol without IO. |
+| `denon-marantz-shared` | Internal helpers of `denon-marantz` and `denon-marantz-heos`. No stable API. |
 
 The `denon-marantz` crate re-exports the types that most programs need, for
 example `Zone` and `Volume`. All others are in `denon_marantz::proto`.

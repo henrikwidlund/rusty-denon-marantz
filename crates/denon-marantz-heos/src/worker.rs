@@ -8,12 +8,14 @@
 //! the players and their state are read again.
 
 use std::collections::VecDeque;
-use std::future::Future;
 use std::time::Duration;
 
 use denon_marantz_heos_proto::{
     Command, Event, Failure, LineDecoder, Player, PlayerId, RepeatMode, Response, Status,
 };
+use denon_marantz_shared::host::UrlHost;
+use denon_marantz_shared::task::{Refuse, drop_requests, refusing_requests, until_stopped};
+use denon_marantz_shared::tcp::{self, ConnectError};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -21,7 +23,6 @@ use tokio::time::Instant;
 
 use crate::client::{Answer, HeosConfig};
 use crate::error::{Error, FailureText};
-use crate::host::UrlHost;
 use crate::state::{Change, HeosStatus, Shared};
 
 /// Bytes read at once.
@@ -804,78 +805,38 @@ fn log_line(line: &str) {
     }
 }
 
-/// Tells the callers of waiting requests that nothing was sent.
-fn drop_requests(requests: &mut mpsc::Receiver<Request>) {
-    while let Ok(request) = requests.try_recv() {
-        refuse(request);
-    }
-}
-
 /// Refuses the waiting requests and all that come later, when the task ends.
 fn refuse_all(requests: &mut mpsc::Receiver<Request>) {
     requests.close();
     drop_requests(requests);
 }
 
-fn refuse(request: Request) {
-    match request {
-        Request::Send { reply, .. } => {
-            let _ = reply.send(Err(Error::NotConnected));
-        }
-        Request::Refresh(done) => {
-            let _ = done.send(Err(Error::NotConnected));
-        }
-    }
-}
-
-/// Runs `work`. Requests that come in meanwhile are refused, because there is
-/// no connection to send them on.
-async fn refusing_requests<T>(
-    requests: &mut mpsc::Receiver<Request>,
-    work: impl Future<Output = T>,
-) -> T {
-    tokio::pin!(work);
-    loop {
-        tokio::select! {
-            output = &mut work => return output,
-            Some(request) = requests.recv() => refuse(request),
+impl Refuse for Request {
+    fn refuse(self) {
+        match self {
+            Self::Send { reply, .. } => {
+                let _ = reply.send(Err(Error::NotConnected));
+            }
+            Self::Refresh(done) => {
+                let _ = done.send(Err(Error::NotConnected));
+            }
         }
     }
 }
 
 /// Opens one connection to the device.
 async fn open(host: &str, config: &HeosConfig) -> Result<TcpStream, Error> {
-    let request = || format!("connect {}:{}", UrlHost(host), config.port);
-    match tokio::time::timeout(
-        config.connect_timeout,
-        TcpStream::connect((host, config.port)),
-    )
-    .await
-    {
-        Err(_) => Err(Error::Timeout {
-            request: request(),
-            limit: config.connect_timeout,
-            sent: false,
-        }),
-        Ok(Err(source)) => Err(Error::Network {
-            request: request(),
-            source,
-        }),
-        Ok(Ok(stream)) => {
-            crate::tcp::configure(&stream);
-            Ok(stream)
-        }
-    }
-}
-
-/// Runs `work`. `None` if the task is stopped first.
-async fn until_stopped<T>(
-    shutdown: &mut watch::Receiver<bool>,
-    work: impl Future<Output = T>,
-) -> Option<T> {
-    tokio::select! {
-        biased;
-        _ = shutdown.changed() => None,
-        output = work => Some(output),
-    }
+    tcp::connect(host, config.port, config.connect_timeout)
+        .await
+        .map_err(|error| {
+            let request = format!("connect {}:{}", UrlHost(host), config.port);
+            match error {
+                ConnectError::Timeout => Error::Timeout {
+                    request,
+                    limit: config.connect_timeout,
+                    sent: false,
+                },
+                ConnectError::Io(source) => Error::Network { request, source },
+            }
+        })
 }

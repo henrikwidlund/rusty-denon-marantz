@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use denon_marantz_shared::host::{UrlHost, bare};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode, Uri};
@@ -20,7 +21,6 @@ use tokio::time::Instant;
 use tracing::{Instrument, Span};
 
 use crate::error::Error;
-use crate::host::{UrlHost, bare};
 use crate::pacer::{Adaptive, Pacer, Pacing};
 use crate::priority::Priority;
 

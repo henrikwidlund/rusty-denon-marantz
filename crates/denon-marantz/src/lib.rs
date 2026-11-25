@@ -93,8 +93,6 @@ mod discovery;
 #[cfg(feature = "heos")]
 mod heos_link;
 #[cfg(feature = "http")]
-mod host;
-#[cfg(feature = "http")]
 mod http;
 #[cfg(feature = "http")]
 mod identify;
@@ -106,8 +104,6 @@ mod priority;
 mod sound_control;
 #[cfg(feature = "http")]
 mod status;
-#[cfg(feature = "telnet")]
-mod tcp;
 #[cfg(feature = "telnet")]
 mod telnet;
 #[cfg(feature = "http")]

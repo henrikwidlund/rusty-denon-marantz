@@ -14,9 +14,9 @@ exclude = ["/tests"]
 [features]
 default = ["telnet", "http", "discovery"]
 # Live events and commands on telnet port 23. Needs `http` to identify the receiver.
-telnet = ["http", "tokio/io-util", "tokio/macros", "tokio/rt", "dep:socket2"]
+telnet = ["http", "dep:denon-marantz-shared", "tokio/io-util", "tokio/macros", "tokio/rt"]
 # AppCommand XML over HTTP.
-http = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tracing"]
+http = ["dep:bytes", "dep:denon-marantz-shared", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tracing"]
 # Find receivers with SSDP.
 discovery = ["http", "tokio/rt", "dep:denon-marantz-discovery", "dep:if-addrs", "dep:socket2"]
 # Find receivers with mDNS too. Opens its own multicast sockets and a thread.
@@ -33,6 +33,7 @@ bytes = { workspace = true, optional = true }
 denon-marantz-proto.workspace = true
 denon-marantz-discovery = { workspace = true, optional = true }
 denon-marantz-heos = { workspace = true, optional = true }
+denon-marantz-shared = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }

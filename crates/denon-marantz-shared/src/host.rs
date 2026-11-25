@@ -3,14 +3,16 @@
 use std::fmt;
 
 /// Removes the brackets around an IPv6 address: `[::1]` becomes `::1`.
-pub(crate) fn bare(host: &str) -> &str {
+#[must_use]
+pub fn bare(host: &str) -> &str {
     host.strip_prefix('[')
         .and_then(|host| host.strip_suffix(']'))
         .unwrap_or(host)
 }
 
 /// Like [`bare`], for an owned host.
-pub(crate) fn into_bare(host: String) -> String {
+#[must_use]
+pub fn into_bare(host: String) -> String {
     match bare(&host) {
         inner if inner.len() == host.len() => host,
         inner => inner.to_owned(),
@@ -19,7 +21,7 @@ pub(crate) fn into_bare(host: String) -> String {
 
 /// Shows a host for a URL or a `host:port` text. An IPv6 address gets
 /// brackets. The host must be without brackets, see [`into_bare`].
-pub(crate) struct UrlHost<'a>(pub(crate) &'a str);
+pub struct UrlHost<'a>(pub &'a str);
 
 impl fmt::Display for UrlHost<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

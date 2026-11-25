@@ -11,5 +11,7 @@ First release, version 0.1.0. Not released yet.
 ### Added
 
 - First version.
+- `denon-marantz-shared`: internal helpers of `denon-marantz` and
+  `denon-marantz-heos` (TCP connect, host names, request handling).
 
 [Unreleased]: https://github.com/henrikwidlund/rusty-denon-marantz/commits/main
