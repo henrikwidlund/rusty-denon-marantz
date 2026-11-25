@@ -3722,8 +3722,7 @@ async fn telnet_task_and_http_requests_log_in_the_avr_span() {
     .await;
     let telnet_span = logs.span_of("telnet connected", 0, "avr");
     assert!(telnet_span.contains("host=127.0.0.1"), "{telnet_span}");
-    // `update` does not run in the span, so this checks the span of the HTTP
-    // client.
+    // The HTTP requests of `update` log in the same span as the telnet task.
     let before = logs.line_count();
     avr.update().await.unwrap();
     assert_eq!(logs.span_of("request", before, "avr"), telnet_span);

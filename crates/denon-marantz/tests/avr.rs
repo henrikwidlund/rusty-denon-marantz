@@ -1104,6 +1104,36 @@ async fn blank_audyssey_values_are_unknown() {
 }
 
 #[tokio::test]
+async fn a_refused_web_interface_page_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let receiver = avr_x_receiver().await;
+    let web_interface = Fake::start(|_| Reply::Status(500)).await;
+    let avr = builder(&receiver, ReceiverType::AvrX)
+        .web_interface_port(web_interface.port)
+        .web_interface_config(config())
+        .connect()
+        .await
+        .unwrap();
+    let span = logs.span_of("request", 0, "avr");
+    // The refused page is only logged, outside an HTTP request.
+    avr.update_speaker_details().await.unwrap();
+    assert_eq!(logs.span_of("web interface page not read", 0, "avr"), span);
+    logs.assert_all_in(0, &[&span]);
+}
+
+#[tokio::test]
+async fn a_missing_appcommand0300_query_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let fake = receiver_with_audyssey(None, true).await;
+    let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();
+    let span = logs.span_of("request", 0, "avr");
+    // The missing query is only logged, outside an HTTP request.
+    avr.update_signal_and_settings().await.unwrap();
+    assert_eq!(logs.span_of("AppCommand0300 not read", 0, "avr"), span);
+    logs.assert_all_in(0, &[&span]);
+}
+
+#[tokio::test]
 async fn a_receiver_without_the_audyssey_query_is_asked_once() {
     let fake = receiver_with_audyssey(None, true).await;
     let avr = connect(&fake, ReceiverType::AvrX2016).await.unwrap();

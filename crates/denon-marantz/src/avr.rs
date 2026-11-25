@@ -947,7 +947,7 @@ impl Avr {
     /// device information is not readable now. That can be a short failure,
     /// so it is not reported as a change.
     pub async fn verify(&self) -> Result<Option<Info>, Error> {
-        self.verify_in().instrument(self.http.span().clone()).await
+        self.in_span(self.verify_in()).await
     }
 
     /// Does the work of [`Avr::verify`].
@@ -1016,7 +1016,7 @@ impl Avr {
     /// An `AvrX` whose answer fails with tone control and works without it is
     /// read without tone control from then on.
     pub async fn update(&self) -> Result<(), Error> {
-        self.update_in().instrument(self.http.span().clone()).await
+        self.in_span(self.update_in()).await
     }
 
     /// Does the work of [`Avr::update`].
@@ -1050,7 +1050,7 @@ impl Avr {
     /// a timeout or a network error is returned; other errors are only
     /// logged.
     pub async fn refresh(&self) -> Result<(), Error> {
-        self.refresh_in().instrument(self.http.span().clone()).await
+        self.in_span(self.refresh_in()).await
     }
 
     /// Does the work of [`Avr::refresh`].
@@ -1099,9 +1099,7 @@ impl Avr {
     /// after the connect time of [`AvrBuilder::web_interface_config`], one second by
     /// default, on each call.
     pub async fn update_speaker_details(&self) -> Result<SpeakerDetails, Error> {
-        self.update_speaker_details_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_speaker_details_in()).await
     }
 
     /// Does the work of [`Avr::update_speaker_details`].
@@ -1171,9 +1169,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_source_details(&self) -> Result<SourceDetails, Error> {
-        self.update_source_details_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_source_details_in()).await
     }
 
     /// Does the work of [`Avr::update_source_details`].
@@ -1218,9 +1214,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_settings_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
-        self.update_settings_availability_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_settings_availability_in()).await
     }
 
     /// Does the work of [`Avr::update_settings_availability`].
@@ -1248,9 +1242,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_detailed_availability(&self) -> Result<SettingsAvailabilityDetails, Error> {
-        self.update_detailed_availability_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_detailed_availability_in()).await
     }
 
     /// Does the work of [`Avr::update_detailed_availability`].
@@ -1287,9 +1279,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_video_details(&self) -> Result<VideoMenuDetails, Error> {
-        self.update_video_details_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_video_details_in()).await
     }
 
     /// Does the work of [`Avr::update_video_details`].
@@ -1317,9 +1307,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_general_settings(&self) -> Result<GeneralDetails, Error> {
-        self.update_general_settings_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_general_settings_in()).await
     }
 
     /// Does the work of [`Avr::update_general_settings`].
@@ -1369,9 +1357,7 @@ impl Avr {
     ///
     /// The same as [`Avr::update_speaker_details`].
     pub async fn update_system_settings(&self) -> Result<PageStatus, Error> {
-        self.update_system_settings_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_system_settings_in()).await
     }
 
     /// Does the work of [`Avr::update_system_settings`].
@@ -1401,9 +1387,7 @@ impl Avr {
     /// Returns an error if the receiver cannot be reached, see
     /// [`Error::is_unreachable`].
     pub async fn update_now_playing(&self) -> Result<PageStatus, Error> {
-        self.update_now_playing_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_now_playing_in()).await
     }
 
     /// Does the work of [`Avr::update_now_playing`].
@@ -1471,9 +1455,7 @@ impl Avr {
     ///
     /// The errors of the way that was used.
     pub async fn refresh_now_playing(&self) -> Result<(), Error> {
-        self.refresh_now_playing_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.refresh_now_playing_in()).await
     }
 
     /// Does the work of [`Avr::refresh_now_playing`].
@@ -1583,6 +1565,11 @@ impl Avr {
                 })
             }
         }
+    }
+
+    /// `work`, which runs in the span of this `Avr` when it is awaited.
+    fn in_span<F: Future>(&self, work: F) -> tracing::instrument::Instrumented<F> {
+        work.instrument(self.http.span().clone())
     }
 
     /// Opens the telnet connection and keeps it open.
@@ -2110,9 +2097,7 @@ impl Avr {
     /// Returns an error if the receiver does not answer in time or the
     /// connection fails, see [`Error::is_unreachable`].
     pub async fn update_signal_and_settings(&self) -> Result<PageStatus, Error> {
-        self.update_signal_and_settings_in()
-            .instrument(self.http.span().clone())
-            .await
+        self.in_span(self.update_signal_and_settings_in()).await
     }
 
     /// Does the work of [`Avr::update_signal_and_settings`].

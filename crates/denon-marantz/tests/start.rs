@@ -1214,8 +1214,7 @@ async fn the_start_logs_in_the_avr_span() {
     let http = receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await;
     let avr = Arc::new(builder(&http, ReceiverType::AvrX).connect().await.unwrap());
     // The update of the start tries again without tone control. That log is
-    // not inside an HTTP request, so it is in the span only if the start runs
-    // in it.
+    // not inside an HTTP request, so it shows the span of the update.
     let mut started = avr
         .start_with(StartOptions::new().telnet(false).signal_pages(false))
         .await
@@ -1230,7 +1229,7 @@ async fn the_start_logs_in_the_avr_span() {
 }
 
 #[tokio::test]
-async fn update_and_refresh_log_in_the_avr_span() {
+async fn update_logs_in_the_avr_span() {
     let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
     let http = receiver_with_info_that_refuses_tone_control(AVR_X_INFO).await;
     let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
@@ -1242,7 +1241,22 @@ async fn update_and_refresh_log_in_the_avr_span() {
         logs.span_of("tone control is left out of the update", 0, "avr"),
         span
     );
+    logs.assert_all_in(0, &[&span]);
+}
+
+#[tokio::test]
+async fn refresh_logs_in_the_avr_span() {
+    let (logs, _guard) = LogBuffer::capture("denon_marantz=trace");
+    let http = avr_x_receiver_with_settings(AVR_X_SETTINGS_INFO, SettingsReplies::SlowFails).await;
+    let avr = builder(&http, ReceiverType::AvrX).connect().await.unwrap();
+    let span = logs.span_of("request", 0, "avr");
+    // A refused settings read is only logged, outside an HTTP request, so it
+    // is in the span only if `refresh` runs in it.
     avr.refresh().await.unwrap();
+    assert_eq!(
+        logs.span_of("settings not read host=127.0.0.1 part=Slow", 0, "avr"),
+        span
+    );
     logs.assert_all_in(0, &[&span]);
 }
 

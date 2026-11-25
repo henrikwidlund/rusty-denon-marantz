@@ -619,14 +619,14 @@ For HEOS, use `RUST_LOG=denon_marantz_heos=debug`.
 Logs of one `Avr` are in an `avr` span with the host and an `id` that is
 unique among the `avr` spans of the process: the connect, its HTTP requests,
 the telnet task, the HEOS connection, the start, the check of stored values,
-the reads after commands and the reads of the `update_*` and `refresh_*`
-methods, `update` and `refresh`. A HEOS client logs in a `heos` span with the same
-fields. The span of a HEOS client that an `Avr` opens is in the `avr` span, if
-logs of `denon_marantz` are on. The spans have the error level and the crate
-name as target, so a filter for the whole crate turns them on at every level. A
-filter for one module only, for example `denon_marantz::telnet`, does not. Log
-lines of `Avr` methods outside these parts are not in the span. Most of them
-have a `host` field.
+the reads after commands and the reads of `update`, `refresh` and the
+`update_*` and `refresh_*` methods. A HEOS client logs in a `heos` span with
+the same fields. The span of a HEOS client that an `Avr` opens is in the `avr`
+span, if logs of `denon_marantz` are on. The spans have the error level and the
+crate name as target, so a filter for the whole crate turns them on at every
+level. A filter for one module only, for example `denon_marantz::telnet`, does
+not. Free functions such as `discover` and `identify` log without a span when
+user code calls them.
 
 ## Development
 
