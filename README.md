@@ -654,11 +654,11 @@ Fuzz targets for the parsers are in `fuzz/`. Benchmarks use `criterion`.
 
 ## Credits
 
-This is a Rust port of [denonavr](https://github.com/ol-iver/denonavr)
-(MIT), a Python library by Oliver Götz and contributors. The protocol
-knowledge and command tables come from that project.
-The HEOS crates are not a port. They follow the HEOS CLI protocol
-specification.
+This library is not a port, but parts of it are based on
+[denonavr](https://github.com/ol-iver/denonavr) (MIT), a Python library by
+Oliver Götz and contributors. Some of the logic for how the receivers work
+comes from that project, for example how `AppCommand` requests are built.
+The HEOS crates follow the HEOS CLI protocol specification.
 
 This project is not made or supported by Denon or Marantz. Denon and Marantz
 are trademarks of their respective owners. Other names are the property of
