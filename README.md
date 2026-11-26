@@ -42,8 +42,8 @@ state again.
 - Menu settings that only the web interface has: the on-screen display, TV
   format, screen saver, HDMI upscaler, HDCP and the 4K/8K format of each input,
   the levels of the inputs, how two-channel sources are played, what the XLR
-  outputs carry (models with XLR outputs only), the language, the firmware update settings, usage data and what
-  switches each trigger output.
+  outputs carry (models with XLR outputs only), the language, the firmware
+  update settings, usage data and what switches each trigger output.
 - What plays: title, artist, album and station of network audio and HD radio,
   band and frequency of the tuner, and the address of the picture. A receiver
   that uses HEOS for network audio does not give this: use the
@@ -106,8 +106,9 @@ signal page, the audio signal and the channels, the Audyssey settings, the
 video values and the HDMI output, and the web interface pages that say which
 settings are available. A page that fails is asked once more. Telnet is asked
 for the signal values that the other requests did not give. The report says
-what happened to each part. Use `StartOptions` to leave telnet closed, to skip
-the signal pages, or to change how long `all_synced` waits. A second `start`
+what happened to each part. Pass `StartOptions` to `avr.start_with(..)` to
+leave telnet or HEOS closed, to skip the signal pages or the settings below, or
+to change how long `all_synced` waits. A second `start`
 while one still runs gives `Error::StartRunning` and reads nothing.
 
 `start` returns when the zones are read. `basic_synced()` waits until the HTTP
@@ -134,7 +135,8 @@ that it lists. The fast ones are read before `basic_synced()` returns, the
 slow ones (audio delay, auto lip sync, speaker preset, dialog enhancer,
 restorer) after it, and `all_synced()` waits for them. Nothing is read if
 the signal request got no answer, and the slow ones are not read if the fast
-ones failed. `refresh()` reads them again. A value that the receiver leaves
+ones failed. `refresh()` reads them again. `StartOptions::settings(false)`
+skips them at the start. A value that the receiver leaves
 blank, or marks as not used in the current sound mode, does not change the
 state. The receiver can also mark a setting as not used in a mode where it
 applies, for example cinema EQ in Dolby Atmos. Then the old value stays until
@@ -195,10 +197,10 @@ not have that zone (`Info::zone_count`).
 | Group | Default | Values | Denon | Marantz |
 |---|---|---|---|---|
 | `Core` | yes | Power, source, volume and mute of the zones, sound mode, quick select | 9 | 9 |
-| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots, quick select names | 7 | 7 |
+| `Names` | yes | Source names and hidden sources, sound mode list, friendly name, Dirac Live slots and selected filter, quick select names | 7 | 7 |
 | `Toggles` | yes | On and off settings, for example tone control and Dynamic EQ | 19 | 23 |
 | `Signal` | yes | Video and audio signal | 14 | 14 |
-| `Device` | no | Dimmer, eco, sleep, standby, video and picture settings, Bluetooth level | 22 | 22 |
+| `Device` | no | Device settings, for example dimmer, eco, sleep, standby, video and picture settings, Bluetooth level | 22 | 22 |
 | `Sound` | no | Sound settings and levels | 40 | 39 |
 | `Zones` | no | Volume settings, levels, tone, high pass filter, channel mode of the zones, HDMI audio of zone 2 | 14 | 14 |
 | `Picture` | no | Picture mode and adjustments, older receivers only | 6 | 6 |
@@ -307,7 +309,7 @@ see `Error::is_unreachable`.
 The setters work over HTTP too. `avr.send(..)` and the controls use telnet while
 it is open, and HTTP otherwise, with `GET /goform/formiPhoneAppDirect.xml`.
 A program that does not want telnet never opens it: use
-`StartOptions::new().telnet(false)`. Over HTTP:
+`avr.start_with(StartOptions::new().telnet(false))`. Over HTTP:
 
 - The receiver answers `200` whether or not it did the command, as telnet
   gives no answer either. At a high rate, for example a held key, a command can
@@ -457,8 +459,8 @@ have not run on a receiver:
   sheets and the Denon ones, but no Marantz receiver was available.
 - Receivers without `AppCommand`, which are read over the status pages. They
   are tested with captured pages and fake receivers.
-- Tone control and `AppCommand0300.xml` on receivers older than the 2016
-  models. A receiver from about 2015 lists in `Deviceinfo.xml` which of these
+- Tone control and the other `AppCommand0300.xml` reads (not the settings) on
+  receivers older than the 2016 models. A receiver from about 2015 lists in `Deviceinfo.xml` which of these
   queries it answers, and only those are sent. Older receivers do not list
   them, so they are asked as on newer models. If a request with tone control
   fails on such a receiver and works without it, tone control is not asked
@@ -485,8 +487,9 @@ have not run on a receiver:
   and center gain texts (`PSEFF`, `PSCEI`, `PSCEG`) were confirmed by other
   users, not on a receiver here.
 - What plays (`refresh_now_playing`, `update_now_playing`,
-  `telnet_refresh_now_playing`, the `NSE` and `HD` events). The AVC-A10H does not give it, so it is tested with captured pages
-  from other receivers and with fake receivers. The `NSA` text is not used.
+  `telnet_refresh_now_playing`, the `NSE` and `HD` events). The AVC-A10H does
+  not give it, so it is tested with captured pages from other receivers and
+  with fake receivers. The `NSA` text is not used.
 - The signal pages of the web interface with an FRL rate, and colorimetry
   texts other than `BT.2020`: the FRL rate is only seen as no signal. The values
   of `ALLM` and `QFT` (1 is on) were only seen as off.
@@ -523,8 +526,9 @@ have not run on a receiver:
   after power on before the network answers.
 - The XLR output assignment (`XlrAssign`) on a model that has XLR outputs. The
   AVC-A10H has none and answers the page with zeros.
-- Receivers without the web interface on port 11080. The library gives an error
-  after one second for each page call, see `AvrBuilder::web_interface_config`.
+- Receivers without the web interface on port 11080. The library waits up to
+  one second to connect for each page call, see
+  `AvrBuilder::web_interface_config`.
 - HEOS: other HEOS devices, for example speakers, groups of players, and
   playing an input of another player. The AVC-A10H has one player and no
   groups.
@@ -558,9 +562,10 @@ have not run on a receiver:
   that does nothing else.
 - The receiver shows a new power state, source or sound mode in its `AppCommand`
   answers up to a few seconds late.
-- A network restart of the receiver drops telnet after about 50 seconds, and
-  the receiver then accepts and resets the connection for a few seconds. The
-  library tries again every 0.5 seconds until it stays connected.
+- A network restart of the receiver drops telnet after some time, and the
+  receiver then accepts and resets the connection for a few seconds. The
+  library tries again every `TelnetConfig::reconnect_min` (0.5 seconds by
+  default) until it stays connected.
 - A Dirac ART filter locks the channel levels, the dial page (HTTP status 500)
   and the crossovers.
 - The library only reads from the web interface. It never writes to it.
@@ -636,9 +641,13 @@ RUSTFLAGS="-D warnings" cargo clippy --locked --workspace --all-targets --all-fe
 cargo test --locked --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --locked --workspace --no-deps --all-features
 cargo deny check
+cargo audit
 for f in "" telnet http discovery mdns telnet,http serde http,serde heos telnet,heos; do
+  RUSTFLAGS="-D warnings" cargo clippy --locked -p denon-marantz --no-default-features --features "$f" --all-targets
   cargo check --locked -p denon-marantz --no-default-features --features "$f"
 done
+cargo fmt --manifest-path fuzz/Cargo.toml --check
+RUSTFLAGS="-D warnings" cargo clippy --locked --manifest-path fuzz/Cargo.toml --all-targets
 ```
 
 Fuzz targets for the parsers are in `fuzz/`. Benchmarks use `criterion`.

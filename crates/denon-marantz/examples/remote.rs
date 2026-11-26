@@ -22,7 +22,7 @@
 //! - In the batch mode, `refresh GROUP` asks for a group of values (for example `refresh core`).
 //! - `--groups LIST`: the query groups that the connect fetches, in this order,
 //!   for example `core,signal`. The groups are core, names, toggles, signal,
-//!   device, sound, zones, picture and speakers. The default is core, names,
+//!   device, sound, zones, picture, speakers and older. The default is core, names,
 //!   toggles and signal.
 //! - `--command-interval MS`, `--query-interval MS` and `--query-quiet MS`: the
 //!   spacing of writes. A query also waits until the receiver sent no data for

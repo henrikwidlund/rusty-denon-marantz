@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let host = std::env::args()
         .nth(1)
-        .ok_or("usage: remote <host or IP address of the HEOS device>")?;
+        .ok_or("usage: heos_remote <host or IP address of the HEOS device>")?;
 
     let heos = Heos::connect(host.as_str()).await?;
     let pid = host
