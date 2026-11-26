@@ -59,8 +59,11 @@ pub struct TelnetConfig {
     pub write_timeout: Duration,
     /// Time without data after which a query is sent to keep the connection
     /// alive. If there is still nothing after the same time again, the
-    /// connection counts as lost. On most systems, TCP keepalive finds a
-    /// receiver that is gone in about 25 s, often before this.
+    /// connection counts as lost. TCP keepalive often finds a receiver that
+    /// is gone in about 25 s, before this. While sent data waits for an
+    /// acknowledgement, keepalive may not run. On Linux and Android, a send
+    /// time limit then finds it in about 25 s. On other systems, this timer
+    /// usually finds it first.
     pub keep_alive: Duration,
     /// Time to wait before the first try to connect again. It doubles with
     /// each failed try up to [`TelnetConfig::reconnect_max`].

@@ -36,7 +36,9 @@ const USER_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// Turns off Nagle's algorithm and turns on keepalive. On most systems,
 /// keepalive finds a device that is gone without closing the connection, for
-/// example after a power loss, in about 25 s. Options that the system refuses
+/// example after a power loss, in about 25 s. While sent data waits for an
+/// acknowledgement, keepalive may not run. On Linux and Android, a send time
+/// limit then finds the device in about 25 s. Options that the system refuses
 /// are skipped.
 fn configure(stream: &TcpStream) {
     // Commands are short. Do not wait to fill a packet.

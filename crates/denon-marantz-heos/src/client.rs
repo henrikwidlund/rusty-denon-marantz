@@ -44,8 +44,8 @@ pub struct HeosConfig {
     /// On the event connection, if there is still nothing after the same time
     /// again, the connections count as lost. On the command connection, the
     /// heartbeat is a command, so [`HeosConfig::command_timeout`] applies.
-    /// On most systems, TCP keepalive finds a device that is gone in about
-    /// 25 s, often before this.
+    /// TCP keepalive on the event connection often finds a device that is
+    /// gone in about 25 s, before this.
     pub keep_alive: Duration,
     /// Time to wait before the first try to connect again. It doubles with
     /// each failed try up to [`HeosConfig::reconnect_max`]. After a refused
