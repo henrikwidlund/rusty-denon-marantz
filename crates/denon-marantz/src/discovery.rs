@@ -9,6 +9,7 @@ use denon_marantz_discovery::ssdp::{self, Location, Response, SearchTarget};
 use denon_marantz_proto::{Brand, DeviceDescription, ReceiverType};
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
@@ -19,10 +20,13 @@ use crate::identify::{TypeProof, identify, identify_on};
 #[cfg(feature = "mdns")]
 mod mdns;
 #[cfg(feature = "mdns")]
-pub use mdns::{discover_all, discover_mdns};
+pub use mdns::{discover_all, discover_all_until, discover_mdns};
 
 /// Largest datagram that is read. SSDP answers are far smaller.
 const DATAGRAM_BYTES: usize = 4096;
+
+/// SSDP answers that can wait to be read.
+const ANSWER_QUEUE: usize = 32;
 
 /// Largest device description that is read, in bytes.
 const DESCRIPTION_BYTES: usize = 256 * 1024;
@@ -132,12 +136,13 @@ pub struct DiscoveredReceiver {
 
 /// Looks for receivers with SSDP.
 ///
-/// It sends the searches from each local address, waits for the answers,
-/// fetches the device description of each device that answered and keeps the
-/// Denon and Marantz AV receivers. Other devices from the same makers, for
-/// example speakers, are left out when they say that they are not an AV
-/// receiver. A receiver is in the result once, also if it answered several
-/// times. The result is sorted by address.
+/// It sends the searches from each local address and waits for the answers
+/// for [`DiscoveryConfig::wait`]. It fetches the device description of each
+/// device as soon as it answers, and keeps the Denon and Marantz AV
+/// receivers. Other devices from the same makers, for example speakers, are
+/// left out when they say that they are not an AV receiver. A receiver is in
+/// the result once, also if it answered several times. The result is sorted
+/// by address.
 ///
 /// A local address that cannot send is skipped. A device whose description
 /// cannot be read is skipped.
@@ -154,31 +159,109 @@ pub struct DiscoveredReceiver {
 /// Returns [`Error::Network`] if the local addresses cannot be read, or if no
 /// search could be sent from any of them.
 pub async fn discover(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver>, Error> {
+    discover_until(config, |_| false).await
+}
+
+/// As [`discover`], but ends as soon as `until` gives true for a receiver.
+///
+/// The result then has the receivers that were found until then, the one that
+/// matched included. If no receiver matches, the result is the same as that
+/// of [`discover`]: the search waits for answers for
+/// [`DiscoveryConfig::wait`], and then for the descriptions that are still
+/// being read.
+///
+/// For example, to find a receiver by its MAC address:
+///
+/// ```no_run
+/// # async fn example() -> Result<(), denon_marantz::Error> {
+/// use denon_marantz::{DiscoveryConfig, discover_until};
+///
+/// let found = discover_until(&DiscoveryConfig::default(), |r| {
+///     r.mac_address.as_deref() == Some("0123456789AB")
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// As [`discover`].
+pub async fn discover_until(
+    config: &DiscoveryConfig,
+    until: impl Fn(&DiscoveredReceiver) -> bool + Sync,
+) -> Result<Vec<DiscoveredReceiver>, Error> {
+    let mut receivers = Vec::new();
+    search_ssdp(config, &until, &mut receivers).await?;
+    sort_by_address(&mut receivers);
+    Ok(receivers)
+}
+
+/// Runs the SSDP search and adds each receiver to `receivers` as soon as its
+/// description is read. Returns true if `until` matched a receiver. The list
+/// is not sorted.
+async fn search_ssdp(
+    config: &DiscoveryConfig,
+    until: &(dyn Fn(&DiscoveredReceiver) -> bool + Sync),
+    receivers: &mut Vec<DiscoveredReceiver>,
+) -> Result<bool, Error> {
     let interfaces = match &config.interfaces {
         Some(interfaces) => interfaces.clone(),
         None => local_addresses()?,
     };
+    let (answers, mut answered) = mpsc::channel(ANSWER_QUEUE);
     let mut searches = JoinSet::new();
     for local in interfaces {
-        let (target, wait) = (config.target, config.wait);
-        searches.spawn(async move { (local, search(local, target, wait).await) });
+        let (target, wait, answers) = (config.target, config.wait, answers.clone());
+        searches.spawn(async move { (local, search(local, target, wait, answers).await) });
     }
-    let mut found = Vec::new();
+    // The channel closes when every search has ended.
+    drop(answers);
+    let mut seen = HashSet::new();
+    let mut fetches = JoinSet::new();
     let mut last_error = None;
     let mut sent = false;
-    while let Some(result) = searches.join_next().await {
-        let Ok((local, result)) = result else {
-            continue;
-        };
-        match result {
-            Ok(answers) => {
-                sent = true;
-                found.extend(answers);
+    loop {
+        tokio::select! {
+            Some((sender, text)) = answered.recv() => {
+                let Some(location) = Location::parse(&text) else {
+                    tracing::debug!(location = %text, "SSDP answer with a location that is not used");
+                    continue;
+                };
+                if !config.locations.allows(sender, &location) {
+                    tracing::debug!(%sender, location = %text, "SSDP answer with a location that is not allowed");
+                    continue;
+                }
+                if !seen.insert((location.host.clone(), location.port, location.path.clone())) {
+                    continue;
+                }
+                let (http, probes) = (config.http, config.probes.clone());
+                fetches.spawn(async move { describe(&location, http, probes.as_deref()).await });
             }
-            Err(error) => {
-                tracing::debug!(%local, %error, "SSDP search failed on this address");
-                last_error = Some(error);
+            Some(result) = searches.join_next() => {
+                let Ok((local, result)) = result else {
+                    continue;
+                };
+                match result {
+                    Ok(()) => sent = true,
+                    Err(error) => {
+                        tracing::debug!(%local, %error, "SSDP search failed on this address");
+                        last_error = Some(error);
+                    }
+                }
             }
+            Some(result) = fetches.join_next() => {
+                if let Ok(Described::Receiver(receiver)) = result
+                    && !receivers.iter().any(|r| r.host == receiver.host)
+                {
+                    let matched = until(&receiver);
+                    receivers.push(receiver);
+                    if matched {
+                        return Ok(true);
+                    }
+                }
+            }
+            else => break,
         }
     }
     if !sent && let Some(error) = last_error {
@@ -188,36 +271,7 @@ pub async fn discover(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver
             sent: false,
         });
     }
-
-    let mut seen = HashSet::new();
-    let mut fetches = JoinSet::new();
-    for (sender, text) in found {
-        let Some(location) = Location::parse(&text) else {
-            tracing::debug!(location = %text, "SSDP answer with a location that is not used");
-            continue;
-        };
-        if !config.locations.allows(sender, &location) {
-            tracing::debug!(%sender, location = %text, "SSDP answer with a location that is not allowed");
-            continue;
-        }
-        if !seen.insert((location.host.clone(), location.port, location.path.clone())) {
-            continue;
-        }
-        let (http, probes) = (config.http, config.probes.clone());
-        fetches.spawn(async move { describe(&location, http, probes.as_deref()).await });
-    }
-    let mut receivers = Vec::new();
-    while let Some(result) = fetches.join_next().await {
-        if let Ok(Described::Receiver(receiver)) = result
-            && !receivers
-                .iter()
-                .any(|r: &DiscoveredReceiver| r.host == receiver.host)
-        {
-            receivers.push(receiver);
-        }
-    }
-    sort_by_address(&mut receivers);
-    Ok(receivers)
+    Ok(false)
 }
 
 /// Sorts by the address as a number, so `192.168.1.3` comes before
@@ -248,13 +302,15 @@ fn local_addresses() -> Result<Vec<Ipv4Addr>, Error> {
     Ok(addresses)
 }
 
-/// Sends the searches from `local` and collects the answers: who sent it and
-/// the location.
+/// Sends the searches from `local` and passes each answer on: who sent it and
+/// the location. Ends at the end of the wait, or when nobody reads the
+/// answers.
 async fn search(
     local: Ipv4Addr,
     target: SocketAddrV4,
     wait: Duration,
-) -> std::io::Result<Vec<(IpAddr, String)>> {
+    answers: mpsc::Sender<(IpAddr, String)>,
+) -> std::io::Result<()> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     // The outgoing interface for multicast. Binding to the address is not
     // enough on every system.
@@ -268,7 +324,6 @@ async fn search(
 
     let deadline = Instant::now() + wait;
     let mut buffer = [0_u8; DATAGRAM_BYTES];
-    let mut answers = Vec::new();
     // Windows reports an ICMP "port unreachable" for an earlier send as a
     // reset. A few of them are skipped.
     let mut resets = 0_u8;
@@ -280,17 +335,22 @@ async fn search(
                 resets += 1;
                 continue;
             }
-            // Keeps the answers that came before the error.
+            // The answers that came before the error are already passed on.
             Err(error) => {
                 tracing::debug!(%local, %error, "SSDP receive failed on this address");
                 break;
             }
         };
-        if let Some(response) = Response::parse(&buffer[..length]) {
-            answers.push((sender.ip(), response.location.to_owned()));
+        if let Some(response) = Response::parse(&buffer[..length])
+            && answers
+                .send((sender.ip(), response.location.to_owned()))
+                .await
+                .is_err()
+        {
+            break;
         }
     }
-    Ok(answers)
+    Ok(())
 }
 
 /// Result of [`describe`].

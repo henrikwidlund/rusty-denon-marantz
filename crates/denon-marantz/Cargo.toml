@@ -18,9 +18,9 @@ telnet = ["http", "dep:denon-marantz-shared", "tokio/io-util", "tokio/macros", "
 # AppCommand XML over HTTP.
 http = ["dep:bytes", "dep:denon-marantz-shared", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tracing"]
 # Find receivers with SSDP.
-discovery = ["http", "tokio/rt", "dep:denon-marantz-discovery", "dep:if-addrs", "dep:socket2"]
+discovery = ["http", "tokio/macros", "tokio/rt", "dep:denon-marantz-discovery", "dep:if-addrs", "dep:socket2"]
 # Find receivers with mDNS too. Opens its own multicast sockets and a thread.
-mdns = ["discovery", "tokio/macros", "dep:mdns-sd"]
+mdns = ["discovery", "dep:mdns-sd"]
 # The HEOS player of the receiver, for playback. See `Avr::heos`.
 heos = ["http", "dep:denon-marantz-heos"]
 # Full message dumps in trace logs. Can contain personal data.

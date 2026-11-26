@@ -2152,6 +2152,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn only_a_line_that_was_not_written_can_be_sent_again() {
+        let (done, refused) = oneshot::channel();
+        Outgoing {
+            line: "MVUP\r".to_owned(),
+            done: Some(done),
+            hold: false,
+        }
+        .fail();
+        let error = refused.blocking_recv().unwrap().unwrap_err();
+        assert!(matches!(error, Error::NotConnected), "{error:?}");
+        assert!(error.is_not_sent());
+
+        let error = maybe_written("telnet send".to_owned());
+        assert!(
+            matches!(error, Error::Network { sent: true, .. }),
+            "{error:?}"
+        );
+        assert!(!error.is_not_sent());
+    }
+
     #[tokio::test(start_paused = true)]
     async fn requests_are_refused_while_there_is_no_connection() {
         let (sender, mut requests) = mpsc::channel(4);

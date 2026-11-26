@@ -9,7 +9,7 @@ use mdns_sd::{ResolvedService, ScopedIp, ServiceDaemon, ServiceEvent};
 use tokio::time::Instant;
 
 use super::{
-    Described, DiscoveredReceiver, DiscoveryConfig, Location, describe, discover, is_local,
+    Described, DiscoveredReceiver, DiscoveryConfig, Location, describe, is_local, search_ssdp,
     sort_by_address,
 };
 use crate::error::Error;
@@ -72,20 +72,22 @@ fn network_error(request: &str, source: mdns_sd::Error) -> Error {
 
 /// Looks for receivers with mDNS.
 ///
-/// It browses for the service that receivers announce, waits for
-/// [`DiscoveryConfig::wait`], and reads the device description of each service
-/// that answered. A device that is not an AV receiver is left out. A receiver
-/// whose description cannot be read is kept if the device information proves
-/// that it is an AV receiver, and then has only the model and no friendly
-/// name. The serial number is the one in the description, or the device
-/// identifier of the announcement if the description has none. The result is
-/// sorted by address.
+/// It browses for [`DiscoveryConfig::wait`] for the service that receivers
+/// announce, and reads the device description of each service as soon as it
+/// is announced. The values of the first announcement for an address are
+/// used. A service that is removed before the wait ends is left out. A device
+/// that is not an AV receiver is left out. A receiver whose description
+/// cannot be read is kept if the device information proves that it is an AV
+/// receiver, and then has only the model and no friendly name. The serial
+/// number is the one in the description, or the device identifier of the
+/// announcement if the description has none. The result is sorted by
+/// address.
 ///
 /// Only [`DiscoveryConfig::wait`], [`DiscoveryConfig::http`] and
 /// [`DiscoveryConfig::probes`] are used. [`DiscoveryConfig::interfaces`],
 /// [`DiscoveryConfig::target`] and [`DiscoveryConfig::locations`] do not apply.
 /// mDNS goes out on every interface of the computer. Only local addresses are
-/// used, and at most 64 services.
+/// used, and at most 64 services and 64 addresses in one call.
 ///
 /// The sockets open on a thread after the call starts. If they cannot open, for
 /// example without the Local Network permission on macOS, nothing is
@@ -95,21 +97,8 @@ fn network_error(request: &str, source: mdns_sd::Error) -> Error {
 ///
 /// Returns [`Error::Network`] if the mDNS service cannot be created.
 pub async fn discover_mdns(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver>, Error> {
-    let mut announced = browse(config).await?;
-    // Several names for one address need one request only.
-    let mut addresses = HashSet::new();
-    announced.retain(|a| addresses.insert(a.address));
-    let mut fetches = tokio::task::JoinSet::new();
-    for announcement in announced {
-        let (http, probes) = (config.http, config.probes.clone());
-        fetches.spawn(async move { receiver(&announcement, http, probes.as_deref()).await });
-    }
-    let mut receivers: Vec<DiscoveredReceiver> = Vec::new();
-    while let Some(result) = fetches.join_next().await {
-        if let Ok(Some(found)) = result {
-            receivers.push(found);
-        }
-    }
+    let mut receivers = Vec::new();
+    search_mdns(config, &|_| false, &mut receivers).await?;
     // Two addresses of one receiver have the same serial number.
     Ok(join(Vec::new(), receivers))
 }
@@ -122,11 +111,73 @@ pub async fn discover_mdns(config: &DiscoveryConfig) -> Result<Vec<DiscoveredRec
 ///
 /// # Errors
 ///
-/// Returns the error of [`discover`] if it failed and the result is empty, so
-/// that a missing permission is not hidden by an empty mDNS answer.
+/// Returns the error of [`discover`](super::discover) if it failed and the
+/// result is empty, so that a missing permission is not hidden by an empty
+/// mDNS answer.
 pub async fn discover_all(config: &DiscoveryConfig) -> Result<Vec<DiscoveredReceiver>, Error> {
-    let (ssdp, mdns) = tokio::join!(discover(config), discover_mdns(config));
-    combine(ssdp, mdns)
+    discover_all_until(config, |_| false).await
+}
+
+/// As [`discover_all`], but ends as soon as `until` gives true for a receiver
+/// that one of the two searches found.
+///
+/// The result then has the receivers that were found until then, the one that
+/// matched included, and is not an error. If no receiver matches, the result
+/// is the same as that of [`discover_all`]: the searches wait for answers for
+/// [`DiscoveryConfig::wait`], and then for the descriptions that are still
+/// being read.
+///
+/// For example, to find a receiver by its serial number:
+///
+/// ```no_run
+/// # async fn example() -> Result<(), denon_marantz::Error> {
+/// use denon_marantz::{DiscoveryConfig, discover_all_until};
+///
+/// let found = discover_all_until(&DiscoveryConfig::default(), |r| {
+///     r.serial_number.as_deref() == Some("ABC0123456789")
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Errors
+///
+/// As [`discover_all`].
+pub async fn discover_all_until(
+    config: &DiscoveryConfig,
+    until: impl Fn(&DiscoveredReceiver) -> bool + Sync,
+) -> Result<Vec<DiscoveredReceiver>, Error> {
+    let (mut from_ssdp, mut from_mdns) = (Vec::new(), Vec::new());
+    let ended = {
+        let ssdp = search_ssdp(config, &until, &mut from_ssdp);
+        let mdns = search_mdns(config, &until, &mut from_mdns);
+        tokio::pin!(ssdp, mdns);
+        let (mut ssdp_result, mut mdns_result) = (None, None);
+        loop {
+            tokio::select! {
+                result = &mut ssdp, if ssdp_result.is_none() => ssdp_result = Some(result),
+                result = &mut mdns, if mdns_result.is_none() => mdns_result = Some(result),
+            }
+            match (ssdp_result, mdns_result) {
+                (Some(Ok(true)), _) | (_, Some(Ok(true))) => break None,
+                (Some(ssdp), Some(mdns)) => break Some((ssdp, mdns)),
+                (ssdp, mdns) => (ssdp_result, mdns_result) = (ssdp, mdns),
+            }
+        }
+    };
+    // `None`: a receiver matched.
+    let Some((ssdp_result, mdns_result)) = ended else {
+        return Ok(join(from_ssdp, from_mdns));
+    };
+    combine(
+        ssdp_result.map(|_| {
+            sort_by_address(&mut from_ssdp);
+            from_ssdp
+        }),
+        // Two addresses of one receiver have the same serial number.
+        mdns_result.map(|_| join(Vec::new(), from_mdns)),
+    )
 }
 
 /// Joins the results of the two searches.
@@ -177,34 +228,77 @@ fn same_serial(first: Option<&str>, second: Option<&str>) -> bool {
     matches!((first.map(str::trim), second.map(str::trim)), (Some(a), Some(b)) if !a.is_empty() && a == b)
 }
 
-/// Browses until the wait is over.
-async fn browse(config: &DiscoveryConfig) -> Result<Vec<Announced>, Error> {
+/// Browses until the wait is over, and adds each receiver to `receivers` as
+/// soon as its description is read. Returns true if `until` matched a
+/// receiver. The list is not sorted and can have one receiver at several
+/// addresses.
+async fn search_mdns(
+    config: &DiscoveryConfig,
+    until: &(dyn Fn(&DiscoveredReceiver) -> bool + Sync),
+    receivers: &mut Vec<DiscoveredReceiver>,
+) -> Result<bool, Error> {
     let daemon = Daemon(ServiceDaemon::new().map_err(|e| network_error("mDNS start", e))?);
     let events = daemon
         .0
         .browse(SERVICE_TYPE)
         .map_err(|e| network_error("mDNS browse", e))?;
+    // Set to `None` at the end of the wait, which stops the browsing.
+    let mut daemon = Some(daemon);
     let deadline = Instant::now() + config.wait;
     let mut found: HashMap<String, Announced> = HashMap::new();
-    while let Ok(Ok(event)) = tokio::time::timeout_at(deadline, events.recv_async()).await {
-        match &event {
-            ServiceEvent::SearchStarted(kind) => tracing::debug!(kind, "mDNS search started"),
-            ServiceEvent::ServiceFound(_, name) => tracing::debug!(name, "mDNS service found"),
-            _ => {}
-        }
-        if let ServiceEvent::ServiceRemoved(_, name) = &event {
-            found.remove(name);
-        }
-        if let ServiceEvent::ServiceResolved(service) = event {
-            store(
-                &mut found,
-                &service.fullname,
-                Announced::from_resolved(&service),
-            );
+    // Several names for one address need one request only.
+    let mut addresses = HashSet::new();
+    let mut fetches = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            event = tokio::time::timeout_at(deadline, events.recv_async()), if daemon.is_some() => {
+                let Ok(Ok(event)) = event else {
+                    tracing::debug!(count = found.len(), "mDNS search ended");
+                    daemon = None;
+                    continue;
+                };
+                match &event {
+                    ServiceEvent::SearchStarted(kind) => tracing::debug!(kind, "mDNS search started"),
+                    ServiceEvent::ServiceFound(_, name) => tracing::debug!(name, "mDNS service found"),
+                    _ => {}
+                }
+                if let ServiceEvent::ServiceRemoved(_, name) = &event {
+                    found.remove(name);
+                }
+                if let ServiceEvent::ServiceResolved(service) = event {
+                    let name = &service.fullname;
+                    store(&mut found, name, Announced::from_resolved(&service));
+                    if let Some(announcement) = found.get(name)
+                        && addresses.len() < MAX_SERVICES
+                        && addresses.insert(announcement.address)
+                    {
+                        let announcement = announcement.clone();
+                        let (http, probes) = (config.http, config.probes.clone());
+                        fetches.spawn(async move {
+                            receiver(&announcement, http, probes.as_deref()).await
+                        });
+                    }
+                }
+            }
+            Some(result) = fetches.join_next() => {
+                if let Ok(Some(receiver)) = result {
+                    let matched = until(&receiver);
+                    receivers.push(receiver);
+                    if matched {
+                        return Ok(true);
+                    }
+                }
+            }
+            else => break,
         }
     }
-    tracing::debug!(count = found.len(), "mDNS search ended");
-    Ok(found.into_values().collect())
+    // Only the services that are still announced.
+    receivers.retain(|r| {
+        r.host
+            .parse::<IpAddr>()
+            .is_ok_and(|host| found.values().any(|a| a.address == host))
+    });
+    Ok(false)
 }
 
 /// Keeps the answer for a service name. An answer without a usable address

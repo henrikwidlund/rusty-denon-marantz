@@ -435,8 +435,8 @@ Notes about HEOS:
 |---|---|---|
 | `telnet` | yes | Live events and commands on port 23. Needs `http`. |
 | `http` | yes | AppCommand XML, the web interface and commands over HTTP. |
-| `discovery` | yes | Receiver search with SSDP. Needs `http`. |
-| `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`). Starts a thread for each search. Needs `discovery`. |
+| `discovery` | yes | Receiver search with SSDP (`discover`, `discover_until`). Needs `http`. |
+| `mdns` | no | Receiver search with mDNS too (`discover_mdns`, `discover_all`, `discover_all_until`). Starts a thread for each search. Needs `discovery`. |
 | `heos` | no | The HEOS player of the receiver for playback (`Avr::heos`). Needs `http`. |
 | `sensitive-logs` | no | Full messages in trace logs. They can have personal data. |
 | `serde` | no | `Serialize` and `Deserialize` for `Info` and `MissingSources`, to store them for `AvrBuilder::known` and `AvrBuilder::missing`. |

@@ -5,13 +5,13 @@
 mod common;
 
 use std::net::Ipv4Addr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use common::{
     AV_RECEIVER_INFO, Fake, FakeSsdp, Reply, SOUND_BAR_INFO, avr_x_receiver,
     avr_x_receiver_with_info, ssdp_answer,
 };
-use denon_marantz::{DiscoveryConfig, Error, LocationPolicy, TypeProof, discover};
+use denon_marantz::{DiscoveryConfig, Error, LocationPolicy, TypeProof, discover, discover_until};
 use denon_marantz_proto::{Brand, ReceiverType};
 
 const LOOPBACK: Ipv4Addr = Ipv4Addr::LOCALHOST;
@@ -208,4 +208,46 @@ async fn no_addresses_to_search_from_is_an_empty_list() {
     };
     assert_eq!(discover(&none).await.unwrap(), []);
     assert_eq!(ssdp.requests(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_search_until_a_match_ends_when_the_receiver_is_found() {
+    let http = avr_x_receiver().await;
+    let ssdp = FakeSsdp::start(vec![ssdp_answer(&location(&http))]).await;
+    let long = DiscoveryConfig {
+        wait: Duration::from_secs(30),
+        ..config(&ssdp, &http)
+    };
+    let started = Instant::now();
+    let found = discover_until(&long, |r| r.mac_address.as_deref() == Some("0123456789AB"))
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].serial_number.as_deref(), Some("XXX"));
+}
+
+#[tokio::test]
+async fn a_search_until_a_match_without_a_match_is_a_normal_search_with_its_errors() {
+    let http = avr_x_receiver().await;
+    let ssdp = FakeSsdp::start(vec![ssdp_answer(&location(&http))]).await;
+    let config = config(&ssdp, &http);
+    let started = Instant::now();
+    let found = discover_until(&config, |r| r.serial_number.as_deref() == Some("other"))
+        .await
+        .unwrap();
+    assert!(started.elapsed() >= config.wait, "{:?}", started.elapsed());
+    assert_eq!(found, discover(&config).await.unwrap());
+    assert_eq!(found.len(), 1, "{found:?}");
+
+    let only_bad = DiscoveryConfig {
+        interfaces: Some(vec![Ipv4Addr::new(203, 0, 113, 1)]),
+        ..config
+    };
+    let error = discover_until(&only_bad, |_| true).await.unwrap_err();
+    assert!(error.is_network(), "{error:?}");
 }

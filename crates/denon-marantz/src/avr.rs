@@ -1695,14 +1695,19 @@ impl Avr {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::NotConnected`] if the telnet connection is not open.
-    /// Nothing is queued then, so a command is never sent late. Returns
-    /// [`Error::QueueFull`] if too many lines wait to be sent. Returns
-    /// [`Error::InvalidCommand`] if the command has text that cannot be sent,
-    /// and [`Error::NumberOutOfRange`] for a value outside a range in
-    /// [`Info::ranges`] or between its steps. If the connection ends while
-    /// the command is being written, this returns [`Error::Network`] with
-    /// `sent` set to true: the receiver may have got the line.
+    /// Returns [`Error::NotConnected`] if the telnet connection is not open,
+    /// or if it ends while the command waits. The command is then dropped, so
+    /// it is never sent late. Returns [`Error::QueueFull`] if too many lines wait
+    /// to be sent. Returns [`Error::InvalidCommand`] if the command has text
+    /// that cannot be sent, and [`Error::NumberOutOfRange`] for a value
+    /// outside a range in [`Info::ranges`] or between its steps.
+    ///
+    /// [`Error::NotConnected`] always means that the command was not written,
+    /// so it can be sent again. A command that may have been written, at
+    /// least in part, gives [`Error::Network`] with `sent` set to true: the
+    /// receiver may have got the line. In some rare cases, for example when
+    /// the connection task stops, a command that was not written gives this
+    /// error too.
     ///
     /// After a power-on command while the state shows no zone on, the next
     /// line waits, see [`TelnetConfig::power_on_hold`].
