@@ -19,7 +19,7 @@ use crate::general_menu::{GeneralPart, GeneralSettings};
 use crate::input_pages::SourceLevels;
 use crate::input_pages::{InputAssignment, SourceNames};
 use crate::network_audio::MAX_NETWORK_PRESET;
-use crate::now_playing::NowPlaying;
+use crate::now_playing::{NowPlaying, PlayingKind};
 use crate::picture::PictureSettings;
 use crate::settings_availability::{GroupAvailability, SettingsAvailability};
 use crate::signal::ChannelLayout;
@@ -27,7 +27,7 @@ use crate::signal::SignalState;
 use crate::signal_pages::{AudioChannelsPage, VideoSignalPage};
 use crate::sound_mode_list::{SoundModeCategory, SoundModeList};
 use crate::sound_settings::SoundSettings;
-use crate::source::{telnet_to_display_source, xml_to_telnet_source};
+use crate::source::{playing_kind, telnet_to_display_source, xml_to_telnet_source};
 use crate::source_list::SourceList;
 use crate::speaker_extras::{Playback2Ch, XlrAssign};
 use crate::speaker_setup::{SpeakerGroup, SpeakerSetup};
@@ -540,6 +540,22 @@ impl State {
     #[must_use]
     pub const fn device(&self) -> &DeviceState {
         &self.device
+    }
+
+    /// What the source of the main zone plays. A source that the user renamed
+    /// is found by that name in [`DeviceState::sources`], and its telnet name
+    /// gives the kind.
+    #[must_use]
+    pub fn main_playing_kind(&self) -> Option<PlayingKind> {
+        let source = self.zone(Zone::Main).source.as_deref()?;
+        playing_kind(source).or_else(|| {
+            self.device
+                .sources
+                .as_slice()
+                .iter()
+                .find(|info| info.name.as_deref() == Some(source))
+                .and_then(|info| playing_kind(&info.code))
+        })
     }
 
     /// Applies a telnet event. Returns what changed.
@@ -2590,6 +2606,28 @@ mod tests {
             apply(&mut state, "OPDLSSL1IMP ON"),
             change(None, Setting::DiracSlot(1))
         );
+    }
+
+    #[test]
+    fn main_playing_kind_finds_a_renamed_source_by_its_code() {
+        let mut state = State::new(false);
+        let main = Zone::Main;
+        assert_eq!(state.main_playing_kind(), None);
+        state.apply_field(main, Field::InputFunc, Some("TUNER"));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::Tuner));
+        state.apply_field(main, Field::InputFunc, Some("CD"));
+        assert_eq!(state.main_playing_kind(), None);
+        // Only the main zone counts.
+        state.apply_field(Zone::Zone2, Field::InputFunc, Some("TUNER"));
+        assert_eq!(state.main_playing_kind(), None);
+        state.apply_field(main, Field::InputFunc, Some("Car Radio"));
+        assert_eq!(state.main_playing_kind(), None);
+        state.apply_renamed_source("HDRADIO", Some("Car Radio"));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
+        // The name of the source comes before the list.
+        state.apply_renamed_source("CD", Some("NET"));
+        state.apply_field(main, Field::InputFunc, Some("NET"));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
     }
 
     #[test]

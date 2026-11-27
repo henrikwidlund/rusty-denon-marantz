@@ -53,7 +53,6 @@ impl Channels {
     }
 
     /// Reads the state without a copy.
-    #[cfg(feature = "telnet")]
     pub(crate) fn read<T>(&self, read: impl FnOnce(&State) -> T) -> T {
         read(&self.state.borrow())
     }

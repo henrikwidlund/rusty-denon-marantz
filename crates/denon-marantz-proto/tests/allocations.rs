@@ -12,7 +12,8 @@ use denon_marantz_proto::appcommand::{self as ac, Cmd, Param, Response, write_bo
 use denon_marantz_proto::telnet::{Command, DuplicateFilter, Event, LineDecoder, Message};
 use denon_marantz_proto::{
     AudioChannelsPage, Brand, ChannelLevel, DeviceInfo, DimmerMode, GroupAvailability, NowPlaying,
-    SettingsGroup, SoundModeGroup, State, SystemSettings, VideoSignalPage, Volume, Zone, source,
+    PlayingKind, SettingsGroup, SoundModeGroup, State, SystemSettings, VideoSignalPage, Volume,
+    Zone, source,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -430,5 +431,18 @@ fn finding_the_entry_of_a_sound_mode_does_not_allocate() {
         black_box(list.entry_for(black_box("MULTI CH IN")));
         black_box(list.entry_for(black_box("MCH STEREO")));
         black_box(list.as_slice()[1].code());
+    });
+}
+
+#[test]
+fn main_playing_kind_does_not_allocate() {
+    let mut state = State::new(false);
+    state.apply_renamed_source("CD", Some("Disc"));
+    state.apply_renamed_source("HDRADIO", Some("Car Radio"));
+    state.apply_field(Zone::Main, ac::Field::InputFunc, Some("Car Radio"));
+    // "Car Radio" is not a known name, so the source list is searched.
+    assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
+    assert_no_allocation("main playing kind", || {
+        black_box(black_box(&state).main_playing_kind());
     });
 }

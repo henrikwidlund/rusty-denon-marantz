@@ -2399,7 +2399,6 @@ async fn read_appcommand(
     .await
 }
 
-/// What the source of the main zone plays, from the state of `channels`.
 /// Sends each query with `send`, in order, and stops at the first error.
 pub(crate) async fn send_queries(
     queries: &[&'static str],
@@ -2411,19 +2410,9 @@ pub(crate) async fn send_queries(
     Ok(())
 }
 
+/// What the source of the main zone plays, from the state of `channels`.
 fn playing_kind(channels: &Channels) -> Option<PlayingKind> {
-    let state = channels.watch_state();
-    let state = state.borrow();
-    let source = state.zone(Zone::Main).source.as_deref()?;
-    denon_marantz_proto::source::playing_kind(source).or_else(|| {
-        state
-            .device()
-            .sources
-            .as_slice()
-            .iter()
-            .find(|info| info.name.as_deref() == Some(source))
-            .and_then(|info| denon_marantz_proto::source::playing_kind(&info.code))
-    })
+    channels.read(State::main_playing_kind)
 }
 
 /// Reads the status pages of each zone into the state of `channels`.
