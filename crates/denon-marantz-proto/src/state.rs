@@ -529,7 +529,8 @@ impl State {
     }
 
     /// Takes the changes that applied events caused besides the ones that they
-    /// returned. A source change of the main zone clears
+    /// returned. A source change of the main zone, or a new source name that
+    /// changes [`State::main_playing_kind`], clears
     /// [`DeviceState::now_playing`], which is a change of its own. Call it
     /// after applying events. The client does it.
     pub fn take_follow_ups(&mut self) -> Vec<Change> {
@@ -830,14 +831,11 @@ impl State {
 
     /// Applies one entry of the `AppCommand` answer to `GetRenameSource`, or of
     /// the source lists of a status page: the name of the source in the XML,
-    /// and its new name. `None` is no new name.
+    /// and its new name. `None` is no new name. If the new name changes
+    /// [`State::main_playing_kind`], now playing is cleared.
     pub fn apply_renamed_source(&mut self, name: &str, rename: Option<&str>) -> Option<Change> {
         let code = xml_to_telnet_source(name);
-        let changed = self.device.sources.set_name(code, rename);
-        changed.then_some(Change {
-            zone: None,
-            setting: Setting::Sources,
-        })
+        self.source_names_change(|sources| sources.set_name(code, rename))
     }
 
     /// Applies one entry of the `AppCommand` answer to `GetDeletedSource`: the
@@ -853,10 +851,7 @@ impl State {
     pub fn apply_source_in_use(&mut self, name: &str, in_use: bool) -> Option<Change> {
         let code = xml_to_telnet_source(name);
         let changed = self.device.sources.set_in_use(code, in_use);
-        changed.then_some(Change {
-            zone: None,
-            setting: Setting::Sources,
-        })
+        changed.then_some(sources_change())
     }
 
     /// Applies a value from an `AppCommand` answer. Returns what changed.
@@ -1485,11 +1480,14 @@ impl State {
         if let Some((zone, kind, value)) = zone_volume_event(parameter) {
             return self.apply_zone_volume(zone, kind, value);
         }
-        if let Some(changed) = self.device.sources.apply_ss(parameter) {
-            return changed.then_some(Change {
-                zone: None,
-                setting: Setting::Sources,
-            });
+        let mut is_source_event = false;
+        let change = self.source_names_change(|sources| {
+            let changed = sources.apply_ss(parameter);
+            is_source_event = changed.is_some();
+            changed == Some(true)
+        });
+        if is_source_event {
+            return change;
         }
         if let Some(code) = parameter.strip_prefix("SMG ") {
             let category = SoundModeCategory::from_code(code.trim_end())?;
@@ -1672,21 +1670,42 @@ impl State {
         update: impl FnOnce(&mut ZoneState) -> bool,
     ) -> Option<Change> {
         let change = self.zone_change(zone, Setting::Source, update);
-        if change.is_some()
-            && zone == Zone::Main
-            && self.device.now_playing != NowPlaying::default()
-        {
-            self.device.now_playing = NowPlaying::default();
-            let change = Change {
-                zone: None,
-                setting: Setting::NowPlaying,
-            };
-            // One is enough, so it stays small if nobody takes them.
-            if !self.follow_ups.contains(&change) {
-                self.follow_ups.push(change);
-            }
+        if change.is_some() && zone == Zone::Main {
+            self.clear_now_playing();
         }
         change
+    }
+
+    /// Updates the source list with `update`, which returns true if the list
+    /// changed. If the change of a name changes [`State::main_playing_kind`],
+    /// now playing is cleared, as for a source change.
+    fn source_names_change(
+        &mut self,
+        update: impl FnOnce(&mut SourceList) -> bool,
+    ) -> Option<Change> {
+        let before = self.main_playing_kind();
+        let changed = update(&mut self.device.sources);
+        if changed && self.main_playing_kind() != before {
+            self.clear_now_playing();
+        }
+        changed.then_some(sources_change())
+    }
+
+    /// Clears now playing, and notes a [`Setting::NowPlaying`] change if it
+    /// was not empty.
+    fn clear_now_playing(&mut self) {
+        if self.device.now_playing == NowPlaying::default() {
+            return;
+        }
+        self.device.now_playing = NowPlaying::default();
+        let change = Change {
+            zone: None,
+            setting: Setting::NowPlaying,
+        };
+        // One is enough, so it stays small if nobody takes them.
+        if !self.follow_ups.contains(&change) {
+            self.follow_ups.push(change);
+        }
     }
 
     /// Like [`State::source_change`], and also notes if the source of the
@@ -3667,6 +3686,57 @@ mod tests {
             apply(&mut state, "MNMEN ON"),
             change(None, Setting::SettingsMenu)
         );
+    }
+
+    #[test]
+    fn a_new_name_that_changes_the_kind_clears_what_plays() {
+        let mut state = State::new(false);
+        let main = Zone::Main;
+        let now_playing = [change(None, Setting::NowPlaying).unwrap()];
+        state.apply_field(main, Field::InputFunc, Some("Radio"));
+        apply(&mut state, "NSE1Song");
+        state.take_follow_ups();
+        // A name that does not change the kind keeps what plays.
+        let sources = || change(None, Setting::Sources);
+        assert_eq!(state.apply_renamed_source("CD", Some("Disc")), sources());
+        assert_eq!(state.take_follow_ups(), []);
+        // A change of the use flag keeps what plays.
+        assert_eq!(apply(&mut state, "SSSODCD DEL"), sources());
+        assert_eq!(state.take_follow_ups(), []);
+        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
+        // The source gets the name, so the kind changes.
+        assert_eq!(
+            state.apply_renamed_source("TUNER", Some("Radio")),
+            sources()
+        );
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::Tuner));
+        assert_eq!(state.take_follow_ups(), now_playing);
+        assert_eq!(state.device().now_playing, NowPlaying::default());
+        // The same from a telnet event: the source loses the name.
+        apply(&mut state, "NSE1Song");
+        state.take_follow_ups();
+        assert_eq!(apply(&mut state, "SSFUNTUNER Tuner"), sources());
+        assert_eq!(state.main_playing_kind(), None);
+        assert_eq!(state.take_follow_ups(), now_playing);
+        assert_eq!(state.device().now_playing, NowPlaying::default());
+        // The same when the name is removed.
+        state.apply_renamed_source("TUNER", Some("Radio"));
+        apply(&mut state, "NSE1Song");
+        state.take_follow_ups();
+        assert_eq!(state.apply_renamed_source("TUNER", None), sources());
+        assert_eq!(state.main_playing_kind(), None);
+        assert_eq!(state.take_follow_ups(), now_playing);
+        // Nothing plays, so a new kind has nothing to clear.
+        state.apply_renamed_source("TUNER", Some("Radio"));
+        assert_eq!(state.take_follow_ups(), []);
+        // With a telnet name, the kind does not depend on the names.
+        apply(&mut state, "SITUNER");
+        apply(&mut state, "NSE1Song");
+        state.take_follow_ups();
+        apply(&mut state, "SSFUNHDRADIO TUNER");
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::Tuner));
+        assert_eq!(state.take_follow_ups(), []);
+        assert_eq!(state.device().now_playing.title.as_deref(), Some("Song"));
     }
 
     #[test]

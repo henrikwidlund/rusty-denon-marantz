@@ -445,6 +445,18 @@ fn main_playing_kind_does_not_allocate() {
     assert_no_allocation("main playing kind", || {
         black_box(black_box(&state).main_playing_kind());
     });
+    // A known name with no change looks at the kind and does not allocate.
+    // Other `SS` events look at it too.
+    let messages = ["SSFUNHDRADIO Car Radio", "SSSODHDRADIO USE", "SSSMG MOV"]
+        .map(|line| Message::parse(line).unwrap());
+    state.apply_message(&messages[1]);
+    state.apply_message(&messages[2]);
+    assert_no_allocation("source names with no change", || {
+        black_box(state.apply_renamed_source(black_box("HDRADIO"), Some("Car Radio")));
+        for message in &messages {
+            black_box(state.apply_message(black_box(message)));
+        }
+    });
     // A telnet name gives the kind without the source list.
     state.apply_message(&Message::parse("SINET").unwrap());
     assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
