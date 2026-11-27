@@ -490,6 +490,10 @@ have not run on a receiver:
   `telnet_refresh_now_playing`, the `NSE` and `HD` events). The AVC-A10H does
   not give it, so it is tested with captured pages from other receivers and
   with fake receivers. The `NSA` text is not used.
+- The sources `PANDORA`, `SIRIUSXM`, `LASTFM`, `NAPSTER` and `RHAPSODY` count
+  as network audio for what plays. No specification or capture shows this.
+  `USB`, `IPD`, `USB DIRECT` and `IPOD DIRECT` also count as network audio.
+  This was not tested on a receiver.
 - The signal pages of the web interface with an FRL rate, and colorimetry
   texts other than `BT.2020`: the FRL rate is only seen as no signal. The values
   of `ALLM` and `QFT` (1 is on) were only seen as off.
