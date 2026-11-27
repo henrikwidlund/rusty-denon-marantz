@@ -1,6 +1,9 @@
 //! The XML status pages of a zone. Names and values that the docs say are
-//! never empty must not be.
+//! never empty must not be. A source is never empty and has no spaces at the
+//! end.
 #![no_main]
+
+mod checks;
 
 use denon_marantz_proto::status_page::{Page, extract, friendly_name, sources};
 use denon_marantz_proto::{State, Zone};
@@ -41,4 +44,5 @@ fuzz_target!(|data: &[u8]| {
         },
     );
     let _ = state.main_playing_kind();
+    checks::check_sources(&state);
 });

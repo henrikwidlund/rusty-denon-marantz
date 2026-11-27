@@ -186,7 +186,7 @@ impl<'a> Message<'a> {
             } else {
                 EventZone::Zone3
             };
-            if is_telnet_source(parameter) {
+            if is_telnet_source(parameter.trim_end()) {
                 event = Event::Si;
             } else if !parameter.is_empty() && parameter.bytes().all(|b| b.is_ascii_digit()) {
                 event = Event::Mv;
@@ -365,6 +365,8 @@ mod tests {
         assert_eq!(parse("Z2ON"), Some((EventZone::Zone2, Z2, "ON")));
         assert_eq!(parse("Z3OFF"), Some((EventZone::Zone3, Z3, "OFF")));
         assert_eq!(parse("Z2CD"), Some((EventZone::Zone2, Si, "CD")));
+        assert_eq!(parse("Z2CD "), Some((EventZone::Zone2, Si, "CD ")));
+        assert_eq!(parse("Z3SPOTIFY"), Some((EventZone::Zone3, Si, "SPOTIFY")));
         assert_eq!(parse("Z3SAT/CBL"), Some((EventZone::Zone3, Si, "SAT/CBL")));
         assert_eq!(parse("Z2GAME1"), Some((EventZone::Zone2, Si, "GAME1")));
         assert_eq!(parse("Z3GAME2"), Some((EventZone::Zone3, Si, "GAME2")));

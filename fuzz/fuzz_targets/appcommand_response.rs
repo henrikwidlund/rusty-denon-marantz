@@ -1,5 +1,8 @@
-//! XML answers of the `AppCommand` endpoints.
+//! XML answers of the `AppCommand` endpoints. A source is never empty and has
+//! no spaces at the end.
 #![no_main]
+
+mod checks;
 
 use denon_marantz_proto::appcommand::{
     GET_ACTIVE_SPEAKER, GET_ALL_ZONE_MUTE_STATUS, GET_ALL_ZONE_POWER_STATUS, GET_ALL_ZONE_SOURCE,
@@ -48,6 +51,7 @@ fuzz_target!(|data: &[u8]| {
             let message = Message::parse(line).expect("settings line is an event");
             let _ = state.apply_message(&message);
         });
+        checks::check_sources(&state);
     }
     let Ok(response) = Response::parse(body, expected) else {
         return;
@@ -72,4 +76,5 @@ fuzz_target!(|data: &[u8]| {
             let _ = (name.len(), control, text.len());
         });
     }
+    checks::check_sources(&state);
 });

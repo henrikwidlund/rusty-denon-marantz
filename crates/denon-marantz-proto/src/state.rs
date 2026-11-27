@@ -250,7 +250,10 @@ pub struct ZoneState {
     /// Level of the right channel of zone 2 or 3. Telnet reports it when it
     /// changes, and `AppCommand0300.xml` gives it.
     pub right_level: Option<ChannelLevel>,
-    /// Selected source, as the receiver reports it.
+    /// Selected source, as the receiver reports it, or the display name of a
+    /// telnet name. It has no spaces at the end. A name of only spaces from an
+    /// `AppCommand` answer or a status page clears it. An `SI` event with only
+    /// spaces is ignored.
     pub source: Option<String>,
     /// Sound mode in upper case, with single spaces. Only the main zone has one.
     pub sound_mode: Option<String>,
@@ -556,16 +559,18 @@ impl State {
     /// then gives the same text, it is also taken as a telnet name. Another
     /// source from there can be a name that the user gave the source. It is
     /// first searched by that name in [`DeviceState::sources`], and the telnet
-    /// name of the found source gives the kind. If a name fits more than one
-    /// source, for example a name that the user gave is the same as the name
-    /// of another source, the found source can be wrong.
+    /// name of the found source gives the kind. If no source has that name,
+    /// the name itself gives the kind, as a display name, an XML name or a
+    /// telnet name. If a name fits more than one source, for example a name
+    /// that the user gave is the same as the name of another source, the
+    /// found source can be wrong.
     ///
     /// A change of the kind gives a [`Setting::Source`] or a
     /// [`Setting::Sources`] change, also when an `SI` event has the same text
     /// as the source before.
     #[must_use]
     pub fn main_playing_kind(&self) -> Option<PlayingKind> {
-        let source = self.zone(Zone::Main).source.as_deref()?.trim_end();
+        let source = self.zone(Zone::Main).source.as_deref()?;
         if self.main_source_is_code {
             return playing_kind(source);
         }
@@ -869,8 +874,9 @@ impl State {
                 self.zone_change(zone, Setting::Power, |z| set(&mut z.power, power))
             }
             Field::InputFunc => {
-                let current = self.zone(Zone::Main).source.as_deref().map(str::trim_end);
-                let is_code = self.main_source_is_code && value.map(str::trim_end) == current;
+                let value = value.map(str::trim_end).filter(|value| !value.is_empty());
+                let is_code =
+                    self.main_source_is_code && value == self.zone(Zone::Main).source.as_deref();
                 self.main_source_change(zone, is_code, |z| set_optional_text(&mut z.source, value))
             }
             Field::Volume => {
@@ -1388,8 +1394,13 @@ impl State {
     }
 
     /// Applies an `SI` event: the telnet name of a source, for example `CD`.
+    /// An empty name is ignored.
     fn apply_source_event(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
-        let source = telnet_to_display_source(parameter);
+        let code = parameter.trim_end();
+        if code.is_empty() {
+            return None;
+        }
+        let source = telnet_to_display_source(code);
         self.main_source_change(zone, true, |z| set_text(&mut z.source, source))
     }
 
@@ -2690,9 +2701,25 @@ mod tests {
         assert_eq!(state.main_playing_kind(), None);
         state.apply_renamed_source("HDRADIO", Some("Car Radio"));
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
-        // A name with spaces at the end is found.
-        state.apply_field(main, Field::InputFunc, Some("Car Radio "));
+        // A name with spaces at the end is stored without them.
+        assert_eq!(
+            state.apply_field(main, Field::InputFunc, Some("Car Radio ")),
+            None
+        );
+        assert_eq!(state.zone(main).source.as_deref(), Some("Car Radio"));
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
+        // A name of only spaces is no source.
+        assert_eq!(
+            state.apply_field(main, Field::InputFunc, Some("  ")),
+            change(Some(main), Setting::Source)
+        );
+        assert_eq!(state.zone(main).source, None);
+        // An XML name is mapped to its telnet name.
+        state.apply_field(main, Field::InputFunc, Some("FM"));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::Tuner));
+        // Other zones are trimmed too.
+        state.apply_field(Zone::Zone2, Field::InputFunc, Some("CD "));
+        assert_eq!(state.zone(Zone::Zone2).source.as_deref(), Some("CD"));
     }
 
     #[test]
@@ -2711,10 +2738,19 @@ mod tests {
         assert_eq!(state.main_playing_kind(), None);
         // A telnet name is the source itself.
         assert_eq!(
-            apply(&mut state, "SICD"),
+            apply(&mut state, "SICD "),
             change(Some(main), Setting::Source)
         );
+        assert_eq!(state.zone(main).source.as_deref(), Some("CD"));
         assert_eq!(state.main_playing_kind(), None);
+        // A name of only spaces is ignored.
+        assert_eq!(apply(&mut state, "SI "), None);
+        assert_eq!(state.zone(main).source.as_deref(), Some("CD"));
+        assert_eq!(
+            apply(&mut state, "Z2CD "),
+            change(Some(Zone::Zone2), Setting::Source)
+        );
+        assert_eq!(state.zone(Zone::Zone2).source.as_deref(), Some("CD"));
         apply(&mut state, "SINET");
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
         // `SPOTIFY` is shown as `Spotify`, the same text as the name of `BD`.
@@ -2726,8 +2762,11 @@ mod tests {
             None
         );
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
-        // Spaces at the end are not compared.
-        state.apply_field(main, Field::InputFunc, Some("Spotify "));
+        // Spaces at the end are removed, so the text is the same.
+        assert_eq!(
+            state.apply_field(main, Field::InputFunc, Some("Spotify ")),
+            None
+        );
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
         let source = || change(Some(main), Setting::Source);
         assert_eq!(

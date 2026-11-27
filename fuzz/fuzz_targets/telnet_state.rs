@@ -1,6 +1,9 @@
 //! Text lines straight into the parser and the state. Names, levels and the
-//! quick select must stay in their documented ranges.
+//! quick select must stay in their documented ranges. A source is never empty
+//! and has no spaces at the end.
 #![no_main]
+
+mod checks;
 
 use denon_marantz_proto::telnet::Message;
 use denon_marantz_proto::{ChannelLevel, MAX_QUICK_SELECT, State, ToneLevel, Zone};
@@ -24,6 +27,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = signal.effective_pixel_depth();
     let _ = signal.video_color().input.map(|color| color.to_string());
     check_ranges(&state);
+    checks::check_sources(&state);
 });
 
 fn check_level(level: ChannelLevel) {

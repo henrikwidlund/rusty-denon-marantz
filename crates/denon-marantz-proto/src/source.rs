@@ -78,6 +78,7 @@ pub const TELNET_SOURCES: &[&str] = &[
     "8K",
     "HDRADIO",
     "NET",
+    "SPOTIFY",
     "PANDORA",
     "SIRIUSXM",
     "SOURCE",
@@ -120,7 +121,8 @@ pub fn is_telnet_source(name: &str) -> bool {
 }
 
 /// Returns true for sources that play network audio. The name can be a
-/// display name or a telnet name.
+/// display name or a telnet name. Some XML names are listed too. Use
+/// [`playing_kind`] to map all XML names.
 #[must_use]
 pub fn is_netaudio_source(name: &str) -> bool {
     matches!(
@@ -141,16 +143,29 @@ pub fn is_netaudio_source(name: &str) -> bool {
             | "SpotifyConnect"
             | "Spotify Connect"
             | "Spotify"
+            | "SPOTIFY"
             | "Flickr"
             | "FLICKR"
             | "NET/USB"
             | "Music Server"
             | "NETWORK"
             | "NET"
+            // USB, iPod and their direct modes use the network audio display.
+            | "USB"
+            | "IPD"
+            | "USB DIRECT"
+            | "IPOD DIRECT"
+            // Not proven by a spec or a capture.
+            | "PANDORA"
+            | "SIRIUSXM"
+            | "LASTFM"
+            | "NAPSTER"
+            | "RHAPSODY"
     )
 }
 
-/// Returns true for the tuner source.
+/// Returns true for the tuner source. The XML name `Tuner` is listed too. Use
+/// [`playing_kind`] to map all XML names.
 #[must_use]
 pub fn is_tuner_source(name: &str) -> bool {
     matches!(name, "Tuner" | "TUNER")
@@ -162,10 +177,11 @@ pub fn is_hd_tuner_source(name: &str) -> bool {
     matches!(name, "HD Radio" | "HDRADIO")
 }
 
-/// What a source plays, if it reports it. The name can be a display name or a
-/// telnet name.
+/// What a source plays, if it reports it. The name can be a display name, an
+/// XML name or a telnet name.
 #[must_use]
 pub fn playing_kind(name: &str) -> Option<PlayingKind> {
+    let name = xml_to_telnet_source(name);
     if is_netaudio_source(name) {
         Some(PlayingKind::NetAudio)
     } else if is_tuner_source(name) {
@@ -177,7 +193,8 @@ pub fn playing_kind(name: &str) -> Option<PlayingKind> {
     }
 }
 
-/// Returns true for sources that report what is playing.
+/// Returns true for sources that report what is playing. The name can be a
+/// display name, an XML name or a telnet name.
 #[must_use]
 pub fn is_playing_source(name: &str) -> bool {
     playing_kind(name).is_some()
@@ -222,6 +239,22 @@ mod tests {
         assert_eq!(playing_kind("USB/IPOD"), Some(PlayingKind::NetAudio));
         assert_eq!(playing_kind("Internet Radio"), Some(PlayingKind::NetAudio));
         assert_eq!(playing_kind("TUNER"), Some(PlayingKind::Tuner));
+        assert_eq!(playing_kind("FM"), Some(PlayingKind::Tuner));
+        for code in [
+            "USB",
+            "IPD",
+            "USB DIRECT",
+            "IPOD DIRECT",
+            "PANDORA",
+            "SIRIUSXM",
+            "LASTFM",
+            "NAPSTER",
+            "RHAPSODY",
+        ] {
+            assert_eq!(playing_kind(code), Some(PlayingKind::NetAudio), "{code}");
+        }
+        assert!(is_playing_source("FM"));
+        assert!(is_playing_source("SPOTIFY"));
         assert_eq!(playing_kind("HD Radio"), Some(PlayingKind::HdRadio));
         assert_eq!(playing_kind("CD"), None);
     }
