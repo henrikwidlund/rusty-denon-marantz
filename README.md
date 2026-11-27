@@ -585,6 +585,9 @@ The `denon-marantz` crate re-exports the types that most programs need, for
 example `Zone` and `Volume`. All others are in `denon_marantz::proto`.
 The `denon-marantz-heos` crate does the same with `denon_marantz_heos::proto`.
 
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) shows how the crates and the
+connections fit together.
+
 Minimum supported Rust version: 1.100.
 
 ## Examples
