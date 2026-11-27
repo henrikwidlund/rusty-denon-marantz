@@ -1398,7 +1398,7 @@ impl Avr {
     }
 
     async fn read_now_playing_page(&self) -> Result<PageStatus, Error> {
-        match self.playing_kind() {
+        match self.channels.read(State::main_playing_kind) {
             Some(PlayingKind::NetAudio) => {
                 self.read_page(
                     &self.http,
@@ -1480,7 +1480,7 @@ impl Avr {
 
         let host = denon_marantz_shared::host::UrlHost(&self.info.host);
         let port = self.info.port;
-        match self.playing_kind()? {
+        match self.channels.read(State::main_playing_kind)? {
             PlayingKind::NetAudio => {
                 let mut hasher = std::hash::DefaultHasher::new();
                 {
@@ -1500,12 +1500,6 @@ impl Avr {
                 denon_marantz_proto::STATIC_ARTWORK_PATH
             )),
         }
-    }
-
-    /// What the source of the main zone plays, from its name or its telnet
-    /// name. A source that has a name of the user is found by that name.
-    fn playing_kind(&self) -> Option<PlayingKind> {
-        playing_kind(&self.channels)
     }
 
     /// Returns true if the state shows that a Dirac ART filter is active.
@@ -1738,7 +1732,7 @@ impl Avr {
     /// The same as [`Avr::telnet_send`].
     #[cfg(feature = "telnet")]
     pub async fn telnet_refresh_now_playing(&self) -> Result<(), Error> {
-        match self.playing_kind() {
+        match self.channels.read(State::main_playing_kind) {
             Some(PlayingKind::NetAudio) => self.telnet_send(Zone::Main, Command::Raw("NSE")).await,
             Some(PlayingKind::HdRadio) => {
                 let send = async |command| self.telnet_send(Zone::Main, command).await;
@@ -2408,11 +2402,6 @@ pub(crate) async fn send_queries(
         send(Command::Raw(query)).await?;
     }
     Ok(())
-}
-
-/// What the source of the main zone plays, from the state of `channels`.
-fn playing_kind(channels: &Channels) -> Option<PlayingKind> {
-    channels.read(State::main_playing_kind)
 }
 
 /// Reads the status pages of each zone into the state of `channels`.

@@ -40,4 +40,5 @@ fuzz_target!(|data: &[u8]| {
             }
         },
     );
+    let _ = state.main_playing_kind();
 });

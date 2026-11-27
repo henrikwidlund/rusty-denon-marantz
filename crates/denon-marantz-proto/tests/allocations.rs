@@ -440,9 +440,15 @@ fn main_playing_kind_does_not_allocate() {
     state.apply_renamed_source("CD", Some("Disc"));
     state.apply_renamed_source("HDRADIO", Some("Car Radio"));
     state.apply_field(Zone::Main, ac::Field::InputFunc, Some("Car Radio"));
-    // "Car Radio" is not a known name, so the source list is searched.
+    // The name that the user gave is found in the source list.
     assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
     assert_no_allocation("main playing kind", || {
+        black_box(black_box(&state).main_playing_kind());
+    });
+    // A telnet name gives the kind without the source list.
+    state.apply_message(&Message::parse("SINET").unwrap());
+    assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
+    assert_no_allocation("main playing kind of a telnet name", || {
         black_box(black_box(&state).main_playing_kind());
     });
 }

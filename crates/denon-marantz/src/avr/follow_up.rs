@@ -10,7 +10,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use denon_marantz_proto::appcommand::{self, Definition, Endpoint, SettingsPart};
 use denon_marantz_proto::telnet::QueryGroup;
-use denon_marantz_proto::{Brand, PlayingKind, TUNER_STATUS_PATH, TunerPage, Zone};
+use denon_marantz_proto::{Brand, PlayingKind, State, TUNER_STATUS_PATH, TunerPage, Zone};
 #[cfg(feature = "telnet")]
 use tokio::sync::watch;
 use tokio::sync::{broadcast, mpsc};
@@ -18,8 +18,8 @@ use tokio::time::{Instant, timeout, timeout_at};
 use tracing::Instrument;
 
 use super::{
-    Info, Missing, UpdateMethod, definitions_body, playing_kind, read_appcommand,
-    read_settings_request, read_status_pages, settings_request,
+    Info, Missing, UpdateMethod, definitions_body, read_appcommand, read_settings_request,
+    read_status_pages, settings_request,
 };
 use crate::channels::Channels;
 use crate::command::{ReadBits, Reads};
@@ -485,7 +485,7 @@ async fn note_missing(reader: &Reader, requests: &[Request], reads: Reads, error
 /// Reads the band and the frequency, if the main zone plays the tuner. The
 /// page has no values for another source.
 async fn read_tuner_page(reader: &Reader) -> Result<(), Error> {
-    if playing_kind(&reader.channels) != Some(PlayingKind::Tuner) {
+    if reader.channels.read(State::main_playing_kind) != Some(PlayingKind::Tuner) {
         return Ok(());
     }
     let page = reader

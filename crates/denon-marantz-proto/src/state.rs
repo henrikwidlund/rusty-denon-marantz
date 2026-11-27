@@ -500,6 +500,10 @@ pub struct State {
     single_zone: bool,
     device: DeviceState,
     zones: [ZoneState; 3],
+    /// The source of the main zone came from a telnet `SI` event, so it is a
+    /// telnet name or its display name and not a name that the user gave the
+    /// source.
+    main_source_is_code: bool,
     /// Channels of the `CV` list that is being received.
     pending_channels: Vec<Channel>,
     /// Changes that events caused besides the ones that they returned.
@@ -517,6 +521,7 @@ impl State {
             single_zone,
             device: DeviceState::default(),
             zones: Default::default(),
+            main_source_is_code: false,
             pending_channels: Vec::new(),
             follow_ups: Vec::new(),
         }
@@ -542,20 +547,29 @@ impl State {
         &self.device
     }
 
-    /// What the source of the main zone plays. A source that the user renamed
-    /// is found by that name in [`DeviceState::sources`], and its telnet name
-    /// gives the kind.
+    /// What the source of the main zone plays.
+    ///
+    /// A source from a telnet `SI` event is a telnet name or its display
+    /// name, which gives the kind. A source from an `AppCommand` answer or a status page can be a
+    /// name that the user gave the source. It is first searched by that name
+    /// in [`DeviceState::sources`], and the telnet name of the found source
+    /// gives the kind. If a name fits more than one source, for example a
+    /// name that the user gave is the same as the name of another source, the
+    /// found source can be wrong.
+    ///
+    /// The kind can change with no [`Setting::Source`] change.
     #[must_use]
     pub fn main_playing_kind(&self) -> Option<PlayingKind> {
-        let source = self.zone(Zone::Main).source.as_deref()?;
-        playing_kind(source).or_else(|| {
-            self.device
-                .sources
-                .as_slice()
-                .iter()
-                .find(|info| info.name.as_deref() == Some(source))
-                .and_then(|info| playing_kind(&info.code))
-        })
+        let source = self.zone(Zone::Main).source.as_deref()?.trim_end();
+        if self.main_source_is_code {
+            return playing_kind(source);
+        }
+        self.device
+            .sources
+            .as_slice()
+            .iter()
+            .find(|info| info.name.as_deref() == Some(source))
+            .map_or_else(|| playing_kind(source), |info| playing_kind(&info.code))
     }
 
     /// Applies a telnet event. Returns what changed.
@@ -581,10 +595,7 @@ impl State {
                 };
                 self.zone_change(zone?, Setting::Muted, |z| set(&mut z.muted, Some(value)))
             }
-            Event::Si => {
-                let source = telnet_to_display_source(parameter);
-                self.source_change(zone?, |z| set_text(&mut z.source, source))
-            }
+            Event::Si => self.apply_source_event(zone?, parameter),
             Event::Ms if zone == Some(Zone::Main) => {
                 // Quick and smart select are not sound modes.
                 if parameter.starts_with("QUICK") || parameter.starts_with("SMART") {
@@ -859,6 +870,9 @@ impl State {
                 self.zone_change(zone, Setting::Power, |z| set(&mut z.power, power))
             }
             Field::InputFunc => {
+                if zone == Zone::Main {
+                    self.main_source_is_code = false;
+                }
                 self.source_change(zone, |z| set_optional_text(&mut z.source, value))
             }
             Field::Volume => {
@@ -1373,6 +1387,15 @@ impl State {
         } else {
             self.set_power(zone, parameter)
         }
+    }
+
+    /// Applies an `SI` event: the telnet name of a source, for example `CD`.
+    fn apply_source_event(&mut self, zone: Zone, parameter: &str) -> Option<Change> {
+        if zone == Zone::Main {
+            self.main_source_is_code = true;
+        }
+        let source = telnet_to_display_source(parameter);
+        self.source_change(zone, |z| set_text(&mut z.source, source))
     }
 
     /// Applies the HDMI audio of zone 2 or 3, for example `A PCM`.
@@ -2624,9 +2647,46 @@ mod tests {
         assert_eq!(state.main_playing_kind(), None);
         state.apply_renamed_source("HDRADIO", Some("Car Radio"));
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
-        // The name of the source comes before the list.
-        state.apply_renamed_source("CD", Some("NET"));
+        // A name with spaces at the end is found.
+        state.apply_field(main, Field::InputFunc, Some("Car Radio "));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::HdRadio));
+    }
+
+    #[test]
+    fn main_playing_kind_uses_the_telnet_name_of_an_si_event() {
+        let mut state = State::new(false);
+        let main = Zone::Main;
+        state.apply_renamed_source("TUNER", Some("CD"));
+        state.apply_renamed_source("GAME", Some("NET"));
+        state.apply_renamed_source("BD", Some("Spotify"));
+        // A name from an `AppCommand` answer is a name that the user gave.
+        state.apply_field(main, Field::InputFunc, Some("CD"));
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::Tuner));
         state.apply_field(main, Field::InputFunc, Some("NET"));
+        assert_eq!(state.main_playing_kind(), None);
+        state.apply_field(main, Field::InputFunc, Some("Spotify"));
+        assert_eq!(state.main_playing_kind(), None);
+        // A telnet name is the source itself.
+        assert_eq!(
+            apply(&mut state, "SICD"),
+            change(Some(main), Setting::Source)
+        );
+        assert_eq!(state.main_playing_kind(), None);
+        apply(&mut state, "SINET");
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
+        // `SPOTIFY` is shown as `Spotify`, the same text as the name of `BD`.
+        apply(&mut state, "SISPOTIFY");
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
+        // The same text from the other path changes only where it came from.
+        assert_eq!(
+            state.apply_field(main, Field::InputFunc, Some("Spotify")),
+            None
+        );
+        assert_eq!(state.main_playing_kind(), None);
+        assert_eq!(apply(&mut state, "SISPOTIFY"), None);
+        assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
+        // Another zone does not change where the main source came from.
+        state.apply_field(Zone::Zone2, Field::InputFunc, Some("CD"));
         assert_eq!(state.main_playing_kind(), Some(PlayingKind::NetAudio));
     }
 
